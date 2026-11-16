@@ -9,7 +9,7 @@ export * from './words';
 export {useSongTime, beatIndexAt, energyAt} from './time';
 export {layoutBoard, layoutBlock, blockToWorld, worldToBlock, wordCorners, displayText, alignPoint, DEFAULT_W, BLOCK_GAP} from './layout';
 export {cameraAt, cameraMoves, camForBlock, toScreen, toWorld, cameraTransform, SCREEN_CAM} from './camera';
-export {wordStateAt, boardCues, cueAt, cueAffects, repeatScale, EXIT_FRAMES, emergeCue, retireFrame, cullFrame, lifeStage, RETIRE_OPACITY, RETIRE_FRAMES, RETIRE_AFTER, CULL_DISTANCE} from './wordState';
+export {wordStateAt, boardCues, cueAt, cueAffects, replacesEnterOf, repeatScale, EXIT_FRAMES, emergeCue, retireFrame, cullFrame, lifeStage, RETIRE_OPACITY, RETIRE_FRAMES, RETIRE_AFTER, CULL_DISTANCE} from './wordState';
 export type {LifeStage} from './wordState';
 export {registerVerb, getVerb, verbNames, composeMod, IDENTITY, letterIdentity} from './verbRegistry';
 export type {VerbDef, VerbWordCtx, VerbCtxBase, WordMod, LetterMod} from './verbRegistry';

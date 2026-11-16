@@ -22,7 +22,7 @@ import {panelTracks, separatingPanel} from './panels';
 import {panelGoneAt, panelQuad, panelSwingExempt, panelSwinging} from './panel';
 import {boardRuleChecks} from './validateRules';
 import {emptyTimeline, motionRuleChecks} from './validateMotion';
-import {EXIT_FRAMES, RETIRE_AFTER, handoffClearAt, baseCtx, boardCues, cueAffects, cueAt, retireFrame, wordStateAt} from './wordState';
+import {EXIT_FRAMES, RETIRE_AFTER, handoffClearAt, baseCtx, boardCues, cueAffects, cueAt, replacesEnterOf, retireFrame, wordStateAt} from './wordState';
 
 export const SAFE = 48;
 export type Severity = 'error' | 'warn';
@@ -143,7 +143,7 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
   for (const i of L.order) { const c = handoffClearAt(board, i); if (c < Infinity) clearAt.set(i, c); }
   exempt.push(...handoffPairsNested(board, L));
   const isExempt = (a: number, b: number) => exempt.some(([x, y]) => (x === a && y === b) || (x === b && y === a));
-  const replacedEnter = (i: number) => cues.some((c) => getVerb(c.name)?.replacesEnter && cueAffects(c, L, getVerb(c.name)).includes(i));
+  const replacedEnter = (i: number) => cues.some((c) => { const d = getVerb(c.name); return !!d && replacesEnterOf(d, c, L, i); });
   const gradualFor = (i: number) => cues.some((c) => getVerb(c.name)?.gradual && cueAffects(c, L, getVerb(c.name)).includes(i));
   // display frames (morph targets), relight binds
   const displayFrom = new Map<number, number>();
@@ -394,11 +394,16 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
     out.push({...v, detail: `${v.detail}${v.rule === 'overlap' ? '' : ` (worst ${worst.toFixed(1)}${unit})`}`});
   }
   // Camera moves per line (the rig moves, with their kind, length and R, go into the line's plan)
-  const lineAtFrame = (f: number) => { const started = L.order.filter((i) => L.words.get(i)!.sf <= f + 4); return WORDS[started.length ? started[started.length - 1] : L.order[0]].line; };
+  // (undefined on a board with no words, such as a title board of graphics only: its rig moves are checked, not planned)
+  const lineAtFrame = (f: number): number | undefined => {
+    if (!L.order.length) return undefined;
+    const started = L.order.filter((i) => L.words.get(i)!.sf <= f + 4);
+    return WORDS[started.length ? started[started.length - 1] : L.order[0]].line;
+  };
   for (const m of rigMoves(board)) {
     const dRot = m.target.rot - m.from.rot;
     const l = lineAtFrame(m.start);
-    addPlan(l, `rig ${m.kind}${m.key.label ? ' (' + m.key.label + ')' : ''} at frame ${m.start.toFixed(0)} for ${m.dur} frames: R ${m.target.rot.toFixed(1)}, zoom ${m.target.zoom.toFixed(2)}`);
+    if (l !== undefined) addPlan(l, `rig ${m.kind}${m.key.label ? ' (' + m.key.label + ')' : ''} at frame ${m.start.toFixed(0)} for ${m.dur} frames: R ${m.target.rot.toFixed(1)}, zoom ${m.target.zoom.toFixed(2)}`);
     if (m.stretchedFrom !== undefined) out.push({board: name, rule: 'rig-stretched', severity: 'warn', line: l, detail: `${m.kind} at frame ${m.start.toFixed(0)} asked for ${m.stretchedFrom} frames; lengthened to ${m.dur}`});
     const rg = RIG_FRAME_RANGE[m.kind];
     const slowRoll = m.kind === 'roll' && m.dur >= 24 && m.dur <= 36;

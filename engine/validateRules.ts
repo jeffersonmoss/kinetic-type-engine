@@ -42,7 +42,8 @@ import {normDeg, polysOverlap, rot} from './util';
 import {getVerb, type WordMod} from './verbRegistry';
 import {LINGER_FRAMES, graphicLife, lineMarks, ruleOwners, type LineSeg} from './lines';
 import {panelGoneAt} from './panel';
-import {baseCtx, emergeCue, retireFrame, wordStateAt} from './wordState';
+import {baseCtx, boardCues, emergeCue, retireFrame, wordStateAt} from './wordState';
+import {separatingPanel} from './panels';
 import type {Violation} from './validate';
 
 /** Screen-side giant level (rule 49): cap height at least this, spanning at least GIANT_SPAN (or the frame height in a
@@ -108,6 +109,24 @@ export function polyArea(q: Pt[], signed = false): number {
   for (let k = 0; k < q.length; k++) { const p = q[k], r = q[(k + 1) % q.length]; a += p.x * r.y - r.x * p.y; }
   return signed ? a / 2 : Math.abs(a / 2);
 }
+/** A clip path made of one closed polygon of straight segments (M x y L x y ... Z) that is convex, as its points;
+ *  null for anything else (several pieces, evenodd holes, curves). */
+export const convexClipPoly = (d: string): Pt[] | null => {
+  const t = d.trim();
+  if (!/^M[^MACQSTHVZ]*Z?$/i.test(t) || /[ACQSTHV]/i.test(t)) return null;
+  const nums = (t.match(/-?\d*\.?\d+(?:e[-+]?\d+)?/gi) ?? []).map(Number);
+  if (nums.length < 6 || nums.length % 2) return null;
+  const pts: Pt[] = [];
+  for (let k = 0; k < nums.length; k += 2) pts.push({x: nums[k], y: nums[k + 1]});
+  let sign = 0;
+  for (let k = 0; k < pts.length; k++) {
+    const p = pts[k], q = pts[(k + 1) % pts.length], r = pts[(k + 2) % pts.length];
+    const c = (q.x - p.x) * (r.y - q.y) - (q.y - p.y) * (r.x - q.x);
+    if (Math.abs(c) < 1e-9) continue;
+    if (sign === 0) sign = Math.sign(c); else if (Math.sign(c) !== sign) return null;
+  }
+  return sign === 0 ? null : pts;
+};
 const near = (a: Pt[], b: Pt[], tol: number) => a.every((p, k) => Math.hypot(p.x - b[k].x, p.y - b[k].y) <= tol);
 
 export interface BoardRuleCtx {
@@ -154,6 +173,24 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
     const cam = cameraAt(board, f);
     return polys.some((q) => onScreen(g.layer === 'screen' ? q : q.map((p) => toScreen(cam, p))));
   });
+  // entrance overlap (Fable gate DOGE B1 fix 11): a word still making its entrance (before its sung frame) must not draw
+  // its ink more than 3 px into another unretired word, landed or entering (the 3 px of the main overlap rule). Each
+  // word's visible ink is its ink box cut to its mask when the mask is one convex polygon (seam, drawer, shelf, rise); a
+  // word under a mask of several pieces or curves (door, behind, portal) is not measured, nor is a word still scaled
+  // below 98 percent (a sprout or swell growing out of its anchor's edge). Pairs a verb exempts (a SHOVE's incoming on outgoing) and pairs with a panel between their layers are skipped.
+  const entryExempt: [number, number][] = [];
+  for (const cue of boardCues(board)) { const def = getVerb(cue.name); if (def?.overlapExempt) entryExempt.push(...def.overlapExempt(cue, L)); }
+  const entryPairOk = (a: number, b: number) => entryExempt.some(([x, y]) => (x === a && y === b) || (x === b && y === a))
+    || !!separatingPanel(board, L, L.words.get(a)!.block, L.words.get(b)!.block);
+  // a word growing out of a point (SPROUT, SWELL) starts on its anchor's edge by design and is checked once landed
+  const growing = (m: WordMod) => Math.abs(m.sx) < 0.98 || Math.abs(m.sy) < 0.98;
+  const visibleInk = (x: {i: number; w: WordGeom; m: WordMod}, ink: Pt[], f: number): Pt[] | null => {
+    if (!x.m.clip) return ink;
+    const poly = convexClipPoly(x.m.clip);
+    if (!poly) return null;
+    const cam = camForBlock(board, x.w.block, f), b = L.blocks[x.w.block];
+    return clipConvex(ink, poly.map((p) => toScreen(cam, blockToWorld(b, p))));
+  };
   const inMove = (f: number) => moves.some((m) => f >= m.start && f < m.start + m.dur);
   const giantAt = new Map<number, number>(); // line -> frames at rest with a giant word in frame
   const lineOfFrame = (f: number) => { let l = -1; for (const i of L.order) if (L.words.get(i)!.sf <= f) l = L.words.get(i)!.line; return l; };
@@ -166,6 +203,22 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
       if (a.i >= b.i || a.w.block !== b.w.block || a.w.row === b.w.row) continue;
       if (f < Math.max(a.w.sf, b.w.sf) || f >= Math.min(retireFrame(board, a.i), retireFrame(board, b.i))) continue;
       if (polysOverlap(inks.get(a.i)!, inks.get(b.i)!, 0.5)) note(`rows${a.i}-${b.i}`, {board: name, rule: 'ink-overlap', severity: 'error', word: a.i, text: a.w.text, line: a.w.line, detail: `ink touches word ${b.i} "${b.w.text}" in the next row of its block (rows must not touch)`}, f, 1);
+    }
+    const visMemo = new Map<number, Pt[] | null>();
+    const visOf = (x: {i: number; w: WordGeom; m: WordMod}) => {
+      if (!visMemo.has(x.i)) { const v = visibleInk(x, inks.get(x.i)!, f); visMemo.set(x.i, v && v.length >= 3 && polyArea(v) >= 1 ? v : null); }
+      return visMemo.get(x.i)!;
+    };
+    for (const a of shown) {
+      if (f >= a.w.sf || growing(a.m)) continue;
+      for (const b of shown) {
+        // b has landed, or is entering too (each such pair is checked once, from its later word)
+        if (b.i === a.i || (f < b.w.sf && b.i > a.i) || f >= retireFrame(board, b.i) || entryPairOk(a.i, b.i)) continue;
+        const va = visOf(a);
+        if (!va) break;
+        const vb = visOf(b);
+        if (vb && polysOverlap(va, vb, 3)) note(`entry${a.i}-${b.i}`, {board: name, rule: 'ink-overlap', severity: 'error', word: a.i, text: a.w.text, line: a.w.line, detail: `while entering, its ink crosses word ${b.i} "${b.w.text}"${f < b.w.sf ? ', also entering' : ', which has landed'} (an entrance never passes over another word; Fable gate DOGE B1 fix 11)`}, f, 1);
+      }
     }
     // an unretired word's ink does not cross a board rule, except the rule it stands on or comes out of
     const rules = (board.rules ?? []).map((d) => ({d, s: ruleAt(board, d, f / FPS)})).filter((r) => r.s && r.s.len > 1 && r.s.opacity > 0.1);

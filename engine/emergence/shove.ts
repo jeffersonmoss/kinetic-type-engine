@@ -5,7 +5,8 @@
 // params: mode 'push', target (old words; default every word of the anchor's block), dir (world degrees the new words
 // travel; default from the new block toward the old one), distance (world px the new words travel; default: from just
 // outside the frame, ruling 194.5), enter ('edge' default; 'near': only their own extent plus the gap), gap (12), corner
-// (1 or -1: turn direction after the push). The new words are at full opacity throughout; the validator errors when the
+// (1 or -1: turn direction after the push). The push replaces the new words' entrance (replacesEnter), not the old
+// block's. The new words are at full opacity throughout; the validator errors when the
 // push never touches the old block (shove-contact).
 import {FPS, HEIGHT, WIDTH} from '../config';
 import {camForBlock, toScreen} from '../camera';
@@ -76,6 +77,9 @@ registerVerb('shove', {
   early: true,
   gradual: true,
   affects: (cue, L) => (isPush(cue) ? [...wordsOfCue(cue, L), ...targets(cue, L)] : old.affects!(cue, L)),
+  // the push is the new words' entrance (they arrive from outside the frame), as every other emergence move replaces
+  // its words' entrance; the old block it pushes keeps its own (the K8 shove replaces none)
+  replacesEnter: (cue, L) => (isPush(cue) ? wordsOfCue(cue, L) : []),
   // kit pass 21: the new words are hidden until they set off. modify() said so for df < 0, but the kit does not call a
   // verb before its start (lead 0), so they stood at full opacity in their landed place, then jumped back by the push
   // distance on the first frame (arrival-pop, speed)

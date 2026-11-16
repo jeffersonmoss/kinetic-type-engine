@@ -29,4 +29,4 @@ export {swellTiming} from './swell';
 export {relightTiming} from './relight';
 export {behindTiming, behindReveal, behindPlateQuad, behindFailures, BEHIND_FRAMES, BEHIND_PAD} from './behind';
 export {edgeEntrancePlan, ENTRANCE_SPEED, SLIDE_EARLY_OK} from './slide';
-export {drawerEdge, drawerLead, DRAWER_LEAD, DRAWER_MIN_LEAD} from './drawer';
+export {drawerEdge, drawerLead, drawerStack, DRAWER_LEAD, DRAWER_MIN_LEAD} from './drawer';

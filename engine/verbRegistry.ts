@@ -91,8 +91,9 @@ export interface VerbDef {
   minDelay?: number;
   /** Pairs of words whose overlap the validator ignores while this cue is active (shove: incoming on outgoing). */
   overlapExempt?: (cue: VerbCue, L: BoardLayout) => [number, number][];
-  /** The verb replaces the word's normal entrance (e.g. rush). */
-  replacesEnter?: boolean;
+  /** The verb replaces the word's normal entrance (e.g. rush): true for every word it affects, or a function naming the
+   *  words whose entrance it replaces (SHOVE push: its new words, not the old block it pushes). */
+  replacesEnter?: boolean | ((cue: VerbCue, L: BoardLayout) => number[]);
   /** Words of the cue that are hidden before it starts (like replacesEnter, for some of its words only: SHOVE push hides
    *  its new words until they set off, and leaves the old block it pushes alone). */
   hiddenBefore?: (cue: VerbCue, L: BoardLayout) => number[];

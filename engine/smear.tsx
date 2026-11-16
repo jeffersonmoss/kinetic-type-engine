@@ -3,10 +3,17 @@
 // to draw (rig.ts rigSmearAt, removed).
 //
 // During a transit (roll, tilt, whip, step, dive, soar) the board is rendered at several sub-frame sample times over a
-// 180 degree shutter (half a frame, ending on the frame itself) and the samples are added together (plus-lighter at 1 / n
-// each, in an isolated layer), like a film camera's motion blur. Samples = ceil(largest per-frame screen displacement of
-// a frame point / 8 px), 4 to 16; under 8 px of displacement the frame is drawn once, sharp. At rest, in drifts, in
-// tracks and cranes, and on the frame a move ends the stage is drawn once.
+// 180 degree shutter (half a frame, ending on the frame itself) and the samples are averaged, like a film camera's motion
+// blur. The average is a running one: sample k (0-based) is laid over the samples before it, source-over, at opacity
+// 1 / (k + 1), so after n samples each has weight 1 / n. (Until 16 November 2026 the samples were added with plus-lighter
+// at 1 / n each. The browser stores each scaled sample in 8 bits before adding, so every channel was rounded n times:
+// at n = 16 the DOGE Carbon ground #0F1B26 summed to #102020, a dark green that flashed for the 4 to 8 frames of every
+// fast transit (DOGE B1 frames 598 to 601, 670 and 671, 818 to 821, 897 and 898; Fable gate B1 fix 10). In the running
+// average a pixel that is the same in every sample, as the ground is, comes out exactly as it went in.) Each sample is
+// opaque (it draws its board's ground), which the running average needs: it is only a true mean of opaque layers.
+// Samples = ceil(largest per-frame screen displacement of a frame point / 8 px), 4 to 16; under 8 px of displacement the
+// frame is drawn once, sharp. At rest, in drifts, in tracks and cranes, and on the frame a move ends the stage is drawn
+// once.
 //
 // Rule 178 is kept: a word being read (from 3 frames after its sung start until it retires) is never smeared, and a
 // word arriving during the shutter is never drawn at the partial opacity of the samples it exists in (Fable round 2
@@ -34,7 +41,7 @@ export const SmearStage: React.FC<TypeStageProps> = (props) => {
     <div style={{position: 'absolute', inset: 0, width: WIDTH, height: HEIGHT}}>
       <div style={{position: 'absolute', inset: 0, isolation: 'isolate'}}>
         {Array.from({length: n}, (_, k) => (
-          <div key={k} style={{position: 'absolute', inset: 0, mixBlendMode: 'plus-lighter', filter: `opacity(${1 / n})`}}>
+          <div key={k} style={{position: 'absolute', inset: 0, opacity: 1 / (k + 1)}}>
             <TypeStage boards={props.boards} t={props.t - (span * k) / n} uid={`${uid}s${k}`} smearPass="blur" sharpFrame={f} />
           </div>
         ))}

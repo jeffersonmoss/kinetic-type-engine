@@ -3,6 +3,11 @@
 // comes out of it one word at a time in sung order, each word pushing the earlier ones along, so the first word sung is
 // the first seen; the hairline is as tall as the rows. order 'rigid' (and sides 'U', 'D') keeps the original behaviour: each
 // row slides out whole, travelling its own width, rows 3 frames apart.
+// Sides 'U' and 'D' with more than one row (Fable gate DOGE B1 fix 11, 16 November 2026): only the row next to the seam
+// comes out of the seam itself; each later row comes out from under the row before it (side 'D': from the bottom edge of
+// the row above; 'U': from the top edge of the row below), masked at that row's edge and travelling from wholly behind
+// it. Before, every row was masked only at the block's edge and travelled its own height, so a second row slid down
+// through the first (TO SPARE. over GOT MONEY in DOGE B1, frames 411 to 417).
 // params: side 'R' | 'L' | 'U' | 'D' (direction of travel in the block frame; default from the anchor part: flankL -> 'L',
 // top -> 'U', foot -> 'D', else 'R'), stagger (3), frames (minimum, 8), draw (true: draw the seam hairline), gap (px
 // between hairline and words, default 0), colour, width.
@@ -24,8 +29,25 @@ const sideOf = (cue: VerbCue): Side => {
 };
 const blockOfCue = (cue: VerbCue, L: BoardLayout): BlockGeom => L.blocks[(cue.params?.block as number | undefined) ?? L.words.get(cue.word)!.block];
 const RAMP = 0.25; // ramp fraction of the trapezoid ease (peak speed 1 / (1 - 0.25) of the average)
+/** Sides 'U' and 'D': per row of the cue (in block order), the mask edge (block y) a row comes out of, or null for the
+ *  row next to the seam (masked at the block's edge as before), and the travel that brings it out from wholly behind
+ *  that edge. A later row is masked at the facing edge of the word boxes of the rows between it and the seam. */
+const stackedEdges = (cue: VerbCue, L: BoardLayout, side: Side, rows: {r: BlockGeom['rows'][number]}[]): {edge: number | null; travel: number}[] => {
+  const boxes = rows.map(({r}) => r.words.map((i) => L.words.get(i)!).map((g) => ({y0: g.y, y1: g.y + g.boxH})));
+  const top = (k: number) => Math.min(...boxes[k].map((q) => q.y0)), bot = (k: number) => Math.max(...boxes[k].map((q) => q.y1));
+  return rows.map(({r}, k) => {
+    if (side === 'D') {
+      if (k === 0) return {edge: null, travel: r.h};
+      const edge = Math.max(...boxes.slice(0, k).map((_, j) => bot(j)));
+      return {edge, travel: Math.max(r.h, bot(k) - edge)};
+    }
+    if (k === rows.length - 1) return {edge: null, travel: r.h};
+    const edge = Math.min(...boxes.slice(k + 1).map((_, j) => top(k + 1 + j)));
+    return {edge, travel: Math.max(r.h, edge - top(k))};
+  });
+};
 /** Per row: [start frame, frames]. */
-export const seamRows = (cue: VerbCue, L: BoardLayout): {start: number; dur: number; travel: number}[] => {
+export const seamRows = (cue: VerbCue, L: BoardLayout): {start: number; dur: number; travel: number; edge: number | null}[] => {
   const b = blockOfCue(cue, L);
   const side = sideOf(cue);
   const stagger = PC(cue, 'stagger', 3);
@@ -34,8 +56,9 @@ export const seamRows = (cue: VerbCue, L: BoardLayout): {start: number; dur: num
   const rows = b.rows.map((r, k) => ({r, k})).filter(({r}) => r.words.some((i) => words.has(i)));
   const land = Math.min(...rows.map(({r}) => Math.min(...r.words.map((i) => L.words.get(i)!.sf))));
   const z = zoomOf(L, cue.word, land);
-  const out = rows.map(({r}) => {
-    const travel = side === 'R' || side === 'L' ? r.width : r.h;
+  const stacked = side === 'U' || side === 'D' ? stackedEdges(cue, L, side, rows) : null;
+  const out = rows.map(({r}, k) => {
+    const travel = stacked ? stacked[k].travel : r.width;
     // the style bible says width / 28 px per frame; with an eased start and stop that would peak above the cap, so the
     // the engine uses the trapezoid ease (peak 1.33 x average) and the cap: about width / 24 px per frame on screen
     const dur = Math.max(minF, Math.ceil((travel * z) / (SPEED_CAP * (1 - RAMP)) - 1e-9));
@@ -44,7 +67,7 @@ export const seamRows = (cue: VerbCue, L: BoardLayout): {start: number; dur: num
   const at = cue.at !== undefined ? cue.at * FPS : (cue.params?.showFrom as number | undefined) !== undefined ? (cue.params!.showFrom as number) * FPS : land - out[0].dur;
   return out.map((o, k) => {
     const s = cue.at !== undefined || cue.params?.showFrom !== undefined ? at + stagger * k : Math.min(at + stagger * k, o.rowSf - o.dur);
-    return {start: s, dur: o.dur, travel: o.travel};
+    return {start: s, dur: o.dur, travel: o.travel, edge: stacked ? stacked[k].edge : null};
   });
 };
 /** Sung order (the default, ruling 194.9): each row is a conveyor coming out of a seam at the block's right end. The
@@ -115,8 +138,9 @@ registerVerb('seam', {
     const side = sideOf(c.cue);
     const gap = P(c, 'gap', 0);
     // the mask edge: the block's leading edge on the side the words come from
+    // (sides 'U' and 'D': a row after the first comes out from under the row before it, masked at that row's edge)
     const clip = side === 'R' ? rectPath(-gap, -BIG, BIG, BIG) : side === 'L' ? rectPath(-BIG, -BIG, b.w + gap, BIG)
-      : side === 'U' ? rectPath(-BIG, -BIG, BIG, b.h + gap) : rectPath(-BIG, -gap, BIG, BIG);
+      : side === 'U' ? rectPath(-BIG, -BIG, BIG, R.edge ?? b.h + gap) : rectPath(-BIG, R.edge ?? -gap, BIG, BIG);
     if (p <= 0) return {hidden: true, opacity: 0};
     const d = R.travel * (1 - rampEase(R.dur, R.dur * RAMP)(p));
     const off = side === 'R' ? {dx: -d} : side === 'L' ? {dx: d} : side === 'U' ? {dy: d} : {dy: -d};

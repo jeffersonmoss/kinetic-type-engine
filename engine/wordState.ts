@@ -26,6 +26,13 @@ export const cueAt = (cue: VerbCue, L: BoardLayout, def?: VerbDef) =>
   cue.at ?? def?.defaultAt?.(cue, L) ?? WORDS[cue.word].start_s + 10 / FPS;
 export const cueAffects = (cue: VerbCue, L: BoardLayout, def?: VerbDef) =>
   (def?.affects?.(cue, L) ?? cue.words ?? [cue.word]).filter((i) => L.words.has(i)).sort((a, b) => a - b);
+/** Does the cue replace word i's normal entrance (VerbDef.replacesEnter: true for all its words, or a list)? */
+export const replacesEnterOf = (def: VerbDef, cue: VerbCue, L: BoardLayout, i: number): boolean => {
+  const r = def.replacesEnter;
+  if (!r) return false;
+  if (r === true) return cueAffects(cue, L, def).includes(i);
+  return r(cue, L).includes(i);
+};
 
 /** The verb cue the engine derives from a block's `emerge` declaration. The emergence move is a verb of the same
  *  name acting on the block's words; shove and hinge default to their modes 'push' and 'swing'. */
@@ -203,7 +210,7 @@ export const wordStateAt = (board: Board, i: number, f: number): WordMod => {
   // a word a verb only holds (a morph's source) keeps its own entrance: only the verbs that bring the word in replace it
   const replacers = cues.filter((c) => {
     const def = getVerb(c.name);
-    return def?.replacesEnter && cueAffects(c, L, def).includes(i) && !(def.holds?.(c, L) ?? []).some((h) => h.word === i);
+    return !!def && replacesEnterOf(def, c, L, i) && !(def.holds?.(c, L) ?? []).some((h) => h.word === i);
   });
   const replaced = replacers.length > 0;
   // A word whose entrance a verb replaces stays hidden until that verb's lead window opens (it used to show at full

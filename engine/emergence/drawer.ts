@@ -7,6 +7,11 @@
 // params: edge 'top' | 'bottom' | 'left' | 'right' (of the host box); rect (a world box {x, y, w, h, angle?}; default the
 // host word `from.word`); depth (default each word's own extent across the edge plus 4, so it starts fully hidden);
 // lead (frames, default 6, at least 4).
+// Stacked words (Fable gate DOGE B1 fix 11, 16 November 2026): a word with other words of the same drawer between it and
+// the edge (a second row under a first) comes out from under those words, not from the edge itself: it is masked at
+// their far side (a line parallel to the edge) and slides from wholly behind it. Before, every word was masked only at
+// the host edge and slid its own distance from it, so a second row slid down through the first (APPLICATION. over
+// HELL OF A in DOGE B1, frames 908 to 913).
 import {FPS} from '../config';
 import {blockToWorld, worldToBlock} from '../layout';
 import type {AnchorRef, BoardLayout, Pt, VerbCue} from '../types';
@@ -42,14 +47,42 @@ export const drawerEdge = (cue: VerbCue, L: BoardLayout): {a: Pt; b: Pt; n: Pt} 
   if ((a.x - c.x) * n.x + (a.y - c.y) * n.y < 0) n = {x: -n.x, y: -n.y};
   return {a, b, n};
 };
-const depthOf = (cue: VerbCue, L: BoardLayout, i: number) => {
-  const d = cue.params?.depth as number | undefined;
-  if (d !== undefined) return d;
-  const {a, n} = drawerEdge(cue, L);
+/** Word i's box (world) projected on the edge's normal n and tangent u, measured from the edge's start a. */
+const spans = (cue: VerbCue, L: BoardLayout, i: number) => {
+  const {a, b: e, n} = drawerEdge(cue, L);
+  const t = {x: e.x - a.x, y: e.y - a.y};
+  const Lt = Math.hypot(t.x, t.y) || 1;
+  const u = {x: t.x / Lt, y: t.y / Lt};
   const g = L.words.get(i)!;
   const b = L.blocks[g.block];
   const q = [{x: g.x, y: g.y}, {x: g.x + g.w, y: g.y}, {x: g.x + g.w, y: g.y + g.boxH}, {x: g.x, y: g.y + g.boxH}].map((p) => blockToWorld(b, p));
-  return Math.max(...q.map((p) => (p.x - a.x) * n.x + (p.y - a.y) * n.y)) + 4;
+  const pn = q.map((p) => (p.x - a.x) * n.x + (p.y - a.y) * n.y), pu = q.map((p) => (p.x - a.x) * u.x + (p.y - a.y) * u.y);
+  return {n0: Math.min(...pn), n1: Math.max(...pn), u0: Math.min(...pu), u1: Math.max(...pu)};
+};
+/** Distance from the host edge (along n) of the line word i comes out from under: the far side of the drawer's own
+ *  words that lie wholly between it and the edge and overlap it along the edge (0 when none: the edge itself). */
+const stackMemo = new WeakMap<VerbCue, Map<number, number>>();
+export const drawerStack = (cue: VerbCue, L: BoardLayout, i: number): number => {
+  let m = stackMemo.get(cue);
+  if (!m) { m = new Map(); stackMemo.set(cue, m); }
+  const hit = m.get(i);
+  if (hit !== undefined) return hit;
+  const me = spans(cue, L, i);
+  let s = 0;
+  for (const j of wordsOfCue(cue, L)) {
+    if (j === i) continue;
+    const o = spans(cue, L, j);
+    if (o.n1 <= me.n0 + 1 && o.u1 > me.u0 + 1 && o.u0 < me.u1 - 1) s = Math.max(s, o.n1);
+  }
+  m.set(i, s);
+  return s;
+};
+const depthOf = (cue: VerbCue, L: BoardLayout, i: number) => {
+  const s = drawerStack(cue, L, i);
+  const own = spans(cue, L, i).n1 + 4;
+  const d = cue.params?.depth as number | undefined;
+  // a stacked word travels from wholly behind the words before it (at least its own extent past their far side)
+  return d !== undefined ? (s > 0 ? Math.max(d - s, own - s) : d) : own - s;
 };
 /** Entrance frames of word i (ending on its sung frame). */
 export const drawerLead = (cue: VerbCue, L: BoardLayout, i: number) => {
@@ -67,7 +100,10 @@ registerVerb('drawer', {
     const d = c.f - c.geom.sf;
     if (d >= 0) return null;
     if (d < -lead) return {hidden: true, opacity: 0};
-    const {a, b, n} = drawerEdge(c.cue, c.L);
+    const {a: a0, b: b0, n} = drawerEdge(c.cue, c.L);
+    // a stacked word's mask edge is the far side of the drawer's words between it and the host edge
+    const s = drawerStack(c.cue, c.L, c.i);
+    const a = {x: a0.x + n.x * s, y: a0.y + n.y * s}, b = {x: b0.x + n.x * s, y: b0.y + n.y * s};
     const p = (d + lead) / lead;
     const back = depthOf(c.cue, c.L, c.i) * (0.5 + 0.5 * Math.cos(Math.PI * p));
     const v = rot({x: -n.x * back, y: -n.y * back}, -c.block.angle);
