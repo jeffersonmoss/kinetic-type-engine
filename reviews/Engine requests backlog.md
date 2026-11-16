@@ -1,0 +1,15 @@
+# Engine requests backlog
+
+Requests from videos built on this engine, worked in the next engine pass.
+
+## From the DOGEfather video, 16 November 2026
+
+1. Camera snap at an outgoing slideUp: the B_OUT still hold (KIT 36.1) jumps the camera out of its rest drift in one frame (DOGE D3, frames 7079 to 7080: zoom 1.026 to 1.000, rotation -113.3 to -114.0, type moves about 25 px). The validator does not flag it. Ease the drift to the held pose over the last 10 to 15 frames, and add a validator check for one-frame camera jumps.
+2. Browser prop: a chat bubble cannot be switched off on cue (`ghosted` only greys it); the button is about 14 px with no pressed state. DOGE drew a BLOCK key and bubble-out overlays locally in `~/Experiments/DOGEfather Music Video/film/src/drawings/D3/props.tsx`; fold them in.
+3. Figure prop: `POSES.lie` is a flat bar that Fable rejected as not reading as a person. Replace it with the body-on-its-side `lie(...)` from `film/src/drawings/D2/roadFigure.tsx`.
+
+## From the IPO video, 16 November 2026
+
+4. Ink boxes that exclude padding spaces; crumbs that respect the bite clip; a sprout option that finishes by the sung frame; stroke widths that do not scale with zoom; a caption typed-reveal option.
+5. SVG `<text textLength>` collapses padded spaces (IPO 54da5fd, the G blob): draw padded hub words per letter, or strip padding before textLength.
+6. Mirror IPO 4a7603c (handoff carry by word index, angled handoff words, `appearedAt` in motionCheck) and a clean letter close without letter-spaced slivers (IPO ChunkF `cleanCloseF`).
