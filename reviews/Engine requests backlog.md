@@ -13,3 +13,7 @@ Requests from videos built on this engine, worked in the next engine pass.
 4. Ink boxes that exclude padding spaces; crumbs that respect the bite clip; a sprout option that finishes by the sung frame; stroke widths that do not scale with zoom; a caption typed-reveal option.
 5. SVG `<text textLength>` collapses padded spaces (IPO 54da5fd, the G blob): draw padded hub words per letter, or strip padding before textLength.
 6. Mirror IPO 4a7603c (handoff carry by word index, angled handoff words, `appearedAt` in motionCheck) and a clean letter close without letter-spaced slivers (IPO ChunkF `cleanCloseF`).
+
+## From the DOGEfather video, 16 November 2026 (later)
+
+7. Smear draw order: during a camera smear, verb overlays and 'under'/'over' graphics are drawn only in the blur pass, and the sharp pass then redraws every sung, unretired word on top. An 'over' prop drops behind the words for the smear and pops back in front after it (DOGE B2, frames 1,564 to 1,575: the chainsaw blinked behind GOVERNMENT for 12 frames during a FAN; Fable failed it). Keep 'over' graphics and verb overlays above words in the sharp pass too. DOGE's workaround (screen graphic via `cameraTransform`, `film/src/drawings/B2/props.tsx`, `G.sawOnScreen`) loses motion blur. Check whether the IPO kit has the same order.
