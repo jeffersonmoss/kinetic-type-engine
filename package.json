@@ -1,0 +1,28 @@
+{
+  "name": "kinetic-type-engine",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Kinetic typography engine for Remotion lyric videos: camera rig, emergence moves, word life, panels, rules, smear and a frame-by-frame validator.",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "validate": "node tools/validate-boards.mjs",
+    "validate:example": "node tools/validate-boards.mjs example/boards.ts",
+    "validate:fixture": "node tools/validate-boards.mjs fixtures/ipo-proof/boards.ts",
+    "studio:example": "remotion studio example/index.ts",
+    "studio:fixture": "remotion studio fixtures/ipo-proof/index.ts",
+    "render:example": "remotion render example/index.ts KineticTypeExample out/kinetic-type-example.mp4",
+    "render:fixture": "remotion render fixtures/ipo-proof/index.ts IpoProofV3 out/ipo-proof-v3.mp4"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.543",
+    "@remotion/google-fonts": "4.0.543",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "remotion": "4.0.543"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "esbuild": "0.28.1",
+    "typescript": "7.0.2"
+  }
+}

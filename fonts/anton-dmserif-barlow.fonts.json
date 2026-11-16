@@ -1,0 +1,20 @@
+{
+ "css": "https://fonts.googleapis.com/css2?family=Anton&family=Barlow+Condensed:wght@700&family=DM+Serif+Display:ital@1&display=block",
+ "fonts": {
+  "anton": {
+   "family": "Anton",
+   "style": "normal",
+   "weight": 400
+  },
+  "serif": {
+   "family": "DM Serif Display",
+   "style": "italic",
+   "weight": 400
+  },
+  "barlow": {
+   "family": "Barlow Condensed",
+   "style": "normal",
+   "weight": 700
+  }
+ }
+}

@@ -1,0 +1,429 @@
+// Board-level validator rules (rulings 195 and 198): faults a render showed that the per-word checks passed. Run by
+// validateBoard on every board. Each check returns violations; nothing here keeps state.
+//   ink-overlap      ink of two rows of one block touching, and an unretired word's ink crossing a board rule
+//   counter-fit      NEST and PORTAL blocks against the measured counter (and counters that were not measured)
+//   arrival-fade     a word whose arrival is only a change of opacity (TYPE and NEST letters excepted)
+//   arrival-pop      a word that appears at full opacity with no motion, scale or mask
+//   anchor-hidden    an emergence anchor that is off screen or not visible when its move starts
+//   empty-frame      a frame of a rig move with no type in it
+//   two-scales       two lines running without a rest at the giant level (rule 49)
+//   variety          R at rest unchanged for three lines; after a ROLL the previous block out of frame (rule 48)
+//   handoff-extra    anything on a handoff frame that the handoff picture does not have
+// Ruling 198 (Fable review of ProofV3, items 36, 39 and 46, and the supervisor's stray-lines check):
+//   arrival-fade     also: a STACK word below full opacity on any drawn frame (smear samples included), a panel-printed word below full
+//                    opacity while uncovered, and any arrival whose fade moves the word less than a quarter of its cap
+//   decor-life       a board graphic whose life is empty or that needs an owner it does not name
+//   decor-ink        a board graphic, or a line a verb draws, crossing the ink of an unretired word
+//   line-life        a board rule with no end: none of until, owner, persistent
+//   line-linger      a line or line graphic in frame more than 20 frames after every owner retired or left frame
+//   level-run        two lines in a row resting level (within 8 degrees) with no tilted or sideways retired text in frame
+import {FPS, HANDOFFS, HEIGHT, LINES, WIDTH, WORDS} from './config';
+import {camForBlock, cameraAt, toScreen} from './camera';
+import {blockToWorld} from './layout';
+import {countersMeasured, resolveAnchor} from './letters';
+import {FONT_INFO} from './metrics';
+import {panelQuad} from './panel';
+import {rigMoves, rigTransits} from './rig';
+import {drawnOpacityAt} from './smearSampling';
+import {ruleAt} from './rules';
+import type {Board, BoardLayout, Pt, WordGeom} from './types';
+import {normDeg, polysOverlap, rot} from './util';
+import {getVerb, type WordMod} from './verbRegistry';
+import {LINGER_FRAMES, graphicLife, lineMarks, ruleOwners, type LineSeg} from './lines';
+import {panelGoneAt} from './panel';
+import {baseCtx, emergeCue, retireFrame, wordStateAt} from './wordState';
+import type {Violation} from './validate';
+
+/** Screen-side giant level (rule 49): cap height at least this, spanning at least GIANT_SPAN (or the frame height in a
+ *  quarter stance). */
+export const GIANT_CAP = 240;
+export const GIANT_SPAN = 800;
+
+const local = (w: WordGeom, m: WordMod, x0: number, y0: number, x1: number, y1: number) => {
+  const cx = w.x + w.w / 2, cy = w.y + w.h / 2;
+  return [{x: x0, y: y0}, {x: x1, y: y0}, {x: x1, y: y1}, {x: x0, y: y1}].map((p) => {
+    const q = rot({x: (p.x - cx) * m.sx, y: (p.y - cy) * m.sy}, m.rot);
+    return {x: q.x + cx + m.dx, y: q.y + cy + m.dy};
+  });
+};
+/** Screen quad of a word's ink: from its highest ascender to its lowest descender, across its advance. */
+export const inkQuad = (board: Board, L: BoardLayout, w: WordGeom, m: WordMod, f: number): Pt[] => {
+  const fi = FONT_INFO[w.font];
+  const asc = /[bdfhklt'’]/.test(w.text) ? Math.max(0, fi.asc - fi.cap) * w.size : 0;
+  const desc = /[gjpqy,;]/.test(w.text) ? fi.inkDesc * w.size : 0;
+  const b = L.blocks[w.block];
+  const cam = camForBlock(board, w.block, f);
+  return local(w, m, w.x, w.y - asc, w.x + w.w, w.baseline + desc).map((p) => toScreen(cam, blockToWorld(b, p)));
+};
+const onScreen = (q: Pt[]) => Math.max(...q.map((p) => p.x)) > 0 && Math.min(...q.map((p) => p.x)) < WIDTH && Math.max(...q.map((p) => p.y)) > 0 && Math.min(...q.map((p) => p.y)) < HEIGHT;
+const ptOnScreen = (p: Pt) => p.x >= 0 && p.x <= WIDTH && p.y >= 0 && p.y <= HEIGHT;
+const segQuad = (a: Pt, b: Pt, w: number): Pt[] => {
+  const d = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+  const n = {x: (-(b.y - a.y) / d) * (w / 2), y: ((b.x - a.x) / d) * (w / 2)};
+  return [{x: a.x + n.x, y: a.y + n.y}, {x: b.x + n.x, y: b.y + n.y}, {x: b.x - n.x, y: b.y - n.y}, {x: a.x - n.x, y: a.y - n.y}];
+};
+const quadSize = (q: Pt[]) => ({w: Math.hypot(q[1].x - q[0].x, q[1].y - q[0].y), h: Math.hypot(q[3].x - q[0].x, q[3].y - q[0].y)});
+/** Sutherland-Hodgman: `subject` clipped to the convex polygon `clip` (either winding). */
+export const clipConvex = (subject: Pt[], clip: Pt[]): Pt[] => {
+  if (subject.length < 3 || clip.length < 3) return [];
+  const sign = polyArea(clip, true) >= 0 ? 1 : -1;
+  let out = subject;
+  for (let k = 0; k < clip.length && out.length; k++) {
+    const a = clip[k], b = clip[(k + 1) % clip.length];
+    const inside = (p: Pt) => sign * ((b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x)) >= 0;
+    const cut = (p: Pt, q: Pt): Pt => {
+      const d1 = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x), d2 = (b.x - a.x) * (q.y - a.y) - (b.y - a.y) * (q.x - a.x);
+      const u = d1 / (d1 - d2 || 1e-12);
+      return {x: p.x + (q.x - p.x) * u, y: p.y + (q.y - p.y) * u};
+    };
+    const inp = out; out = [];
+    for (let j = 0; j < inp.length; j++) {
+      const p = inp[j], q = inp[(j + 1) % inp.length];
+      if (inside(q)) { if (!inside(p)) out.push(cut(p, q)); out.push(q); } else if (inside(p)) out.push(cut(p, q));
+    }
+  }
+  return out;
+};
+/** Polygon area (absolute, or signed with `signed`). */
+export function polyArea(q: Pt[], signed = false): number {
+  let a = 0;
+  for (let k = 0; k < q.length; k++) { const p = q[k], r = q[(k + 1) % q.length]; a += p.x * r.y - r.x * p.y; }
+  return signed ? a / 2 : Math.abs(a / 2);
+}
+const near = (a: Pt[], b: Pt[], tol: number) => a.every((p, k) => Math.hypot(p.x - b[k].x, p.y - b[k].y) <= tol);
+
+export interface BoardRuleCtx {
+  name: string;
+  L: BoardLayout;
+  /** Reading intervals [sung frame, retire or removal frame). */
+  intervals: Map<number, [number, number]>;
+  step: number;
+  addPlan: (line: number, s: string) => void;
+}
+
+export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
+  const {name, L, intervals, step} = c;
+  const out: Violation[] = [];
+  const startF = Math.ceil(board.start * FPS), endF = Math.floor(board.end * FPS) - 1;
+  const transits = rigTransits(board);
+  const inTransit = (f: number) => transits.some((x) => f >= x.start && f < x.end);
+  const agg = new Map<string, {v: Violation; worst: number}>();
+  const note = (key: string, v: Violation, f: number, worst = 0) => {
+    const a = agg.get(key);
+    if (!a) agg.set(key, {v: {...v, from: f, to: f, frames: 1}, worst});
+    else { a.v.to = f; a.v.frames = (a.v.frames ?? 0) + 1; a.worst = Math.max(a.worst, worst); }
+  };
+  const cues = L.blocks.map((_, k) => emergeCue(board, k));
+  const moveOf = (i: number) => cues[L.words.get(i)!.block]?.name;
+  const anchorRules = (i: number): Set<string> => {
+    const b = L.blocks[L.words.get(i)!.block].def;
+    const s = new Set<string>();
+    for (const a of [b.anchor?.to, b.emerge?.from]) if (a && 'rule' in a) s.add(a.rule);
+    return s;
+  };
+  const stateMemo = new Map<string, WordMod>();
+  const st = (i: number, f: number) => { const k = `${i}@${f}`; let m = stateMemo.get(k); if (!m) { m = wordStateAt(board, i, f); stateMemo.set(k, m); } return m; };
+  const vis = (m: WordMod, min = 0.05) => !m.hidden && m.opacity > min;
+
+  // ---------------------------------------------------------------- per frame: ink overlap, empty rig frames, giant rests
+  const moves = rigMoves(board).filter((m) => m.dur > 0);
+  const inMove = (f: number) => moves.some((m) => f >= m.start && f < m.start + m.dur);
+  const giantAt = new Map<number, number>(); // line -> frames at rest with a giant word in frame
+  const lineOfFrame = (f: number) => { let l = -1; for (const i of L.order) if (L.words.get(i)!.sf <= f) l = L.words.get(i)!.line; return l; };
+  for (let f = startF; f <= endF; f += step) {
+    const shown = L.order.map((i) => ({i, w: L.words.get(i)!, m: st(i, f)})).filter((x) => vis(x.m));
+    const inks = new Map<number, Pt[]>();
+    for (const x of shown) inks.set(x.i, inkQuad(board, L, x.w, x.m, f));
+    // rows of one block never touch (ruling 194.11), checked for unretired words that have landed
+    for (const a of shown) for (const b of shown) {
+      if (a.i >= b.i || a.w.block !== b.w.block || a.w.row === b.w.row) continue;
+      if (f < Math.max(a.w.sf, b.w.sf) || f >= Math.min(retireFrame(board, a.i), retireFrame(board, b.i))) continue;
+      if (polysOverlap(inks.get(a.i)!, inks.get(b.i)!, 0.5)) note(`rows${a.i}-${b.i}`, {board: name, rule: 'ink-overlap', severity: 'error', word: a.i, text: a.w.text, line: a.w.line, detail: `ink touches word ${b.i} "${b.w.text}" in the next row of its block (rows must not touch)`}, f, 1);
+    }
+    // an unretired word's ink does not cross a board rule, except the rule it stands on or comes out of
+    const rules = (board.rules ?? []).map((d) => ({d, s: ruleAt(board, d, f / FPS)})).filter((r) => r.s && r.s.len > 1 && r.s.opacity > 0.1);
+    if (rules.length) {
+      const cam = cameraAt(board, f);
+      for (const x of shown) {
+        if (f < x.w.sf || f >= retireFrame(board, x.i) || L.blocks[x.w.block].def.pin === 'screen') continue;
+        const own = anchorRules(x.i);
+        for (const r of rules) {
+          if (own.has(r.d.id)) continue;
+          const q = segQuad(toScreen(cam, r.s!.a), toScreen(cam, r.s!.b), Math.max(2, r.s!.width * cam.zoom));
+          if (polysOverlap(inks.get(x.i)!, q, 1)) note(`rule${x.i}-${r.d.id}`, {board: name, rule: 'ink-overlap', severity: 'error', word: x.i, text: x.w.text, line: x.w.line, detail: `ink crosses board rule "${r.d.id}"`}, f, 1);
+        }
+      }
+    }
+    // no frame of a rig move is empty of type
+    if (inMove(f) && !shown.some((x) => x.m.opacity > 0.3 && onScreen(inks.get(x.i)!)))
+      note('empty', {board: name, rule: 'empty-frame', severity: 'error', detail: 'a frame of a rig move has no type in it (bare ground)'}, f, 1);
+    // giant-level rests (rule 49): at rest (not in a transit), a word in frame at cap 240 or more spanning 800 px (or
+    // the frame's height in a quarter stance)
+    if (!inTransit(f)) {
+      const l = lineOfFrame(f);
+      if (l >= 0) for (const x of shown) {
+        if (x.m.opacity < 0.3) continue;
+        const q = inks.get(x.i)!;
+        if (!onScreen(q)) continue;
+        const sz = quadSize(local(x.w, x.m, x.w.x, x.w.y, x.w.x + x.w.w, x.w.baseline).map((p) => toScreen(camForBlock(board, x.w.block, f), blockToWorld(L.blocks[x.w.block], p))));
+        const ang = Math.abs(normDeg(L.blocks[x.w.block].angle + x.m.rot + camForBlock(board, x.w.block, f).rot));
+        const quarter = Math.abs(ang - 90) <= 5;
+        if (sz.h >= GIANT_CAP - 0.5 && (sz.w >= GIANT_SPAN || (quarter && sz.w >= 0.9 * HEIGHT))) { giantAt.set(l, (giantAt.get(l) ?? 0) + step); break; }
+      }
+    }
+  }
+  const lines = [...new Set(L.order.map((i) => L.words.get(i)!.line))].sort((a, b) => a - b);
+  for (const l of lines) c.addPlan(l, (giantAt.get(l) ?? 0) >= 10 ? `scale: rests at the giant level for ${giantAt.get(l)} frames` : 'scale: no rest at the giant level');
+  for (let k = 1; k < lines.length; k++) {
+    if ((giantAt.get(lines[k - 1]) ?? 0) < 10 && (giantAt.get(lines[k]) ?? 0) < 10)
+      out.push({board: name, rule: 'two-scales', severity: 'error', line: lines[k], detail: `lines L${lines[k - 1]} and L${lines[k]} both lack a rest of at least 10 frames with a word at the giant level (cap ${GIANT_CAP} px or more spanning ${GIANT_SPAN} px; rule 49)`});
+  }
+
+  // ---------------------------------------------------------------- arrivals (Fable item 39: no word arrives by opacity)
+  // Opacities here are what is drawn, motion-blur samples included (smearSampling.ts; Fable round 2 item 30): a word
+  // that exists in only some sub-frame samples of a transit frame is drawn at partial opacity.
+  const subMemo = new Map<string, WordMod>();
+  const stx = (i: number, f: number) => { if (Number.isInteger(f)) return st(i, f); const k = `${i}@${f}`; let m = subMemo.get(k); if (!m) { m = wordStateAt(board, i, f); subMemo.set(k, m); } return m; };
+  const drawn = (i: number, f: number) => drawnOpacityAt([board], board, i, L.words.get(i)!.sf, f, (x) => stx(i, x));
+  for (const i of L.order) {
+    const w = L.words.get(i)!;
+    const mv = moveOf(i);
+    const typed = mv === 'type' || mv === 'nest';
+    const onPanel = !!L.blocks[w.block].def.on;
+    let f0 = -1;
+    for (let f = startF; f <= Math.min(endF, w.sf + 2); f++) if (drawn(i, f) > 0.02) { f0 = f; break; }
+    if (f0 < 0) continue;
+    const ret = Math.min(retireFrame(board, i), endF + 1);
+    // STACK words are at full opacity from their first drawn frame (Fable round 2 item 30); words printed on a panel are
+    // at full opacity whenever they are uncovered (none fades up as a flip or a lift shows it)
+    if (mv === 'stack' || onPanel) {
+      let bad = -1, last = -1, n = 0, worst = 1;
+      for (let f = f0; f < ret; f++) {
+        const m = st(i, f);
+        if (m.letters) continue;
+        const op = drawn(i, f);
+        if (op <= 0.02) continue;
+        if (mv === 'stack' && !onPanel && f > w.sf + 12) break;
+        if (op < 0.95) { if (bad < 0) bad = f; last = f; n++; worst = Math.min(worst, op); }
+      }
+      if (bad >= 0) out.push({board: name, rule: 'arrival-fade', severity: 'error', word: i, text: w.text, line: w.line, from: bad, to: last, frames: n,
+        detail: `${mv === 'stack' && !onPanel ? 'a STACK word' : 'a word printed on a panel'} below full opacity (lowest ${worst.toFixed(2)}) ${mv === 'stack' && !onPanel ? 'as drawn (motion-blur samples included)' : 'while uncovered'}; it must drop in or be uncovered at full opacity`});
+      if (onPanel || bad >= 0) continue;
+    }
+    const m0 = st(i, f0);
+    if (typed || m0.letters) continue;
+    // reach full opacity
+    let f1 = f0;
+    while (f1 < f0 + 40 && drawn(i, f1) < 0.95) f1++;
+    const cam = cameraAt(board, f1);
+    const quadAt = (f: number) => { const m = st(i, f); return local(w, m, w.x, w.y, w.x + w.w, w.y + w.boxH).map((p) => toScreen(cam, blockToWorld(L.blocks[w.block], p))); };
+    const masked = (f: number) => !!st(i, f).clip;
+    // "little or no motion": the fade moves it less than a quarter of its cap height on screen
+    const tol = Math.max(2, 0.25 * w.h * cam.zoom);
+    if (f1 > f0 + 1 && near(quadAt(f0), quadAt(f1), tol) && !masked(f0))
+      out.push({board: name, rule: 'arrival-fade', severity: 'error', word: i, text: w.text, line: w.line, from: f0, to: f1, detail: `arrives by a change of opacity (${f1 - f0} frames, moving under a quarter of its cap, no scale or mask); an emergence move must show where it comes from`});
+    else if (f1 <= f0 + 1 && !masked(f0) && near(quadAt(f0), quadAt(Math.min(f0 + 3, endF)), 1))
+      out.push({board: name, rule: 'arrival-pop', severity: 'error', word: i, text: w.text, line: w.line, from: f0, detail: 'appears at full opacity with no motion, scale or mask (a cut)'});
+  }
+
+  // ---------------------------------------------------------------- emergence anchors visible when the move starts
+  const NEEDS_VISIBLE = new Set(['seam', 'sprout', 'type', 'nest', 'door', 'morph', 'extrude', 'swell', 'fold', 'hinge', 'shelf', 'stack', 'shove', 'portal']);
+  L.blocks.forEach((b, k) => {
+    const cue = cues[k];
+    const e = b.def.emerge;
+    if (!cue || !e || !NEEDS_VISIBLE.has(e.move)) return;
+    const at = Math.round(baseCtx(cue, L, 0).at * FPS);
+    if (at < startF) return; // the move starts before the board (a handoff seam)
+    const first = b.words[0];
+    const base = {board: name, rule: 'anchor-hidden', severity: 'error' as const, word: first?.i, text: first?.text, line: first?.line};
+    let p: Pt | null = null;
+    try { p = resolveAnchor(L, e.from, at / FPS).p; } catch { return; }
+    const cam = camForBlock(board, k, at);
+    const s = toScreen(cam, p);
+    if (!ptOnScreen(s)) out.push({...base, from: at, detail: `${e.move.toUpperCase()} starts at frame ${at} from an anchor off screen at (${s.x.toFixed(0)}, ${s.y.toFixed(0)})`});
+    const a = e.from;
+    if ('word' in a && L.words.has(a.word)) {
+      const m = st(a.word, at);
+      if (!vis(m, 0.3)) out.push({...base, from: at, detail: `${e.move.toUpperCase()} starts at frame ${at} from word ${a.word} "${WORDS[a.word].text}", which is not visible then`});
+    }
+    if ('rule' in a) {
+      const r = ruleAt(board, a.rule, at / FPS);
+      if (!r || r.len < 1) out.push({...base, from: at, detail: `${e.move.toUpperCase()} starts at frame ${at} from rule "${a.rule}", which has not been drawn yet`});
+    }
+    // NEST and PORTAL: against the measured counter
+    if ((e.move === 'nest' || e.move === 'portal') && 'word' in a && L.words.has(a.word)) {
+      const host = L.words.get(a.word)!;
+      const r = resolveAnchor(L, a, at / FPS);
+      if (!countersMeasured(host.font) || r.estimated) out.push({...base, rule: 'counter-fit', detail: `${e.move.toUpperCase()} into a counter that was not measured from the glyph outline`});
+      else if (r.w !== undefined && r.h !== undefined) {
+        if (b.w > 0.8 * r.w + 0.5) out.push({...base, rule: 'counter-fit', detail: `block ${k} is ${b.w.toFixed(0)} px wide; the measured counter is ${r.w.toFixed(0)} px (at most 80 percent: ${(0.8 * r.w).toFixed(0)})`});
+        if (b.h > 0.8 * r.h + 0.5) out.push({...base, rule: 'counter-fit', detail: `block ${k} is ${b.h.toFixed(0)} px tall; the measured counter is ${r.h.toFixed(0)} px (at most 80 percent: ${(0.8 * r.h).toFixed(0)})`});
+      }
+    }
+    // SHOVE: the push must touch the old block (ruling 194.5)
+    if (e.move === 'shove') {
+      const def = getVerb('shove');
+      const affected = def?.affects?.(cue, L) ?? [];
+      const mine = new Set(b.words.map((w) => w.i));
+      const targets = affected.filter((i) => !mine.has(i));
+      const late = Math.round(baseCtx(cue, L, 0).at * FPS) + 60;
+      const moved = targets.some((i) => { const m0 = st(i, at), m1 = st(i, late); return Math.hypot(m1.dx - m0.dx, m1.dy - m0.dy) > 4; });
+      if (!moved) out.push({...base, rule: 'shove-contact', detail: 'the new words never touch the old block, so nothing is pushed (set dir toward it, or place the blocks in line)'});
+    }
+  });
+
+  // ---------------------------------------------------------------- variety (rule 48)
+  const lineFirst = (l: number) => Math.min(...L.order.filter((i) => L.words.get(i)!.line === l).map((i) => L.words.get(i)!.sf));
+  const restR = (l: number) => {
+    let f = lineFirst(l);
+    for (const tr of transits) if (f >= tr.start && f < tr.end) f = tr.end;
+    return Math.round(cameraAt(board, f).rot);
+  };
+  for (let k = 2; k < lines.length; k++) {
+    const r0 = restR(lines[k - 2]), r1 = restR(lines[k - 1]), r2 = restR(lines[k]);
+    if (Math.abs(r1 - r0) < 2 && Math.abs(r2 - r1) < 2) out.push({board: name, rule: 'variety', severity: 'error', line: lines[k], detail: `R at rest is ${r2} for three lines running (L${lines[k - 2]} to L${lines[k]}); in a verse R changes on at least every second line`});
+  }
+  for (const m of moves) {
+    if (m.kind !== 'roll') continue;
+    const before = L.order.filter((i) => L.words.get(i)!.sf < m.start);
+    if (!before.length) continue;
+    const prevBlock = L.words.get(before[before.length - 1])!.block;
+    const fEnd = Math.min(endF, Math.ceil(m.start + m.dur) + 2);
+    const inFrame = L.blocks[prevBlock].words.some((w) => { const s = st(w.i, fEnd); return vis(s) && onScreen(inkQuad(board, L, w, s, fEnd)); });
+    if (!inFrame) out.push({board: name, rule: 'variety', severity: 'error', line: L.blocks[prevBlock].words[0].line, from: m.start, detail: `after the ROLL at frame ${m.start.toFixed(0)} no word of the previous block (${prevBlock}) is in frame; it must stay, sideways or cropped (rule 48)`});
+  }
+
+  // ---------------------------------------------------------------- graphics and lines with a finite life (ruling 198)
+  for (const g of board.graphics ?? []) {
+    if (!(g.until > g.from)) out.push({board: name, rule: 'decor-life', severity: 'error', detail: `graphic "${g.id}" has an empty life (from ${g.from}, until ${g.until})`});
+    if (g.line && !g.persistent && !g.owner) out.push({board: name, rule: 'decor-life', severity: 'error', detail: `line graphic "${g.id}" names no owner (the words or panel it belongs to) and is not marked persistent`});
+  }
+  for (const d of board.rules ?? []) if (d.until === undefined && !d.owner && !d.persistent)
+    out.push({board: name, rule: 'line-life', severity: 'error', detail: `board rule "${d.id}" has no end: give it \`until\`, an \`owner\` (it retires with those words) or \`persistent: true\` if the storyboard names it as a lasting rule or shelf (ruling 198)`});
+  {
+    const screenBox = [{x: 0, y: 0}, {x: WIDTH, y: 0}, {x: WIDTH, y: HEIGHT}, {x: 0, y: HEIGHT}];
+    const firstSung = (ws: number[]) => Math.min(...ws.filter((i) => L.words.has(i)).map((i) => L.words.get(i)!.sf));
+    const wordPresent = (i: number, f: number) => {
+      if (!L.words.has(i) || f >= retireFrame(board, i)) return false;
+      const m = st(i, f);
+      return vis(m) && onScreen(inkQuad(board, L, L.words.get(i)!, m, f));
+    };
+    const panelPresent = (id: string, f: number) => {
+      const p = board.panels?.find((x) => x.id === id);
+      if (!p) return false;
+      const gone = panelGoneAt(p);
+      if (gone !== null && f >= gone * FPS) return false;
+      const q = panelQuad(p, f / FPS);
+      return !!q && onScreen(q.map((x) => toScreen(cameraAt(board, f), x)));
+    };
+    const runs = new Map<string, number>();
+    const linger = (key: string, label: string, present: boolean, shown: boolean, f: number) => {
+      const r = shown && !present ? (runs.get(key) ?? 0) + step : 0;
+      runs.set(key, r);
+      if (r > LINGER_FRAMES) note(`linger ${key}`, {board: name, rule: 'line-linger', severity: 'error', detail: `${label} is in frame more than ${LINGER_FRAMES} frames after its owner retired or left frame (ruling 198: it retires with its word, panel or line)`}, f, r);
+    };
+    for (let f = startF; f <= endF; f += step) {
+      const t = f / FPS;
+      const cam = cameraAt(board, f);
+      const ink = L.order.filter((i) => f >= L.words.get(i)!.sf - 0 && f < retireFrame(board, i)).map((i) => ({i, m: st(i, f)})).filter((x) => vis(x.m, 0.3)).map((x) => ({i: x.i, q: inkQuad(board, L, L.words.get(x.i)!, x.m, f)}));
+      for (const g of board.graphics ?? []) {
+        if (!graphicLife(g, t)) { runs.set(`g ${g.id}`, 0); continue; }
+        const polys = g.box({t, board, layout: L});
+        if (!polys || !polys.length) { runs.set(`g ${g.id}`, 0); continue; }
+        const sp = g.layer === 'screen' ? polys : polys.map((q) => q.map((p) => toScreen(cam, p)));
+        const shown = sp.some((q) => onScreen(q));
+        if (!g.ground) for (const x of ink) if (sp.some((q) => polysOverlap(q, x.q, 1)))
+          note(`gink ${g.id}-${x.i}`, {board: name, rule: 'decor-ink', severity: 'error', word: x.i, text: WORDS[x.i].text, line: L.words.get(x.i)!.line, detail: `graphic "${g.id}" crosses the ink of an unretired word`}, f, 1);
+        if (!g.persistent && g.owner) {
+          const ws = g.owner.words ?? [];
+          if (ws.length && f < firstSung(ws)) continue;
+          const present = ws.some((i) => wordPresent(i, f)) || (!!g.owner.panel && panelPresent(g.owner.panel, f));
+          linger(`g ${g.id}`, `graphic "${g.id}"`, present, shown, f);
+        }
+      }
+      for (const sg of lineMarks(board, f) as LineSeg[]) {
+        if (sg.opacity < 0.05) { runs.set(`l ${sg.id}`, 0); continue; }
+        const q = segQuad(toScreen(cam, sg.a), toScreen(cam, sg.b), Math.max(2, sg.width * cam.zoom));
+        const shown = onScreen(q) && clipConvex(q, screenBox).length > 0;
+        if (sg.kind !== 'rule') {
+          const own = new Set(sg.owner);
+          for (const x of ink) if (!own.has(x.i) && polysOverlap(q, x.q, 1))
+            note(`link ${sg.id}-${x.i}`, {board: name, rule: 'decor-ink', severity: 'error', word: x.i, text: WORDS[x.i].text, line: L.words.get(x.i)!.line, detail: `the ${sg.kind} line "${sg.id}" crosses the ink of an unretired word it does not belong to`}, f, 1);
+        }
+        if (sg.persistent || !sg.owner.length) continue;
+        if (f < firstSung(sg.owner)) continue;
+        linger(`l ${sg.id}`, `the ${sg.kind} line "${sg.id}"`, sg.owner.some((i) => wordPresent(i, f)), shown, f);
+      }
+    }
+  }
+  void ruleOwners;
+
+  // ---------------------------------------------------------------- level runs (Fable item 46)
+  // A line "rests level" when, on at least half of its frames at rest while it is sung, every word of it being read is
+  // within 8 degrees of level on screen and no retired word in frame is tilted or sideways. Two such lines in a row are
+  // an error: the rest of the frame must show the turn the reader has come through.
+  {
+    const angOf = (i: number, f: number) => { const w = L.words.get(i)!; return Math.abs(normDeg(L.blocks[w.block].angle + st(i, f).rot + camForBlock(board, w.block, f).rot)); };
+    const flat = new Map<number, boolean>();
+    for (const l of lines) {
+      const ws = L.order.filter((i) => L.words.get(i)!.line === l);
+      const f0 = Math.min(...ws.map((i) => L.words.get(i)!.sf));
+      const lw = LINES[l]?.words ?? [];
+      const f1 = Math.min(endF, lw.length ? Math.round(WORDS[lw[lw.length - 1]].end_s * FPS) : f0);
+      let rest = 0, level = 0;
+      for (let f = f0; f <= f1; f += step) {
+        if (inTransit(f)) continue;
+        const read = ws.filter((i) => f >= L.words.get(i)!.sf && f < retireFrame(board, i) && vis(st(i, f), 0.3));
+        if (!read.length) continue;
+        rest++;
+        if (read.some((i) => angOf(i, f) > 8)) continue;
+        const relief = L.order.some((i) => {
+          if (f < retireFrame(board, i)) return false;
+          const m = st(i, f);
+          if (!vis(m)) return false;
+          if (!onScreen(inkQuad(board, L, L.words.get(i)!, m, f))) return false;
+          return angOf(i, f) > 8;
+        });
+        if (!relief) level++;
+      }
+      flat.set(l, rest > 0 && level >= 0.5 * rest);
+      if (rest > 0) c.addPlan(l, `stance: level without tilted or sideways retired text on ${level} of ${rest} rest frames`);
+    }
+    for (let k = 1; k < lines.length; k++) if (flat.get(lines[k - 1]) && flat.get(lines[k]))
+      out.push({board: name, rule: 'level-run', severity: 'error', line: lines[k], detail: `L${lines[k - 1]} and L${lines[k]} both rest level (within 8 degrees) with no tilted or sideways retired text in frame (Fable item 46)`});
+  }
+
+  // ---------------------------------------------------------------- handoff frames show nothing extra
+  for (const side of ['start', 'end'] as const) {
+    const id = board.handoff?.[side];
+    if (!id || id === 'open') continue;
+    const h = HANDOFFS[id];
+    if (!h) continue;
+    const f = side === 'start' ? Math.round(board.start * FPS) : Math.round(board.end * FPS) - 1;
+    const allowed = new Set(h.elements.flatMap((e) => (e.kind === 'word' ? [e.text.toUpperCase().replace(/[^A-Z0-9]/g, '')] : [])));
+    for (const i of L.order) {
+      const m = st(i, f);
+      if (!vis(m, 0.02)) continue;
+      const w = L.words.get(i)!;
+      const q = inkQuad(board, L, w, m, f);
+      const sz = quadSize(q);
+      if (!onScreen(q) || sz.w < 2 || sz.h < 2) continue;
+      if (!allowed.has(w.text.toUpperCase().replace(/[^A-Z0-9]/g, ''))) out.push({board: name, rule: 'handoff-extra', severity: 'error', word: i, text: w.text, from: f, detail: `${id} (${side}) shows only its picture, but word ${i} "${w.text}" is visible on that frame`});
+    }
+    const cam = cameraAt(board, f);
+    for (const d of board.rules ?? []) {
+      const r = ruleAt(board, d, f / FPS);
+      if (r && r.len > 1 && r.opacity > 0.02 && onScreen([r.a, r.b, r.b, r.a].map((p) => toScreen(cam, p)))) out.push({board: name, rule: 'handoff-extra', severity: 'error', from: f, detail: `${id} (${side}): board rule "${d.id}" is visible on that frame`});
+    }
+    for (const p of board.panels ?? []) {
+      const q = panelQuad(p, f / FPS);
+      if (q && onScreen(q.map((x) => toScreen(cam, x))) && quadSize(q.map((x) => toScreen(cam, x))).w > 2 && quadSize(q.map((x) => toScreen(cam, x))).h > 2) out.push({board: name, rule: 'handoff-extra', severity: 'error', from: f, detail: `${id} (${side}): panel "${p.id}" is visible on that frame`});
+    }
+    for (const path of board.paths ?? []) if (!h.elements.some((e) => e.kind === 'mark' && e.path === path.id)) out.push({board: name, rule: 'handoff-extra', severity: 'warn', from: f, detail: `${id} (${side}): the board has ${path.label ?? 'path ' + path.id} and the handoff picture does not (check it is off frame)`});
+  }
+
+  for (const {v, worst} of agg.values()) out.push({...v, detail: worst > 1 ? `${v.detail} (worst ${worst.toFixed(1)})` : v.detail});
+  for (const v of out) if (v.from !== undefined && v.to === undefined) { v.to = v.from; v.frames = 1; }
+  void LINES; void intervals;
+  return out;
+};

@@ -1,0 +1,46 @@
+// The example's song set-up: a made-up five-line lyric with hand-set word times (no audio), a beat every half second, a
+// palette of its own and the three fonts measured in fonts/anton-dmserif-barlow.metrics.json. Imported first by
+// boards.ts, so the engine is configured before any board is laid out.
+import {configureEngine, type FontMetricsFile, type SongLine, type SongWord} from '../engine';
+import metrics from '../fonts/anton-dmserif-barlow.metrics.json';
+
+export const FPS = 30;
+export const DURATION_S = 15;
+
+/** Colours of the example (night blue ground, warm paper type, a red and a yellow). */
+export const NIGHT = '#101A2C';
+export const SLATE = '#25324A';
+export const CREAM = '#F5EBD7';
+export const RED = '#E04A35';
+export const LEAF = '#3FB27F';
+export const YELLOW = '#F2C14E';
+
+/** The lyric: [word, start second] per line; a word ends when the next one starts, a line's last word 0.6 s after its start. */
+const LYRIC: [string, number][][] = [
+  [['Lights', 0.7], ['come', 1.2], ['on', 1.6]],
+  [['the', 2.8], ['whole', 3.15], ['street', 3.55], ['turns', 4.0]],
+  [['stack', 5.2], ['every', 5.65], ['crate', 6.1]],
+  [['sign', 7.6], ['the', 8.05], ['page', 8.4]],
+  [['set', 10.2], ['the', 10.6], ['stage', 11.0]],
+];
+
+const words: SongWord[] = [];
+const lines: SongLine[] = [];
+LYRIC.forEach((ws, line) => {
+  const ix = ws.map(([text, t], k) => words.push({text, start_s: t, end_s: k + 1 < ws.length ? ws[k + 1][1] : t + 0.6, line}) - 1);
+  lines.push({id: line, text: ws.map(([x]) => x).join(' '), start_s: ws[0][1], end_s: words[ix[ix.length - 1]].end_s, words: ix});
+});
+
+configureEngine({
+  fps: FPS, width: 1280, height: 720,
+  words, lines,
+  beats: Array.from({length: DURATION_S * 2}, (_, k) => ({t: k * 0.5})),
+  palette: {ground: NIGHT, shadow: SLATE, paper: CREAM, accent: RED, accent2: LEAF, highlight: YELLOW},
+  fonts: {
+    anton: {family: 'Anton, Impact, sans-serif', style: 'normal', weight: 400, upper: true, connectives: 'barlow'},
+    serif: {family: '"DM Serif Display", Georgia, serif', style: 'italic', weight: 400},
+    barlow: {family: '"Barlow Condensed", "Arial Narrow", sans-serif', style: 'normal', weight: 700, upper: true},
+  },
+  defaultFont: 'anton',
+  metrics: metrics as unknown as FontMetricsFile,
+});

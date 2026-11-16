@@ -1,0 +1,26 @@
+// The emergence verbs (rules 54 to 68 and 170 to 172). Importing this module registers all of them.
+// It is imported by wordState after verbs.tsx, because shove and hinge extend the definitions there.
+import './seam';
+import './sprout';
+import './type';
+import './door';
+import './morph';
+import './shove';
+import './hinge';
+import './fold';
+import './stack';
+import './shelf';
+import './tip';
+import './swell';
+import './portal';
+import './relight';
+export {seamRows} from './seam';
+export {sproutTiming} from './sprout';
+export {typeStart} from './type';
+export {doorTiming} from './door';
+export {morphPlan, morphPairs} from './morph';
+export {pushPlan} from './shove';
+export {foldTiming} from './fold';
+export {tipVictims} from './tip';
+export {swellTiming} from './swell';
+export {relightTiming} from './relight';

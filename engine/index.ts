@@ -1,0 +1,36 @@
+// The kinetic type engine's public API, everything except font loading (a video loads its own fonts). Safe to import
+// from node: tools/validate-boards.mjs bundles a boards module against it.
+export {WORDS as WORDS_FOR_TOOLS} from './config';
+export * from './types';
+export * from './config';
+export {FONT_FAMILY, FONT_STYLE, FONT_INFO, METRICS_MEASURED, METRICS_SOURCE, textWidth, letterAdvances} from './metrics';
+export * from './util';
+export * from './words';
+export {useSongTime, beatIndexAt, energyAt} from './time';
+export {layoutBoard, layoutBlock, blockToWorld, worldToBlock, wordCorners, displayText, alignPoint, DEFAULT_W, BLOCK_GAP} from './layout';
+export {cameraAt, cameraMoves, camForBlock, toScreen, toWorld, cameraTransform, SCREEN_CAM} from './camera';
+export {wordStateAt, boardCues, cueAt, cueAffects, repeatScale, EXIT_FRAMES, emergeCue, retireFrame, cullFrame, lifeStage, RETIRE_OPACITY, RETIRE_FRAMES, RETIRE_AFTER, CULL_DISTANCE} from './wordState';
+export type {LifeStage} from './wordState';
+export {registerVerb, getVerb, verbNames, composeMod, IDENTITY, letterIdentity} from './verbRegistry';
+export type {VerbDef, VerbWordCtx, VerbCtxBase, WordMod, LetterMod} from './verbRegistry';
+export {carryOffset, hingeTransform} from './verbs';
+export {validateBoard, validateBoards, formatReports, checkHandoff, SUNG_MIN_CAP, MARGIN_WHOLE, MARGIN_WHOLE_BIG, MARGIN_BIG_CAP} from './validate';
+export type {Violation, BoardReport, LineReport} from './validate';
+export {TypeStage, BoardView, BoardRules, boardContext, boardActive, currentWordOn, defaultTypeColour, isLightGround} from './TypeStage';
+export {SmearStage, smearSamplesAt, rigDisplacementAt, inRigTransit, SMEAR_MIN, SMEAR_MAX, SMEAR_PX, SMEAR_SHUTTER} from './smear';
+export {Burst, burstPaths} from './burst';
+export {SPEED_CAP, SPEED_CAP_FRACTION, MIN_TRANSITION_FRAMES, MIN_VISIBLE_FRAMES, BEAT_FRAMES, VISIBLE_THRESHOLD, framesForDistance, maxScaleDelta, rectQuad} from './motion';
+export {checkTrack, validateElements, formatMotion} from './motionCheck';
+export type {TrackedElement, TrackedSample, MotionRule, MotionViolation} from './motionCheck';
+export {rigAt, rigMoves, rigNominalRot, rigTransits, toScreenCam, screenAngle, resolveTarget, DRIFT_ROT, DRIFT_ZOOM, HALF_DIAGONAL, RIG_DEFAULT_FRAMES, RIG_FRAME_RANGE, TRANSIT_KINDS} from './rig';
+export type {RigMove} from './rig';
+export {letterBoxes, letterIndex, partOfBox, resolveAnchor, describeAnchor, hasCounter, findRule} from './letters';
+export type {ResolvedAnchor, LetterBox as AnchorLetterBox, AnchorEnv} from './letters';
+export {ruleAt, ruleTracks, ruleGrowFrames, RULE_OPACITY, RULE_WIDTH} from './rules';
+export {Ground, Vignette, groundAt, wipeFrames, wipeFullAt} from './ground';
+export {Panel, panelStateAt, panelQuad, panelTrack, panelSwingExempt, SWING_EXEMPT_FRAMES} from './panel';
+export type {PanelDef, PanelOp, PanelKind} from './panel';
+export {morph, morphMarker, MORPH_MARKER_DIVE, relight, tip, portal, stackSteps, rigDiveInto} from './authoring';
+export {rays, lineMarks, graphicLife, drawLines, drawGraphics, ownersRetire, LINGER_FRAMES, LINE_EXIT_FRAMES, GRAPHIC_EXIT_FRAMES} from './lines';
+export type {LineSeg} from './lines';
+export * from './emergence';
