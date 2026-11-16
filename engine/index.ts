@@ -35,3 +35,11 @@ export {carryAt, carryCam, carrySpan, carrying, CARRY_TAIL, CARRY_LEAD, SLIDE_UP
 export {rays, lineMarks, graphicLife, drawLines, drawGraphics, ownersRetire, LINGER_FRAMES, LINE_EXIT_FRAMES, GRAPHIC_EXIT_FRAMES} from './lines';
 export type {LineSeg} from './lines';
 export * from './emergence';
+// kit pass 21 (Buy This IPO 53ca50b, KIT.md section 16)
+export {chainStep, chainFit, marginWindowEnd} from './chain';
+export type {ChainStepDef, ChainFitDef, ChainResult} from './chain';
+export {caption, captionBoxes} from './caption';
+export type {CaptionDef} from './caption';
+export {handoffWordSet, handoffClearFrame, handoffGraceEnd, handoffPairsNested, HANDOFF_CLEAR_FRAMES, HANDOFF_GRACE, HANDOFF_SUNG_WINDOW} from './handoffWords';
+export {routeAround} from './lines';
+export {isSlowSoar, SLOW_SOAR_MIN, SLOW_SOAR_MAX} from './rig';

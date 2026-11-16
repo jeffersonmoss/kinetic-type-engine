@@ -11,7 +11,7 @@ import {rampEase} from '../rig';
 import type {AnchorRef, BlockGeom, BoardLayout, VerbCue} from '../types';
 import {easeInOutSine} from '../util';
 import {getVerb, registerVerb} from '../verbRegistry';
-import {drawLines, exitFade, ownersRetire} from '../lines';
+import {drawLines, exitFade, ownersRetire, routeAround} from '../lines';
 import {BIG, P, PC, rectPath, toWorld, wordsOfCue, zoomOf} from './common';
 
 type Side = 'R' | 'L' | 'U' | 'D';
@@ -156,7 +156,8 @@ registerVerb('seam', {
     const owner = c.affected;
     const op = 0.7 * exitFade(c.f, Math.min(done + 10, ownersRetire(c.L.board, owner)));
     if (op <= 0.001 || grow <= 0) return null;
-    return [{id: `seam ${b.index}`, kind: 'seam', a, b: {x: a.x + (e.x - a.x) * grow, y: a.y + (e.y - a.y) * grow}, width: Math.max(P(c, 'width', 3), 2 / Math.max(0.01, z)), opacity: op, colour: P(c, 'colour', PALETTE.paper), owner}];
+    // kit pass 21 (IPO 53ca50b): routed round the ink of neighbouring rows it does not belong to (decor-ink)
+    return routeAround(c.L, [{id: `seam ${b.index}`, kind: 'seam', a, b: {x: a.x + (e.x - a.x) * grow, y: a.y + (e.y - a.y) * grow}, width: Math.max(P(c, 'width', 3), 2 / Math.max(0.01, z)), opacity: op, colour: P(c, 'colour', PALETTE.paper), owner}], c.f, z);
   },
   overlay: (c) => drawLines(getVerb('seam')?.lines?.(c), c.camAt(c.f).zoom),
 });

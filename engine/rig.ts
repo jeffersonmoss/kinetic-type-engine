@@ -19,6 +19,12 @@ export const RIG_DEFAULT_FRAMES: Record<RigKind, number> = {roll: 12, tilt: 10, 
 export const RIG_FRAME_RANGE: Record<RigKind, [number, number] | null> = {roll: [9, 14], tilt: [8, 12], whip: [6, 9], step: [6, 8], dive: [8, 12], soar: [8, 12], track: null, crane: null, hold: null};
 /** Kinds that are transits: a word sung during one is checked when it ends (rule 181.2) instead of during it. */
 export const TRANSIT_KINDS = new Set<RigKind>(['roll', 'tilt', 'whip', 'step', 'dive', 'soar']);
+/** Kit pass 21: a SOAR of SLOW_SOAR_MIN to SLOW_SOAR_MAX frames is a slow soar, a pull-back the words are read through:
+ *  it is not a transit (words sung during it are checked on every frame, like a CRANE or a TRACK), it eases by sine,
+ *  and the 8 to 12 frame range does not apply to it. */
+export const SLOW_SOAR_MIN = 24;
+export const SLOW_SOAR_MAX = 150;
+export const isSlowSoar = (m: {kind: RigKind; dur: number}) => m.kind === 'soar' && m.dur >= SLOW_SOAR_MIN && m.dur <= SLOW_SOAR_MAX;
 
 export const easeInOutQuart = (p: number) => { const x = clamp(p); return x < 0.5 ? 8 * x ** 4 : 1 - (-2 * x + 2) ** 4 / 2; };
 const easeSine = (p: number) => 0.5 - 0.5 * Math.cos(Math.PI * clamp(p));
@@ -115,7 +121,7 @@ const interp = (a: CameraState, b: CameraState, p: number, pivot: Pt | null): Ca
   return {x: c.x, y: c.y, zoom: z, rot: r};
 };
 const easeFor = (k: RigKey, frames: number): ((p: number) => number) => {
-  const e = k.ease ?? (k.kind === 'whip' ? 'quart' : k.kind === 'track' ? 'linear' : 'cubic');
+  const e = k.ease ?? (k.kind === 'whip' ? 'quart' : k.kind === 'track' ? 'linear' : isSlowSoar({kind: k.kind, dur: frames}) ? 'sine' : 'cubic');
   if (e === 'quart') return easeInOutQuart;
   if (e === 'sine') return easeSine;
   if (e === 'linear') return rampEase(frames, 6);
@@ -161,7 +167,9 @@ const resolve = (board: Board): RigCache => {
       const d = rot({x: Math.cos((k.dir ?? 0) * Math.PI / 180) * k.speed * frames, y: Math.sin((k.dir ?? 0) * Math.PI / 180) * k.speed * frames}, -base.rot);
       target = {...base, x: base.x + d.x / base.zoom, y: base.y + d.y / base.zoom};
     }
-    if (k.kind === 'crane' && k.follow) target = craneState(k, base, t + frames / FPS);
+    // a CRANE follows its point at the pose `to` asks for (to.zoom, to.rot; kit pass 21: it used the base pose, so to.zoom
+    // was dropped); the follow sets its centre
+    if (k.kind === 'crane' && k.follow) target = craneState(k, pose, t + frames / FPS);
     // limits (rule 166.4): a 90 degree change takes at least 8 frames; any change at least 6
     const dRot = Math.abs(target.rot - nominal.rot);
     const changes = dRot > 1e-6 || Math.abs(Math.log(target.zoom / nominal.zoom)) > 1e-6 || Math.hypot(target.x - nominal.x, target.y - nominal.y) > 1e-6;
@@ -206,9 +214,13 @@ const evalMove = (m: RigMove, _x: number, board: Board, f: number): CameraState 
   if (m.dur <= 0 || f >= m.start + m.dur) return driftState(m.target, (f - m.start - m.dur) / FPS, m.driftRot, m.driftZoom);
   const p = (f - m.start) / m.dur;
   if (m.kind === 'crane' && m.key.follow) {
-    const live = craneState(m.key, {...m.from, rot: lerp(m.from.rot, m.target.rot, m.ease(p)), zoom: m.target.zoom}, f / FPS);
     const blend = easeInOutCubic(clamp((f - m.start) / Math.min(8, m.dur)));
-    return {x: lerp(m.from.x, live.x, blend), y: lerp(m.from.y, live.y, blend), zoom: Math.exp(lerp(Math.log(m.from.zoom), Math.log(live.zoom), blend)), rot: live.rot};
+    // with to.zoom the zoom changes over the whole move on the move's ease (a crane that also pulls in or out); without
+    // it the drifted zoom settles back to the authored one in the first 8 frames, as before
+    const zp = m.key.to?.zoom !== undefined ? m.ease(p) : blend;
+    const zoom = Math.exp(lerp(Math.log(m.from.zoom), Math.log(m.target.zoom), zp));
+    const live = craneState(m.key, {...m.from, rot: lerp(m.from.rot, m.target.rot, m.ease(p)), zoom}, f / FPS);
+    return {x: lerp(m.from.x, live.x, blend), y: lerp(m.from.y, live.y, blend), zoom, rot: live.rot};
   }
   void board;
   return interp(m.from, m.target, m.ease(p), m.pivot);
@@ -241,7 +253,7 @@ export const rigNominalRot = (board: Board, frame: number): number => {
 };
 /** Transit windows [start, end] in frames (rule 181.2). */
 export const rigTransits = (board: Board): {start: number; end: number; kind: RigKind}[] =>
-  rigMoves(board).filter((m) => TRANSIT_KINDS.has(m.kind) && m.dur > 0).map((m) => ({start: m.start, end: m.start + m.dur, kind: m.kind}));
+  rigMoves(board).filter((m) => TRANSIT_KINDS.has(m.kind) && m.dur > 0 && !isSlowSoar(m)).map((m) => ({start: m.start, end: m.start + m.dur, kind: m.kind}));
 
 // (The gaussian whip smear, rigSmearAt, is gone: true motion blur on every transit is in smear.tsx, engine item 32.)
 

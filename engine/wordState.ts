@@ -1,6 +1,7 @@
 // Word life: arrival, sung, held, retired, culled; board exits; then verb, panel and occlusion effects (rule 50,
 // rule 168). Pure function of (board, word, frame). Used by the renderer and by validateBoard alike.
 import {panelCover, panelWordMod} from './panels';
+import {HANDOFF_CLEAR_FRAMES, handoffClearFrame} from './handoffWords';
 import {CULL_DISTANCE, FPS, HEIGHT, LINES, WIDTH, WORDS} from './config';
 import {camForBlock, cameraAt, toScreen} from './camera';
 import {rigTransits} from './rig';
@@ -145,6 +146,29 @@ export const cullFrame = (board: Board, i: number): number => {
   memo.set(i, out);
   return out;
 };
+const clearMemo = new WeakMap<Board, Map<number, number>>();
+/** Kit pass 21: the frame from which word i fades out for the end handoff (handoffWords.ts), or Infinity when it does
+ *  not need to: it is in the handoff picture, culled by then, or (its laid-out box, at the camera of the board's last
+ *  frame) out of frame anyway. */
+export const handoffClearAt = (board: Board, i: number): number => {
+  let memo = clearMemo.get(board);
+  if (!memo) { memo = new Map(); clearMemo.set(board, memo); }
+  const hit = memo.get(i);
+  if (hit !== undefined) return hit;
+  let out = handoffClearFrame(board, i);
+  if (out < Infinity) {
+    const lastF = out + HANDOFF_CLEAR_FRAMES;
+    const L = layoutBoard(board);
+    const w = L.words.get(i)!;
+    const cam = camForBlock(board, w.block, lastF);
+    const q = wordCorners(L.blocks[w.block], {...w, h: w.boxH}).map((p) => toScreen(cam, p));
+    const xs = q.map((p) => p.x), ys = q.map((p) => p.y);
+    const inFrame = Math.max(...xs) > 0 && Math.min(...xs) < WIDTH && Math.max(...ys) > 0 && Math.min(...ys) < HEIGHT;
+    if (cullFrame(board, i) <= lastF || !inFrame) out = Infinity;
+  }
+  memo.set(i, out);
+  return out;
+};
 /** Life stage of a word at a frame (rule 168). */
 export type LifeStage = 'hidden' | 'arriving' | 'sung' | 'held' | 'retired' | 'culled';
 export const lifeStage = (board: Board, i: number, f: number): LifeStage => {
@@ -183,7 +207,10 @@ export const wordStateAt = (board: Board, i: number, f: number): WordMod => {
   const replaced = replacers.length > 0;
   // A word whose entrance a verb replaces stays hidden until that verb's lead window opens (it used to show at full
   // opacity from the board's start, vanish at the lead window, then enter: a blink).
-  const hideBefore = replaced ? Math.min(...replacers.map((c) => baseCtx(c, L, 0).at * FPS - (getVerb(c.name)?.lead ?? 0))) : -Infinity;
+  // (a verb may also hide only some of its words before it starts, `hiddenBefore`: SHOVE push hides its new words, not
+  // the old block it pushes)
+  const hiders = cues.filter((c) => !replacers.includes(c) && getVerb(c.name)?.hiddenBefore?.(c, L).includes(i));
+  const hideBefore = replaced || hiders.length ? Math.min(...[...replacers, ...hiders].map((c) => baseCtx(c, L, 0).at * FPS - (getVerb(c.name)?.lead ?? 0))) : -Infinity;
   if (f < hideBefore) return {...IDENTITY, hidden: true, opacity: 0};
   let m: WordMod = {...IDENTITY};
   if (w.opts.tilt) m = composeMod(m, {rot: w.opts.tilt}, n);
@@ -213,6 +240,9 @@ export const wordStateAt = (board: Board, i: number, f: number): WordMod => {
   if (f >= cullFrame(board, i)) return {...IDENTITY, hidden: true, opacity: 0};
   const ret = retireFrame(board, i);
   if (f > ret) m = composeMod(m, {opacity: 1 - (1 - RETIRE_OPACITY) * clamp((f - ret) / RETIRE_FRAMES)}, n);
+  // the end handoff shows only its picture (rule 81.7): every other word fades out over the board's last frames
+  const hc = handoffClearAt(board, i);
+  if (f >= hc) m = composeMod(m, {opacity: 1 - clamp((f - hc) / HANDOFF_CLEAR_FRAMES)}, n);
   const co = carryOutSpan(board, i);
   if (co && f >= co.from) m = composeMod(m, {opacity: 1 - clamp((f - co.from) / Math.max(1, co.to - co.from))}, n);
   // board exit

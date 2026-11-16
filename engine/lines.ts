@@ -12,8 +12,10 @@ import {ruleAt} from './rules';
 import type {Board, BoardCtx, BoardLayout, DecorGraphic, Pt} from './types';
 import {clamp} from './util';
 import {getVerb} from './verbRegistry';
-import {baseCtx, boardCues, retireFrame} from './wordState';
-import {layoutBoard} from './layout';
+import {baseCtx, boardCues, retireFrame, wordStateAt} from './wordState';
+import {blockToWorld, layoutBoard} from './layout';
+import {FONT_INFO} from './metrics';
+import {rot} from './util';
 
 /** Frames a line or graphic may stay in frame after every owner has retired or left frame (ruling 198). */
 export const LINGER_FRAMES = 20;
@@ -49,6 +51,78 @@ export const exitFade = (f: number, from: number, frames = LINE_EXIT_FRAMES) => 
 export const drawLines = (segs: LineSeg[] | null | undefined, zoom: number): React.ReactNode =>
   segs && segs.length ? React.createElement('g', null, ...segs.filter((s) => s.opacity > 0.003).map((s) =>
     React.createElement('line', {key: s.id, x1: s.a.x, y1: s.a.y, x2: s.b.x, y2: s.b.y, stroke: s.colour ?? PALETTE.paper, strokeWidth: Math.max(s.width, 2 / Math.max(0.01, zoom)), opacity: s.opacity, strokeLinecap: 'butt'}))) : null;
+
+/** A word's ink at frame f in world px (highest ascender to lowest descender, across its advance, under its render
+ *  state), as validateRules.ts inkQuad has it on screen. */
+const inkWorld = (L: BoardLayout, i: number, f: number): Pt[] | null => {
+  const w = L.words.get(i)!;
+  const m = wordStateAt(L.board, i, f);
+  if (m.hidden || m.opacity <= 0.05) return null;
+  const fi = FONT_INFO[w.font];
+  const asc = /[bdfhklt'’]/.test(w.text) ? Math.max(0, fi.asc - fi.cap) * w.size : 0;
+  const desc = /[gjpqy,;]/.test(w.text) ? fi.inkDesc * w.size : 0;
+  const cx = w.x + w.w / 2, cy = w.y + w.h / 2;
+  const b = L.blocks[w.block];
+  return [{x: w.x, y: w.y - asc}, {x: w.x + w.w, y: w.y - asc}, {x: w.x + w.w, y: w.baseline + desc}, {x: w.x, y: w.baseline + desc}].map((p) => {
+    const q = rot({x: (p.x - cx) * m.sx, y: (p.y - cy) * m.sy}, m.rot);
+    return blockToWorld(b, {x: q.x + cx + m.dx, y: q.y + cy + m.dy});
+  });
+};
+/** Parameter interval [t0, t1] of segment a-b inside convex polygon q grown by d (Cyrus-Beck), or null. */
+const segInside = (a: Pt, b: Pt, q: Pt[], d: number): [number, number] | null => {
+  let area = 0;
+  for (let k = 0; k < q.length; k++) { const p = q[k], r = q[(k + 1) % q.length]; area += p.x * r.y - r.x * p.y; }
+  const sgn = area >= 0 ? 1 : -1;
+  let t0 = 0, t1 = 1;
+  const dir = {x: b.x - a.x, y: b.y - a.y};
+  for (let k = 0; k < q.length; k++) {
+    const p = q[k], r = q[(k + 1) % q.length];
+    const ex = r.x - p.x, ey = r.y - p.y, l = Math.hypot(ex, ey) || 1;
+    const n = {x: (sgn * ey) / l, y: (-sgn * ex) / l}; // outward
+    const c = n.x * p.x + n.y * p.y + d;
+    const num = c - (n.x * a.x + n.y * a.y), den = n.x * dir.x + n.y * dir.y;
+    if (Math.abs(den) < 1e-12) { if (num < 0) return null; continue; }
+    const t = num / den;
+    if (den > 0) t1 = Math.min(t1, t); else t0 = Math.max(t0, t);
+    if (t0 > t1) return null;
+  }
+  return [t0, t1];
+};
+/**
+ * Kit pass 21 (decor-ink): a hairline a verb draws (a SEAM, a DOOR hinge) is routed round the ink of every unretired
+ * word it does not belong to: the parts of it that would cross that ink, plus a clearance of half its width and 4 px
+ * on screen, are left out, so it breaks round a neighbouring row instead of drawing through it. Pieces shorter than
+ * 6 px on screen are dropped. The renderer and the validator both read the routed pieces (ids "seam 7", "seam 7~1"...).
+ */
+export const routeAround = (L: BoardLayout, segs: LineSeg[], f: number, zoom: number): LineSeg[] => {
+  const out: LineSeg[] = [];
+  const z = Math.max(0.01, zoom);
+  for (const sg of segs) {
+    const own = new Set(sg.owner);
+    const cuts: [number, number][] = [];
+    for (const i of L.order) {
+      if (own.has(i)) continue;
+      const w = L.words.get(i)!;
+      if (f < w.sf || f >= retireFrame(L.board, i)) continue;
+      const q = inkWorld(L, i, f);
+      if (!q) continue;
+      const iv = segInside(sg.a, sg.b, q, sg.width / 2 + 4 / z);
+      if (iv) cuts.push(iv);
+    }
+    if (!cuts.length) { out.push(sg); continue; }
+    cuts.sort((x, y) => x[0] - y[0]);
+    const len = Math.hypot(sg.b.x - sg.a.x, sg.b.y - sg.a.y) * z;
+    let t = 0, k = 0;
+    const piece = (u0: number, u1: number) => {
+      if ((u1 - u0) * len < 6) return;
+      const at = (u: number) => ({x: sg.a.x + (sg.b.x - sg.a.x) * u, y: sg.a.y + (sg.b.y - sg.a.y) * u});
+      out.push({...sg, id: k ? `${sg.id}~${k}` : sg.id, a: at(u0), b: at(u1)}); k++;
+    };
+    for (const [c0, c1] of cuts) { if (c0 > t) piece(t, c0); t = Math.max(t, c1); }
+    if (t < 1) piece(t, 1);
+  }
+  return out;
+};
 
 /** Words owning a board rule: its `owner` words and the words of its `owner` blocks. */
 export const ruleOwners = (board: Board, owner: {words?: number[]; blocks?: number[]} | undefined): number[] => {

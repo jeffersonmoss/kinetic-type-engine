@@ -155,6 +155,12 @@ export interface DecorGraphic {
   persistent?: boolean;
   /** Words may stand on it (a band, a road: a ground, like a panel), so it is exempt from `decor-ink`. */
   ground?: boolean;
+  /** It draws type (a title, a caption, an end card): a frame with it in view is not empty of type (`empty-frame`).
+   *  Kit pass 21. Set automatically by caption(). */
+  isType?: boolean;
+  /** A non-lyric caption (caption.tsx): the validator checks it like a sung word, in the safe margin, at least 56 px cap
+   *  on screen, at full opacity for at least 15 frames, and crossed by no line, rule or other graphic (`caption`). */
+  caption?: {text: string; cap: number; minFrames?: number};
   /** Its ink at song seconds t (polygons), or null when nothing is drawn. Keep it in the function draw() uses. */
   box: (c: {t: number; board: Board; layout: BoardLayout}) => Pt[][] | null;
   /** Draws it. `life.age` frames since `from`, `life.left` frames to `until`, `life.out` exit progress 0 to 1. */

@@ -49,6 +49,11 @@ import type {Violation} from './validate';
  *  quarter stance). */
 export const GIANT_CAP = 240;
 export const GIANT_SPAN = 800;
+/** Caption checks (kit pass 21): the same 48 px margin, 56 px cap and 15-frame floor as sung words (validate.ts SAFE,
+ *  SUNG_MIN_CAP, motion.ts MIN_VISIBLE_FRAMES; repeated here because validate.ts imports this file). */
+const CAPTION_SAFE = 48;
+const CAPTION_MIN_CAP = 56;
+const CAPTION_MIN_FRAMES = 15;
 /** FAN Joint distance cap in screen px (DOGE item 45: 320 world px at its 1920-wide world, two thirds of a screen px each). */
 export const JOINT_MAX = 213;
 
@@ -140,6 +145,15 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
 
   // ---------------------------------------------------------------- per frame: ink overlap, empty rig frames, giant rests
   const moves = rigMoves(board).filter((m) => m.dur > 0);
+  const typeGraphicInFrame = (f: number) => (board.graphics ?? []).some((g) => {
+    if (!g.isType) return false;
+    const life = graphicLife(g, f / FPS);
+    if (!life || (g.exitBy !== 'shape' && life.out > 0.7)) return false;
+    const polys = g.box({t: f / FPS, board, layout: L});
+    if (!polys?.length) return false;
+    const cam = cameraAt(board, f);
+    return polys.some((q) => onScreen(g.layer === 'screen' ? q : q.map((p) => toScreen(cam, p))));
+  });
   const inMove = (f: number) => moves.some((m) => f >= m.start && f < m.start + m.dur);
   const giantAt = new Map<number, number>(); // line -> frames at rest with a giant word in frame
   const lineOfFrame = (f: number) => { let l = -1; for (const i of L.order) if (L.words.get(i)!.sf <= f) l = L.words.get(i)!.line; return l; };
@@ -167,8 +181,8 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
         }
       }
     }
-    // no frame of a rig move is empty of type
-    if (inMove(f) && !shown.some((x) => x.m.opacity > 0.3 && onScreen(inks.get(x.i)!)))
+    // no frame of a rig move is empty of type (kit pass 21: a graphic that draws type, a title or a caption, counts)
+    if (inMove(f) && !shown.some((x) => x.m.opacity > 0.3 && onScreen(inks.get(x.i)!)) && !typeGraphicInFrame(f))
       note('empty', {board: name, rule: 'empty-frame', severity: 'error', detail: 'a frame of a rig move has no type in it (bare ground)'}, f, 1);
     // giant-level rests (rule 49): at rest (not in a transit), a word in frame at cap 240 or more spanning 800 px (or
     // the frame's height in a quarter stance)
@@ -337,6 +351,34 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
       runs.set(key, r);
       if (r > LINGER_FRAMES) note(`linger ${key}`, {board: name, rule: 'line-linger', severity: 'error', detail: `${label} is in frame more than ${LINGER_FRAMES} frames after its owner retired or left frame (ruling 198: it retires with its word, panel or line)`}, f, r);
     };
+    // kit pass 21: non-lyric captions (caption.tsx) are read like sung words: in the 48 px margin and at least 56 px cap on
+    // screen while at opacity 0.5 or more, readable so for at least 15 frames, and crossed by no rule, line or graphic
+    const capRead = new Map<string, number>();
+    const captionFrame = (g: NonNullable<Board['graphics']>[number], sp: Pt[][], f: number, zoom: number) => {
+      const life = graphicLife(g, f / FPS)!;
+      const op = g.exitBy === 'shape' ? 1 : 1 - life.out;
+      if (op < 0.5) return;
+      const cap = g.caption!.cap * (g.layer === 'screen' ? 1 : zoom);
+      const xs = sp.flat().map((p) => p.x), ys = sp.flat().map((p) => p.y);
+      const over = Math.max(CAPTION_SAFE - Math.min(...xs), Math.max(...xs) - (WIDTH - CAPTION_SAFE), CAPTION_SAFE - Math.min(...ys), Math.max(...ys) - (HEIGHT - CAPTION_SAFE));
+      const base = {board: name, rule: 'caption', severity: 'error' as const, text: g.caption!.text};
+      if (over > 0.5) note(`capm ${g.id}`, {...base, detail: `caption "${g.id}" is outside the 48 px safe margin`}, f, over);
+      if (cap < CAPTION_MIN_CAP - 0.25) note(`capc ${g.id}`, {...base, detail: `caption "${g.id}" cap height below ${CAPTION_MIN_CAP} px on screen`}, f, CAPTION_MIN_CAP - cap);
+      if (over <= 0.5 && cap >= CAPTION_MIN_CAP - 0.25) capRead.set(g.id, (capRead.get(g.id) ?? 0) + step);
+      const cam = cameraAt(board, f);
+      for (const sg of lineMarks(board, f) as LineSeg[]) {
+        if (sg.opacity < 0.05) continue;
+        const q = segQuad(toScreen(cam, sg.a), toScreen(cam, sg.b), Math.max(2, sg.width * cam.zoom));
+        if (sp.some((c) => polysOverlap(c, q, 1))) note(`capl ${g.id}-${sg.id}`, {...base, detail: `the ${sg.kind} line "${sg.id}" crosses caption "${g.id}"`}, f, 1);
+      }
+      for (const o of board.graphics ?? []) {
+        if (o === g || o.ground || !graphicLife(o, f / FPS)) continue;
+        const op2 = o.box({t: f / FPS, board, layout: L});
+        if (!op2?.length) continue;
+        const sp2 = o.layer === 'screen' ? op2 : op2.map((q) => q.map((p) => toScreen(cam, p)));
+        if (sp.some((c) => sp2.some((d) => polysOverlap(c, d, 1)))) note(`capg ${g.id}-${o.id}`, {...base, detail: `graphic "${o.id}" crosses caption "${g.id}"`}, f, 1);
+      }
+    };
     for (let f = startF; f <= endF; f += step) {
       const t = f / FPS;
       const cam = cameraAt(board, f);
@@ -347,6 +389,7 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
         if (!polys || !polys.length) { runs.set(`g ${g.id}`, 0); continue; }
         const sp = g.layer === 'screen' ? polys : polys.map((q) => q.map((p) => toScreen(cam, p)));
         const shown = sp.some((q) => onScreen(q));
+        if (g.caption) captionFrame(g, sp, f, cam.zoom);
         if (!g.ground) for (const x of ink) if (sp.some((q) => polysOverlap(q, x.q, 1)))
           note(`gink ${g.id}-${x.i}`, {board: name, rule: 'decor-ink', severity: 'error', word: x.i, text: WORDS[x.i].text, line: L.words.get(x.i)!.line, detail: `graphic "${g.id}" crosses the ink of an unretired word`}, f, 1);
         if (!g.persistent && g.owner) {
@@ -369,6 +412,10 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
         if (f < firstSung(sg.owner)) continue;
         linger(`l ${sg.id}`, `the ${sg.kind} line "${sg.id}"`, sg.owner.some((i) => wordPresent(i, f)), shown, f);
       }
+    }
+    for (const g of board.graphics ?? []) if (g.caption) {
+      const need = g.caption.minFrames ?? CAPTION_MIN_FRAMES, got = capRead.get(g.id) ?? 0;
+      if (got < need) out.push({board: name, rule: 'caption', severity: 'error', text: g.caption.text, detail: `caption "${g.id}" is readable (opacity 0.5 or more, in the margin, cap 56 px or more) for ${got} frames on this board (needs ${need})`});
     }
   }
   void ruleOwners;

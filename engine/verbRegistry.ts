@@ -93,6 +93,9 @@ export interface VerbDef {
   overlapExempt?: (cue: VerbCue, L: BoardLayout) => [number, number][];
   /** The verb replaces the word's normal entrance (e.g. rush). */
   replacesEnter?: boolean;
+  /** Words of the cue that are hidden before it starts (like replacesEnter, for some of its words only: SHOVE push hides
+   *  its new words until they set off, and leaves the old block it pushes alone). */
+  hiddenBefore?: (cue: VerbCue, L: BoardLayout) => number[];
   /** Frame (absolute) from which the word is gone for good, if the verb removes it; used by the validator. */
   removesAt?: (c: VerbCtxBase & {i: number}) => number | null;
   /** Per-word adjustment while active. Return null for no change. */

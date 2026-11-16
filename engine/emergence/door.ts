@@ -10,7 +10,7 @@ import {FPS, PALETTE} from '../config';
 import type {BoardLayout, Pt, VerbCue} from '../types';
 import {clamp, mixHex} from '../util';
 import {getVerb, registerVerb} from '../verbRegistry';
-import {drawLines, exitFade} from '../lines';
+import {drawLines, exitFade, routeAround} from '../lines';
 import {BIG, PC, capFrames, centreOf, eased, firstSf, rectPath, toLocal, toWorld, wordsOfCue, wordsParam, zoomOf, type VerbWordCtx} from './common';
 
 export const doorTiming = (cue: VerbCue, L: BoardLayout) => {
@@ -73,7 +73,9 @@ registerVerb('door', {
       : edge === 'top' ? [{x: g.x - pad, y: g.y}, {x: g.x + g.w + pad, y: g.y}] : [{x: g.x - pad, y: g.y + g.boxH}, {x: g.x + g.w + pad, y: g.y + g.boxH}];
     const [a, e] = ends.map((q) => toWorld(b, q));
     const z = c.camAt(c.f).zoom;
-    return [{id: `hinge ${g.i}`, kind: 'hinge', a, b: e, width: Math.max(3, 2 / Math.max(0.01, z)), opacity: op, colour: PALETTE.paper, owner: [...wordsOfCue(c.cue, c.L)]}];
+    // kit pass 21 (IPO 53ca50b): the hinge is the old word's own edge, so the old words own it too, and it is routed
+    // round any other unretired ink (decor-ink)
+    return routeAround(c.L, [{id: `hinge ${g.i}`, kind: 'hinge', a, b: e, width: Math.max(3, 2 / Math.max(0.01, z)), opacity: op, colour: PALETTE.paper, owner: [...old, ...wordsOfCue(c.cue, c.L)]}], c.f, z);
   },
   overlay: (c) => drawLines(getVerb('door')?.lines?.(c), c.camAt(c.f).zoom),
   modify: (c) => {

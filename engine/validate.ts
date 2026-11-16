@@ -10,7 +10,9 @@ import {blockToWorld, layoutBoard} from './layout';
 import {describeAnchor, resolveAnchor} from './letters';
 import {MIN_TRANSITION_FRAMES, rectQuad} from './motion';
 import {clipConvex, polyArea} from './validateRules';
-import {RIG_FRAME_RANGE, rigMoves, rigTransits} from './rig';
+import {RIG_FRAME_RANGE, SLOW_SOAR_MAX, SLOW_SOAR_MIN, isSlowSoar, rigMoves, rigTransits} from './rig';
+import {handoffGraceEnd, handoffPairsNested, handoffWordSet} from './handoffWords';
+import {MIN_VISIBLE_FRAMES} from './motion';
 import {ruleTracks} from './rules';
 import type {Board, CameraState, Handoff, HandoffId, Pt, WordGeom} from './types';
 import {normDeg, polysOverlap, rot} from './util';
@@ -20,7 +22,7 @@ import {panelTracks, separatingPanel} from './panels';
 import {panelGoneAt, panelQuad, panelSwingExempt, panelSwinging} from './panel';
 import {boardRuleChecks} from './validateRules';
 import {emptyTimeline, motionRuleChecks} from './validateMotion';
-import {EXIT_FRAMES, RETIRE_AFTER, baseCtx, boardCues, cueAffects, cueAt, retireFrame, wordStateAt} from './wordState';
+import {EXIT_FRAMES, RETIRE_AFTER, handoffClearAt, baseCtx, boardCues, cueAffects, cueAt, retireFrame, wordStateAt} from './wordState';
 
 export const SAFE = 48;
 export type Severity = 'error' | 'warn';
@@ -135,6 +137,11 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
     const gap = Math.max(16, p.foldGap ?? 20);
     if (g * FPS < last + gap - 0.5) out.push({board: name, rule: 'panel-fold-early', severity: 'error', word: mine[mine.length - 1], text: WORDS[mine[mine.length - 1]].text, from: Math.round(g * FPS), detail: `panel "${p.id}" starts to fold or fall ${(g * FPS - last).toFixed(0)} frames after its last printed word is sung (at least ${gap}; Fable item 28)`});
   }
+  // kit pass 21: the end handoff's clear removes every word that is not in its picture; a nest drawn by the handoff
+  // picture itself (LOVE in MOST's O) is not an overlap
+  const clearAt = new Map<number, number>();
+  for (const i of L.order) { const c = handoffClearAt(board, i); if (c < Infinity) clearAt.set(i, c); }
+  exempt.push(...handoffPairsNested(board, L));
   const isExempt = (a: number, b: number) => exempt.some(([x, y]) => (x === a && y === b) || (x === b && y === a));
   const replacedEnter = (i: number) => cues.some((c) => getVerb(c.name)?.replacesEnter && cueAffects(c, L, getVerb(c.name)).includes(i));
   const gradualFor = (i: number) => cues.some((c) => getVerb(c.name)?.gradual && cueAffects(c, L, getVerb(c.name)).includes(i));
@@ -176,19 +183,28 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
 
   // Reading intervals
   const intervals = new Map<number, [number, number]>();
+  // kit pass 21 (IPO 53ca50b): a word of the start handoff's picture sung before the board starts was sung on the
+  // earlier board; here it is read from the board's first frame
+  const carried = new Set([...handoffWordSet(board, L, 'start')].filter((i) => L.words.get(i)!.sf < startF));
   for (const i of L.order) {
     const w = L.words.get(i)!;
     const req = retireFrame(board, i);
-    const rem = removal.get(i) ?? Infinity;
+    const rem0 = removal.get(i) ?? Infinity;
+    const clear = clearAt.get(i) ?? Infinity;
+    const rem = Math.min(rem0, clear);
+    // Jefferson's floor: a word cut short by the handoff clear must still have been readable for MIN_VISIBLE_FRAMES
+    const shownAtClear = () => { const m = wordStateAt(board, i, clear); return !m.hidden && m.opacity > 0.05; };
+    if (clear < Math.min(req, rem0) && clear - w.sf < MIN_VISIBLE_FRAMES && shownAtClear())
+      out.push({board: name, rule: 'handoff-clear', severity: 'error', word: i, text: w.text, line: w.line, from: Math.round(clear), to: Math.round(clear), frames: 1, detail: `still shown when the end handoff's clear starts (frame ${clear}), only ${clear - w.sf} frames after it is sung: it cannot be read for ${MIN_VISIBLE_FRAMES} frames before the handoff picture (rule 81.7; Jefferson's floor). Sing it earlier on this board, or make it part of the handoff picture`});
     // the reading interval is half-open, [sung frame, retire or removal frame): from that frame the word is retired
     // (dimmed, exempt) or gone
     const end = Math.min(req, rem, endF) - 1e-6;
     const d = displayFrom.get(i);
     if (d !== undefined && d > w.sf + 0.5) out.push({board: name, rule: 'display-late', severity: 'error', word: i, text: w.text, line: w.line, detail: `its emergence finishes ${(d - w.sf).toFixed(1)} frames after the word is sung (a morph must be done by the sung frame)`});
-    intervals.set(i, [w.sf, end]);
+    intervals.set(i, [carried.has(i) ? startF : w.sf, end]);
     if (endF < Math.min(req, rem) - 0.5)
       out.push({board: name, rule: 'min-life', severity: 'warn', word: i, text: w.text, line: w.line, detail: `board exits at frame ${endF.toFixed(0)}, ${(Math.min(req, rem) - endF).toFixed(0)} frames before the word's required life ends (${req})`});
-    if (w.sf < startF) out.push({board: name, rule: 'board-start', severity: 'error', word: i, text: w.text, detail: `word starts at frame ${w.sf}, before the board appears (${startF})`});
+    if (w.sf < startF && !carried.has(i)) out.push({board: name, rule: 'board-start', severity: 'error', word: i, text: w.text, detail: `word starts at frame ${w.sf}, before the board appears (${startF})`});
   }
 
   // Relight binds: the displayed word is read while the bound word is sung
@@ -200,6 +216,16 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
     if (iv[1] < s1 - 0.5) out.push({board: name, rule: 'relight', severity: 'error', word: bd.display, text: WORDS[bd.display].text, detail: `retires at frame ${iv[1].toFixed(0)}, before the bound word "${sw.text}" finishes (frame ${s1})`});
     intervals.set(bd.display, [iv[0], Math.max(iv[1], Math.min(s1, endF))]);
     addPlan(sw.line, `relight: "${sw.text}" (${bd.sung}) sung on "${WORDS[bd.display].text}" (${bd.display}) from frame ${s0}`);
+  }
+  // Rule 81.7: a word sung on the start boundary or within 9 frames after it is read from 10 frames after the boundary,
+  // and must stay readable for 10 frames from then (as rule 41 asks of a word sung during a rig move)
+  const grace = new Map<number, number>();
+  for (const i of L.order) {
+    const g = handoffGraceEnd(board, i);
+    if (g === -Infinity) continue;
+    grace.set(i, g);
+    const iv = intervals.get(i)!;
+    if (iv[1] < Math.min(g + 10, endF) - 0.5) out.push({board: name, rule: 'handoff-read', severity: 'error', word: i, text: L.words.get(i)!.text, line: L.words.get(i)!.line, detail: `sung within 9 frames of the start handoff but its reading interval ends at ${iv[1].toFixed(0)}, before 10 frames after its readable frame (${g}; rule 81.7)`});
   }
   // Words sung during a rig transit must still be read at its end plus 10 frames (rule 181.2)
   for (const tr of transits) for (const i of L.order) {
@@ -228,7 +254,7 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
   const capMemo = new Map<number, number>();
   const capAtSung = (i: number) => {
     let c = capMemo.get(i);
-    if (c === undefined) { const w = L.words.get(i)!; const m = wordStateAt(board, i, w.sf); c = w.h * Math.abs(m.sy) * camForBlock(board, w.block, w.sf).zoom; capMemo.set(i, c); }
+    if (c === undefined) { const w = L.words.get(i)!; const f0 = Math.max(w.sf, startF); const m = wordStateAt(board, i, f0); c = w.h * Math.abs(m.sy) * camForBlock(board, w.block, f0).zoom; capMemo.set(i, c); }
     return c;
   };
   const lineSungEnd = (l: number) => { const ws = LINES[l]?.words ?? []; return ws.length ? Math.round(WORDS[ws[ws.length - 1]].end_s * FPS) : -Infinity; };
@@ -293,6 +319,7 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
       const s = states.get(i)!;
       const bcam = camForBlock(board, w.block, f);
       if (moving && b.def.pin !== 'screen') continue; // rule 181.2: checked when the transit ends
+      if (f < (grace.get(i) ?? -Infinity)) continue; // rule 81.7: checked from 10 frames after the start handoff
       const base: Violation = {board: name, rule: '', severity: 'error', word: i, text: WORDS[i].text, line: w.line, detail: ''};
       // rule 58: a held morph source waits exempt from the readability rules, but nothing may touch its ink (Fable
       // item 30 overruled the overlap exemption of KIT 79.4)
@@ -375,7 +402,9 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
     if (m.stretchedFrom !== undefined) out.push({board: name, rule: 'rig-stretched', severity: 'warn', line: l, detail: `${m.kind} at frame ${m.start.toFixed(0)} asked for ${m.stretchedFrom} frames; lengthened to ${m.dur}`});
     const rg = RIG_FRAME_RANGE[m.kind];
     const slowRoll = m.kind === 'roll' && m.dur >= 24 && m.dur <= 36;
-    if (rg && !slowRoll && (m.dur < rg[0] || m.dur > rg[1])) out.push({board: name, rule: 'rig-frames', severity: 'warn', line: l, detail: `${m.kind} at frame ${m.start.toFixed(0)} takes ${m.dur} frames (style bible: ${rg[0]} to ${rg[1]}${m.kind === 'roll' ? ', or a slow roll of 24 to 36' : ''})`});
+    const slowSoar = isSlowSoar(m);
+    if (m.kind === 'soar' && m.dur > SLOW_SOAR_MAX) out.push({board: name, rule: 'rig-frames', severity: 'warn', line: l, detail: `soar at frame ${m.start.toFixed(0)} takes ${m.dur} frames (a slow soar takes ${SLOW_SOAR_MIN} to ${SLOW_SOAR_MAX})`});
+    if (rg && !slowRoll && !slowSoar && !(m.kind === 'soar' && m.dur > SLOW_SOAR_MAX) && (m.dur < rg[0] || m.dur > rg[1])) out.push({board: name, rule: 'rig-frames', severity: 'warn', line: l, detail: `${m.kind} at frame ${m.start.toFixed(0)} takes ${m.dur} frames (style bible: ${rg[0]} to ${rg[1]}${m.kind === 'roll' ? ', or a slow roll of 24 to 36' : ''})`});
     if (Math.abs(dRot) >= 80 && m.dur < 8) out.push({board: name, rule: 'rig-turn', severity: 'error', line: l, detail: `${m.kind} turns ${dRot.toFixed(0)} degrees in ${m.dur} frames (a quarter turn takes at least 8)`});
     const changes = Math.abs(dRot) > 0.01 || Math.abs(m.target.zoom / Math.max(1e-6, m.from.zoom) - 1) > 0.001 || Math.hypot(m.target.x - m.from.x, m.target.y - m.from.y) > 0.5;
     if (changes && m.dur > 0 && m.dur < 6) out.push({board: name, rule: 'rig-frames', severity: 'error', line: l, detail: `${m.kind} at frame ${m.start.toFixed(0)} changes the camera in ${m.dur} frames (transitions take at least 6)`});

@@ -10,7 +10,7 @@ import {FONT_FAMILY, FONT_STYLE} from './metrics';
 import type {BoardLayout, Pt, VerbCue, WordGeom} from './types';
 import {add, clamp, dotsPath, easeInOutSine, easeInQuad, easeOutCubic, lerp, len, polyPath, rand, rot, scale, springAt, sub} from './util';
 import {ENTRANCE_SPEED_SHARE, MIN_TRANSITION_FRAMES, MIN_VISIBLE_FRAMES, framesForDistance, maxScaleDelta} from './motion';
-import {letterIdentity, registerVerb, type LetterMod, type VerbWordCtx} from './verbRegistry';
+import {getVerb, letterIdentity, registerVerb, type LetterMod, type VerbWordCtx} from './verbRegistry';
 import {exitFade} from './lines';
 import {retireFrame} from './wordState';
 
@@ -92,6 +92,21 @@ registerVerb('closeIn', {
   },
   removesAt: (c) => c.at * FPS + P(c, 'per', 4) * Math.ceil(c.L.words.get(c.i)!.adv.length / 2) + Math.max(MIN_TRANSITION_FRAMES, P(c, 'frames', 6)),
 });
+
+// closeAway (kit pass 21): closeIn that removes the word. Its letters close exactly as closeIn's; once the last has
+// closed the word is hidden for good, so nothing zero-width is left lying on the board for the validator (or a later
+// camera move) to find, and its reading life ends there (removesAt). params: per, frames, as closeIn.
+{
+  const ci = getVerb('closeIn')!;
+  registerVerb('closeAway', {
+    ...ci,
+    modify: (c) => {
+      const r = ci.removesAt!(c);
+      if (r !== null && c.f >= r) return {hidden: true, opacity: 0};
+      return ci.modify!(c);
+    },
+  });
+}
 
 // powerDown: the block collapses to a horizontal line, then a dot, then nothing.
 registerVerb('powerDown', {
