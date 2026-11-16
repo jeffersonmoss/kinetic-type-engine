@@ -22,7 +22,7 @@ export {Burst, burstPaths} from './burst';
 export {SPEED_CAP, SPEED_CAP_FRACTION, MIN_TRANSITION_FRAMES, MIN_VISIBLE_FRAMES, BEAT_FRAMES, VISIBLE_THRESHOLD, framesForDistance, maxScaleDelta, rectQuad} from './motion';
 export {checkTrack, validateElements, formatMotion} from './motionCheck';
 export type {TrackedElement, TrackedSample, MotionRule, MotionViolation} from './motionCheck';
-export {rigAt, rigMoves, rigNominalRot, rigTransits, toScreenCam, screenAngle, resolveTarget, DRIFT_ROT, DRIFT_ZOOM, HALF_DIAGONAL, RIG_DEFAULT_FRAMES, RIG_FRAME_RANGE, TRANSIT_KINDS} from './rig';
+export {rigAt, rigOwnAt, rigMoves, rigNominalRot, rigTransits, toScreenCam, screenAngle, resolveTarget, DRIFT_ROT, DRIFT_ZOOM, HALF_DIAGONAL, RIG_DEFAULT_FRAMES, RIG_FRAME_RANGE, TRANSIT_KINDS} from './rig';
 export type {RigMove} from './rig';
 export {letterBoxes, letterIndex, partOfBox, resolveAnchor, describeAnchor, hasCounter, findRule} from './letters';
 export type {ResolvedAnchor, LetterBox as AnchorLetterBox, AnchorEnv} from './letters';
@@ -30,7 +30,8 @@ export {ruleAt, ruleTracks, ruleGrowFrames, RULE_OPACITY, RULE_WIDTH} from './ru
 export {Ground, Vignette, groundAt, wipeFrames, wipeFullAt} from './ground';
 export {Panel, panelStateAt, panelQuad, panelTrack, panelSwingExempt, SWING_EXEMPT_FRAMES} from './panel';
 export type {PanelDef, PanelOp, PanelKind} from './panel';
-export {morph, morphMarker, MORPH_MARKER_DIVE, relight, tip, portal, stackSteps, rigDiveInto} from './authoring';
+export {morph, morphMarker, MORPH_MARKER_DIVE, relight, tip, portal, stackSteps, rigDiveInto, fanTurn, drawer} from './authoring';
+export {carryAt, carryCam, carrySpan, carrying, CARRY_TAIL, CARRY_LEAD, SLIDE_UP_PX, SLIDE_UP_FROM, SLIDE_UP_FRAMES, QUARTER_FRAMES, QUARTER_END_BEFORE_WORD, SLIDE_UP_OUT_MAX_Y, SLIDE_UP_IN_MIN_Y} from './carry';
 export {rays, lineMarks, graphicLife, drawLines, drawGraphics, ownersRetire, LINGER_FRAMES, LINE_EXIT_FRAMES, GRAPHIC_EXIT_FRAMES} from './lines';
 export type {LineSeg} from './lines';
 export * from './emergence';

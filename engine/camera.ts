@@ -1,6 +1,7 @@
 // The camera of a board is its rig (rig.ts): a pure function of (board, frame). This module holds the camera helpers the
 // rest of the engine shares: the camera of a block (screen-pinned blocks use SCREEN_CAM) and the world/screen maps.
 import {HEIGHT, SCREEN_CAM, WIDTH} from './config';
+import {carryCam} from './carry';
 import {rigAt, rigMoves} from './rig';
 import type {Board, CameraState, Pt} from './types';
 import {rot} from './util';
@@ -16,7 +17,7 @@ export const cameraAt = (board: Board, frame: number): CameraState => rigAt(boar
 
 /** Camera that draws a given block: the board camera, or SCREEN_CAM for a screen-pinned block. */
 export const camForBlock = (board: Board, block: number, frame: number): CameraState =>
-  board.blocks[block]?.pin === 'screen' ? SCREEN_CAM : cameraAt(board, frame);
+  board.blocks[block]?.pin === 'screen' ? carryCam(board, frame, SCREEN_CAM) : cameraAt(board, frame);
 
 /** World -> screen for a camera state. */
 export const toScreen = (cam: CameraState, p: Pt): Pt => {

@@ -9,7 +9,7 @@
 // From L1 on the rig rests at R = -90 or -78, and blocks are set at world angle 90, so they read level or tilted 12
 // degrees; S(C, R) maps a screen point to the world point under it for a rest framed at C.
 import './song';
-import {LINES, morph, rays, type Block, type Board, type BoardPanel, type DecorGraphic, type Pt, type RigKey, type RuleDef} from '../engine';
+import {LINES, drawer, fanTurn, morph, rays, type Carry, type Block, type Board, type BoardPanel, type DecorGraphic, type Pt, type RigKey, type RuleDef} from '../engine';
 import {CREAM, NIGHT, RED, SLATE, YELLOW} from './song';
 
 /** Global index of word k of line `line`. */
@@ -93,4 +93,50 @@ export const BOARD: Board = {
   id: 'example', start: START, end: END, bg: NIGHT, colour: CREAM, exit: 'none', font: 'anton',
   rigStart: {x: 640, y: 360, zoom: 1, rot: 0}, rig, rules, blocks, panels, graphics,
 };
-export const BOARDS: Board[] = [BOARD];
+
+// ------------------------------------------------------------------ phase 2, group 1: FAN, DRAWER and a slideUp carry
+// Second board (14.0 to 22.0 s, R 0):
+//   L5  TURN THE CORNER    SHELF out of a floor rule
+//   L6  AND FAN OUT        FAN +18 at the Joint (CORNER's last letter); fanTurn tilts the rig -18 about the Joint;
+//                          the block sprouts out of the Joint
+//   L7  OUT OF THE DRAWER  DRAWER out of the bottom edge of OUT, each word clipped there until it is sung
+// then a STEP lifts the type above y 520 and the board slides up 520 px (carry slideUp, out) at B = frame 615.
+// Third board (20.5 to 25 s): SLIDE UP is set on a shelf from the start, comes in from below with the carry (side
+// 'in'), and is read when it is sung.
+const B_SLIDE = 615;
+const carryOut: Carry = {kind: 'slideUp', B: B_SLIDE, side: 'out'};
+const carryIn: Carry = {kind: 'slideUp', B: B_SLIDE, side: 'in'};
+const b2: Block[] = [];
+const add2 = (b: Block) => b2.push(b) - 1;
+const rules2: RuleDef[] = [{id: 'floor2', job: 'shelf', from: {x: 120, y: 250}, angle: 0, length: 1040, t0: 14.1, until: 17.4}];
+const bTurn = add2({words: range(5, 0, 2), attach: 'FREE', font: 'anton', width: 1040, rows: [2, 1], hero: [w(5, 2)],
+  anchor: {to: {rule: 'floor2', s: 0}, align: 'baselineL', offset: {x: 10, y: -8}},
+  emerge: {move: 'shelf', from: {rule: 'floor2', s: 0.1}}});
+const FAN = 18;
+const bFan = add2({words: range(6, 0, 2), attach: 'FAN', fan: FAN, font: 'anton', cap: 84, width: 1000,
+  emerge: {move: 'sprout', from: {word: w(5, 2), letter: 'last', part: 'flankR'}}});
+add2({words: range(7, 0, 3), attach: 'FREE', font: 'anton', width: 1000, rows: [3, 1], hero: [w(7, 3)], style: {[w(7, 1)]: {tier: 1}, [w(7, 2)]: {tier: 1}},
+  anchor: {to: {word: w(6, 2), part: 'foot'}, align: 'tl', angle: FAN, gap: 22, offset: {x: -40, y: 0}},
+  emerge: drawer({host: w(6, 2), edge: 'bottom'})});
+const rig2: RigKey[] = [
+  {t: 14.0, kind: 'hold', still: true, label: 'rest'},
+  fanTurn({t: lineStart(6, 5), fan: FAN, joint: w(5, 2), to: {frame: {block: bFan}}}),
+  {t: lineStart(7, 8), kind: 'step', frames: 8, to: {frame: {words: range(7, 0, 3)}, screen: {x: 640, y: 300}}, label: 'STEP to the drawer'},
+  {t: 20.0, kind: 'step', frames: 8, to: {frame: {words: range(7, 0, 3)}, screen: {x: 640, y: 150}}, label: 'STEP: lift the type above y 520 for the carry'},
+  {t: B_SLIDE / 30, kind: 'hold', still: true, label: 'hold through the slideUp carry'},
+];
+void bTurn; void bFan;
+export const BOARD2: Board = {
+  id: 'fan and drawer', start: 14, end: (B_SLIDE + 45) / 30, bg: NIGHT, colour: CREAM, exit: 'none', font: 'anton',
+  rigStart: {x: 640, y: 400, zoom: 1, rot: 0}, rig: rig2, rules: rules2, blocks: b2, carry: [carryOut],
+};
+const rules3: RuleDef[] = [{id: 'floor3', job: 'shelf', from: {x: 300, y: 420}, angle: 0, length: 680, persistent: true}];
+export const BOARD3: Board = {
+  id: 'slide up', start: B_SLIDE / 30, end: 25, bg: NIGHT, colour: CREAM, exit: 'none', font: 'anton',
+  rigStart: {x: 640, y: 360, zoom: 1, rot: 0}, rules: rules3, carry: [carryIn],
+  rig: [{t: B_SLIDE / 30, kind: 'hold', still: true, label: 'hold through the slideUp carry'}],
+  blocks: [{words: range(8, 0, 1), attach: 'FREE', font: 'anton', cap: 150, width: 1000, showFrom: B_SLIDE / 30,
+    anchor: {to: {rule: 'floor3', s: 0}, align: 'baselineL', offset: {x: 10, y: -8}},
+    emerge: {move: 'shelf', from: {rule: 'floor3', s: 0.1}, params: {per: 'block'}}}],
+};
+export const BOARDS: Board[] = [BOARD, BOARD2, BOARD3];

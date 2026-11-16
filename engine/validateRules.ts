@@ -17,13 +17,17 @@
 //   line-life        a board rule with no end: none of until, owner, persistent
 //   line-linger      a line or line graphic in frame more than 20 frames after every owner retired or left frame
 //   level-run        two lines in a row resting level (within 8 degrees) with no tilted or sideways retired text in frame
+// Phase 2 (DOGE K10, Fable item 48):
+//   carry            a chunk carry whose board camera moves, whose type is not clear of the edge at B, or whose outgoing
+//                    type is still in frame when the chunk unmounts
 import {FPS, HANDOFFS, HEIGHT, LINES, WIDTH, WORDS} from './config';
 import {camForBlock, cameraAt, toScreen} from './camera';
 import {blockToWorld} from './layout';
 import {countersMeasured, resolveAnchor} from './letters';
 import {FONT_INFO} from './metrics';
 import {panelQuad} from './panel';
-import {rigMoves, rigTransits} from './rig';
+import {rigMoves, rigOwnAt, rigTransits} from './rig';
+import {CARRY_TAIL, SLIDE_UP_IN_MIN_Y, SLIDE_UP_OUT_MAX_Y, carrySpan} from './carry';
 import {drawnOpacityAt} from './smearSampling';
 import {ruleAt} from './rules';
 import type {Board, BoardLayout, Pt, WordGeom} from './types';
@@ -227,7 +231,7 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
   }
 
   // ---------------------------------------------------------------- emergence anchors visible when the move starts
-  const NEEDS_VISIBLE = new Set(['seam', 'sprout', 'type', 'nest', 'door', 'morph', 'extrude', 'swell', 'fold', 'hinge', 'shelf', 'stack', 'shove', 'portal']);
+  const NEEDS_VISIBLE = new Set(['seam', 'sprout', 'type', 'nest', 'door', 'morph', 'extrude', 'swell', 'fold', 'hinge', 'shelf', 'stack', 'shove', 'portal', 'drawer']);
   L.blocks.forEach((b, k) => {
     const cue = cues[k];
     const e = b.def.emerge;
@@ -240,7 +244,9 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
     try { p = resolveAnchor(L, e.from, at / FPS).p; } catch { return; }
     const cam = camForBlock(board, k, at);
     const s = toScreen(cam, p);
-    if (!ptOnScreen(s)) out.push({...base, from: at, detail: `${e.move.toUpperCase()} starts at frame ${at} from an anchor off screen at (${s.x.toFixed(0)}, ${s.y.toFixed(0)})`});
+    // an incoming chunk carry (carry.ts) brings the anchor in from off frame with the whole sheet
+    const carriedIn = (board.carry ?? []).some((cy) => cy.side === 'in' && at <= carrySpan(cy)[1]);
+    if (!ptOnScreen(s) && !carriedIn) out.push({...base, from: at, detail: `${e.move.toUpperCase()} starts at frame ${at} from an anchor off screen at (${s.x.toFixed(0)}, ${s.y.toFixed(0)})`});
     const a = e.from;
     if ('word' in a && L.words.has(a.word)) {
       const m = st(a.word, at);
@@ -420,6 +426,38 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
       if (q && onScreen(q.map((x) => toScreen(cam, x))) && quadSize(q.map((x) => toScreen(cam, x))).w > 2 && quadSize(q.map((x) => toScreen(cam, x))).h > 2) out.push({board: name, rule: 'handoff-extra', severity: 'error', from: f, detail: `${id} (${side}): panel "${p.id}" is visible on that frame`});
     }
     for (const path of board.paths ?? []) if (!h.elements.some((e) => e.kind === 'mark' && e.path === path.id)) out.push({board: name, rule: 'handoff-extra', severity: 'warn', from: f, detail: `${id} (${side}): the board has ${path.label ?? 'path ' + path.id} and the handoff picture does not (check it is off frame)`});
+  }
+
+  // ---------------------------------------------------------------- chunk carries (DOGE K10, item 75; carry.ts)
+  for (const cy of board.carry ?? []) {
+    const what = `${cy.kind} (${cy.side}) at frame ${cy.B}`;
+    let span: [number, number];
+    try { span = carrySpan(cy); } catch (e) { out.push({board: name, rule: 'carry', severity: 'error', detail: `${what}: ${(e as Error).message}`}); continue; }
+    const inks = (f: number) => L.order.map((i) => ({i, w: L.words.get(i)!, m: st(i, f)})).filter((x) => vis(x.m)).map((x) => ({...x, q: inkQuad(board, L, x.w, x.m, f)}));
+    // the board's own camera holds across the carry (item 75: rotation 0 and zoom 1.0 in DOGE's units): use a still hold
+    const holdTo = cy.side === 'out' ? cy.B + CARRY_TAIL - 1 : span[1];
+    const c0 = rigOwnAt(board, Math.max(startF, cy.B));
+    for (let f = Math.max(startF, cy.B); f <= Math.min(endF, holdTo); f++) {
+      const c1 = rigOwnAt(board, f);
+      const dr = Math.abs(c1.rot - c0.rot), dz = Math.abs(Math.log(c1.zoom / c0.zoom)), dm = Math.hypot(c1.x - c0.x, c1.y - c0.y) * c1.zoom;
+      if (dr > 0.5 || dz > 0.01 || dm > 2) { out.push({board: name, rule: 'carry', severity: 'error', from: f, detail: `${what}: the board's own camera moves during the carry (turn ${dr.toFixed(1)} deg, zoom ${(dz * 100).toFixed(1)} percent, travel ${dm.toFixed(0)} px); give it a hold with still: true from frame ${cy.B}`}); break; }
+    }
+    if (cy.side === 'in') {
+      if (board.start * FPS > cy.B + 0.5) out.push({board: name, rule: 'carry', severity: 'error', detail: `${what}: the incoming board starts after B`});
+      if (cy.kind === 'slideUp') for (const x of inks(cy.B)) {
+        const top = Math.min(...x.q.map((p) => p.y));
+        if (top < SLIDE_UP_IN_MIN_Y - 0.5) out.push({board: name, rule: 'carry', severity: 'error', word: x.i, text: x.w.text, from: cy.B, detail: `${what}: incoming type at y ${top.toFixed(0)} on frame B (it must sit below ${SLIDE_UP_IN_MIN_Y})`});
+      }
+    } else {
+      const unmount = cy.B + CARRY_TAIL;
+      if (board.end * FPS < span[1] + 1) out.push({board: name, rule: 'carry', severity: 'error', detail: `${what}: the outgoing board ends at frame ${(board.end * FPS).toFixed(0)}, before its carry finishes at ${span[1]}`});
+      if (cy.kind === 'slideUp') for (const x of inks(cy.B)) {
+        const bot = Math.max(...x.q.map((p) => p.y));
+        if (bot > SLIDE_UP_OUT_MAX_Y + 0.5 && onScreen(x.q)) out.push({board: name, rule: 'carry', severity: 'error', word: x.i, text: x.w.text, from: cy.B, detail: `${what}: outgoing type reaches y ${bot.toFixed(0)} on frame B (it must sit above ${SLIDE_UP_OUT_MAX_Y} to clear the top)`});
+      }
+      const fu = Math.min(endF, unmount - 1);
+      for (const x of inks(fu)) if (onScreen(x.q)) out.push({board: name, rule: 'carry', severity: 'error', word: x.i, text: x.w.text, from: fu, detail: `${what}: still in frame when the outgoing chunk unmounts at ${unmount}`});
+    }
   }
 
   for (const {v, worst} of agg.values()) out.push({...v, detail: worst > 1 ? `${v.detail} (worst ${worst.toFixed(1)})` : v.detail});

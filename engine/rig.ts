@@ -5,6 +5,7 @@
 import {BOX_H, BOX_W, FPS, HALF_DIAGONAL, HEIGHT, WIDTH} from './config';
 import {layoutBoard, wordCorners} from './layout';
 import {resolveAnchor} from './letters';
+import {carryCam} from './carry';
 import type {BlockGeom, Board, BoardLayout, CameraState, Pt, RigKey, RigKind, RigTarget} from './types';
 import {clamp, easeInOutCubic, lerp, normDeg, rot} from './util';
 
@@ -213,14 +214,16 @@ const evalMove = (m: RigMove, _x: number, board: Board, f: number): CameraState 
   return interp(m.from, m.target, m.ease(p), m.pivot);
 };
 
-/** Rig state of a board at a (fractional) frame. */
-export const rigAt = (board: Board, frame: number): CameraState => {
+/** Rig state of a board at a (fractional) frame, before chunk carries. */
+export const rigOwnAt = (board: Board, frame: number): CameraState => {
   const c = resolve(board);
   let j = -1;
   for (let k = 0; k < c.moves.length; k++) if (c.moves[k].start <= frame) j = k;
   if (j < 0) return driftState(c.pose0, (frame - c.startF) / FPS, c.drift0.r, c.drift0.z);
   return evalMove(c.moves[j], 0, board, frame);
 };
+/** Rig state of a board at a (fractional) frame, with its chunk carries (carry.ts) applied. */
+export const rigAt = (board: Board, frame: number): CameraState => carryCam(board, frame, rigOwnAt(board, frame));
 /** The resolved moves of a rig (validator and report). */
 export const rigMoves = (board: Board): RigMove[] => resolve(board).moves;
 /** Authored R (no drift) at a frame: the last move's target angle, interpolated during the move. */

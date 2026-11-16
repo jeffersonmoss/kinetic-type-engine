@@ -7,7 +7,7 @@ import type {TrackedElement} from './motionCheck';
 export type FontKey = string;
 
 export type Tier = 0 | 1 | 2 | 3;
-export type Attach = 'R' | 'D' | 'CW' | 'CCW' | 'T+' | 'T-' | 'NEW' | 'FREE';
+export type Attach = 'R' | 'D' | 'CW' | 'CCW' | 'T+' | 'T-' | 'NEW' | 'FREE' | 'FAN';
 /** Board exits. 'none': the board is never wiped; it simply stops being drawn at `end` (use with a handoff). */
 export type ExitStyle = 'cut' | 'fall' | 'fade' | 'leave' | 'none';
 /** Built-in verb names; any name registered with registerVerb() is also accepted. */
@@ -72,6 +72,9 @@ export interface Block {
   column?: boolean;
   /** Nudge in the previous block's local frame, applied after the attachment rule. */
   offset?: {x: number; y: number};
+  /** attach 'FAN' (DOGE item 56): degrees the new block turns from the previous one at the Joint, 12 to 24 either way
+   *  (positive clockwise). The block starts on the previous block's last baseline, at its end, one space on. */
+  fan?: number;
   /** Justified width W in world px (default 640). */
   width?: number;
   /** Gap to the previous block (default 40). */
@@ -177,7 +180,7 @@ export type AnchorRef =
 /** Which point of a block sits on its anchor: corners, edge midpoints, centre, or the ends of the first row's baseline. */
 export type BlockAlign = 'tl' | 'tr' | 'bl' | 'br' | 'ml' | 'mr' | 'tc' | 'bc' | 'centre' | 'baselineL' | 'baselineR';
 /** The fifteen emergence moves of the style bible (rules 54 to 68). */
-export type EmergeMove = 'seam' | 'sprout' | 'nest' | 'door' | 'morph' | 'shove' | 'hinge' | 'fold' | 'stack' | 'shelf' | 'tip' | 'swell' | 'extrude' | 'type' | 'portal';
+export type EmergeMove = 'seam' | 'sprout' | 'nest' | 'door' | 'morph' | 'shove' | 'hinge' | 'fold' | 'stack' | 'shelf' | 'tip' | 'swell' | 'extrude' | 'type' | 'portal' | 'drawer';
 export interface Emergence {
   move: EmergeMove;
   /** The text (or rule, or Line) it comes out of. Required (rule 181.5). */
@@ -366,7 +369,14 @@ export interface Board {
   /** Handoff frames this board starts and ends on (rule 81); checked by the validator. */
   /** 'open' as the end: a proof or test clip that stops mid-chunk on purpose (no handoff to match there). */
   handoff?: {start?: HandoffId; end?: HandoffId | 'open'};
+  /** Chunk carries (DOGE K10, Fable item 48): the board moves as one sheet with the neighbouring chunk across a
+   *  boundary, applied as an outer screen transform to everything it draws and checks (engine/carry.ts). */
+  carry?: Carry[];
 }
+/** A chunk carry: `slideUp` (520 px up over frames B+2 to B+31) or `quarterCW` (90 degrees clockwise about the frame
+ *  centre over 27 frames ending 8 before `firstWord`). `side` 'out' for the outgoing chunk (its tail runs to B+45),
+ *  'in' for the incoming chunk authored in its final place. `B` and `firstWord` are absolute song frames. */
+export interface Carry {kind: 'slideUp' | 'quarterCW'; B: number; side: 'in' | 'out'; firstWord?: number}
 
 /** Geometry of one laid-out word. Local = block frame (x right along reading, y down). */
 export interface WordGeom {

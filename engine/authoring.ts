@@ -65,3 +65,22 @@ export const stackSteps = (words: number[], o: {frames?: number; screen?: Pt} = 
 export const rigDiveInto = (o: {t: number; frame: RigTarget['frame']; cap?: number; cover?: boolean; frames?: number; about?: AnchorRef; screen?: Pt}): RigKey => ({
   t: o.t, kind: 'dive', frames: o.frames ?? 12, to: {frame: o.frame, cap: o.cap, cover: o.cover, screen: o.screen}, about: o.about, ease: 'cubic', label: 'dive',
 });
+
+/** FAN (DOGE item 56): the rig turn through a FAN seam. The camera tilts by -fan about the Joint (default the last
+ *  letter's right flank of the old line's last word), so the old last word reads at -fan/2 and the new first word at
+ *  +fan/2 mid-turn, and the new line ends level where the old one was. Start it about half its frames before the new
+ *  line's first sung frame. `to` may also frame the new line (the Joint then travels straight on screen). Put it into board.rig; the new block is attach 'FAN' with the same `fan`. */
+export const fanTurn = (o: {t: number; fan: number; joint: number | AnchorRef; frames?: number; to?: RigTarget; label?: string}): RigKey => ({
+  t: o.t, kind: 'tilt', by: -o.fan, frames: o.frames ?? 10, to: o.to,
+  about: typeof o.joint === 'number' ? {word: o.joint, letter: 'last', part: 'flankR'} : o.joint,
+  label: o.label ?? `FAN ${o.fan > 0 ? '+' : ''}${o.fan}`,
+});
+
+/** DRAWER (DOGE item 59, K7): the emergence of a block that slides out from behind an edge of a word (`host`, a word
+ *  index) or of a prop (`rect`, a world box with an optional angle about its centre), clipped at that edge. Each word's
+ *  slide ends on its own sung frame. */
+export const drawer = (o: {host?: number; rect?: {x: number; y: number; w: number; h: number; angle?: number}; edge: 'top' | 'bottom' | 'left' | 'right'; depth?: number; lead?: number}): Emergence => {
+  if (o.host === undefined && !o.rect) throw new Error('drawer: give host (a word) or rect (a prop box)');
+  const from: AnchorRef = o.host !== undefined ? {word: o.host} : {point: {x: o.rect!.x + o.rect!.w / 2, y: o.rect!.y + o.rect!.h / 2}};
+  return {move: 'drawer', from, params: {edge: o.edge, rect: o.rect, depth: o.depth, lead: o.lead}};
+};

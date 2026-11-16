@@ -2,6 +2,7 @@
 import React from 'react';
 import {FPS, HEIGHT, PALETTE, WIDTH} from './config';
 import {SCREEN_CAM, cameraAt, cameraTransform, toScreen} from './camera';
+import {carryCam} from './carry';
 import {Ground, Vignette} from './ground';
 import {ruleAt} from './rules';
 import {blockToWorld, layoutBoard, wordCorners, worldToBlock} from './layout';
@@ -184,7 +185,7 @@ export const BoardView: React.FC<{board: Board; t: number; uid?: string; smearPa
   const onBoard = (b: BlockGeom) => b.def.pin !== 'screen';
   const blocks = sharpPass ? null : drawBlocks((b, g) => onBoard(b) && blurred(g), cam, true);
   const sharpBlocks = sharpPass ? drawBlocks((b, g) => onBoard(b) && sharp(g), cam) : null;
-  const pinned = !blurPass && L.blocks.some((b) => !onBoard(b)) ? drawBlocks((b) => !onBoard(b), SCREEN_CAM) : null;
+  const pinned = !blurPass && L.blocks.some((b) => !onBoard(b)) ? drawBlocks((b) => !onBoard(b), carryCam(board, f, SCREEN_CAM)) : null;
   const overlays = boardCues(board).map((cue, k) => {
     const def = getVerb(cue.name);
     if (!def?.overlay) return null;

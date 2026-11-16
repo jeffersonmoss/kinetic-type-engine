@@ -328,6 +328,22 @@ const place = (b: BlockGeom, p: BlockGeom | null, board: Board, blocksSoFar: Blo
       local = {x: 0, y: p!.h + gap};
       angle = base90(p!.angle) + (def.attach === 'T+' ? 12 : -12);
       break;
+    case 'FAN': {
+      // DOGE item 56 (its sheet layout, case 'F'): start at the Joint, the end of the previous block's last baseline,
+      // turned by `fan`; one space on, plus the cap corner the turn swings toward the other block, so the two never touch
+      const r = p!.rows[p!.rows.length - 1];
+      const end = toWorld({x: r.width, y: r.baseline});
+      const fan = def.fan ?? 18;
+      const ang = p!.angle + fan;
+      const g0 = b.words[0];
+      const sinA = Math.abs(Math.sin((fan * Math.PI) / 180));
+      const extra = fan > 0 ? b.rows[0].h * sinA : r.h * sinA;
+      const s = add(end, rot({x: FONT_INFO[g0.font].space * g0.size + extra, y: 0}, ang));
+      const o = add(s, rot({x: 0, y: -b.rows[0].baseline}, ang));
+      const off = def.offset ? rot(def.offset, ang) : {x: 0, y: 0};
+      b.ox = o.x + off.x; b.oy = o.y + off.y; b.angle = ang;
+      return;
+    }
     case 'FREE':
       if (!def.at) { local = {x: 0, y: p!.h + gap}; break; }
       if (def.at.rel === 'world') { b.ox = p!.ox + def.at.x; b.oy = p!.oy + def.at.y; b.angle = def.at.angle; return; }

@@ -162,9 +162,11 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
     }
   }
 
-  // Block angles
+  // Block angles (a FAN seam sets its own angle, DOGE item 56; blocks at a FAN block's angle pass too)
+  const fanAngles = L.blocks.filter((b) => b.def.attach === 'FAN').map((b) => normDeg(b.angle));
   for (const b of L.blocks) {
     const a = normDeg(b.angle), r = a - Math.round(a / 90) * 90;
+    if (fanAngles.some((x) => Math.abs(normDeg(a - x)) < 0.01)) continue;
     if (![0, 12, -12, 25, -25].some((x) => Math.abs(r - x) < 0.01)) out.push({board: name, rule: 'angle', severity: 'warn', detail: `block ${b.index} angle ${b.angle} is not 0, +-90 or +-12 or +-25 off a right angle`});
   }
 

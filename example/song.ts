@@ -5,7 +5,7 @@ import {configureEngine, type FontMetricsFile, type SongLine, type SongWord} fro
 import metrics from '../fonts/anton-dmserif-barlow.metrics.json';
 
 export const FPS = 30;
-export const DURATION_S = 15;
+export const DURATION_S = 25;
 
 /** Colours of the example (night blue ground, warm paper type, a red and a yellow). */
 export const NIGHT = '#101A2C';
@@ -22,6 +22,11 @@ const LYRIC: [string, number][][] = [
   [['stack', 5.2], ['every', 5.65], ['crate', 6.1]],
   [['sign', 7.6], ['the', 8.05], ['page', 8.4]],
   [['set', 10.2], ['the', 10.6], ['stage', 11.0]],
+  // phase 2, group 1 (second and third boards): FAN, DRAWER, the slideUp carry
+  [['turn', 14.6], ['the', 15.0], ['corner', 15.3]],
+  [['and', 16.4], ['fan', 16.7], ['out', 17.1]],
+  [['out', 18.2], ['of', 18.55], ['the', 18.75], ['drawer', 19.0]],
+  [['slide', 21.7], ['up', 22.1]],
 ];
 
 const words: SongWord[] = [];
