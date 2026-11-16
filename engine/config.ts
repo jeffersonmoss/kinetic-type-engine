@@ -34,7 +34,16 @@ export interface Palette {
   highlight: string;
   /** Grounds on which the default type colour is `ground` instead of `paper`. Default: `paper`, `highlight`, `accent`. */
   light?: string[];
+  /** Prop roles (phase 2, for props/): prop bodies, plates and cases (default `shadow`); grey detail lines and metal
+   *  (default `ground` mixed 60 percent toward `paper`); a second dark ground for screens and pages (default `ground`
+   *  mixed 60 percent toward `shadow`). The engine itself does not draw with them. */
+  body?: string;
+  detail?: string;
+  ground2?: string;
 }
+/** A monospaced face for props that print figures (receipts, dialogs, browsers). Not laid out by the engine, so it
+ *  needs no metrics entry. */
+export interface MonoFont {family: string; weight?: number}
 
 type FontJson = {cap: number; desc: number; space: number; fallback: number; adv: Record<string, number>; kern?: Record<string, number>; asc?: number; inkDesc?: number};
 /** The font metrics file written by tools/measure-fonts.mjs and tools/measure-outlines.mjs (fonts/*.metrics.json). */
@@ -67,6 +76,8 @@ export interface EngineConfig {
   wordRules?: WordRules;
   /** Handoff frames boards may start or end on (board.handoff); see types.ts Handoff. */
   handoffs?: Record<string, Handoff>;
+  /** The mono font role (props). Default: the font keyed `mono` if there is one, else none. */
+  mono?: MonoFont;
 }
 
 /** The default connectives (amendment K2 of the first video: personal pronouns are not connectives). */
@@ -134,6 +145,8 @@ export let METRICS_MEASURED = false;
 export let METRICS_SOURCE = 'not configured';
 
 export let CONFIGURED = false;
+/** The mono font role (EngineConfig.mono), or null. */
+export let MONO_FONT: MonoFont | null = null;
 
 /** Sets the song, frame, palette and fonts. Call once at set-up, before any board is laid out. */
 export const configureEngine = (c: EngineConfig): void => {
@@ -144,8 +157,17 @@ export const configureEngine = (c: EngineConfig): void => {
   LINES = c.lines;
   BEATS = c.beats ?? [];
   ENERGY = c.energy ?? [];
-  PALETTE = {...c.palette, light: c.palette.light ?? [c.palette.paper, c.palette.highlight, c.palette.accent]};
+  const mix = (a: string, b: string, k: number) => {
+    const h = (x: string) => [1, 3, 5].map((i) => parseInt(x.slice(i, i + 2), 16));
+    const x = h(a), y = h(b);
+    if (x.some(Number.isNaN) || y.some(Number.isNaN)) return a;
+    return '#' + x.map((v, i) => Math.round(v + (y[i] - v) * k).toString(16).padStart(2, '0')).join('');
+  };
+  PALETTE = {...c.palette, light: c.palette.light ?? [c.palette.paper, c.palette.highlight, c.palette.accent],
+    body: c.palette.body ?? c.palette.shadow, detail: c.palette.detail ?? mix(c.palette.ground, c.palette.paper, 0.6),
+    ground2: c.palette.ground2 ?? mix(c.palette.ground, c.palette.shadow, 0.6)};
   FONTS = c.fonts;
+  MONO_FONT = c.mono ?? (c.fonts.mono ? {family: c.fonts.mono.family, weight: c.fonts.mono.weight ?? 700} : null);
   const keys = Object.keys(c.fonts);
   if (!keys.length) throw new Error('configureEngine: at least one font is needed');
   DEFAULT_FONT = c.defaultFont ?? keys[0];

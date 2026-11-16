@@ -18,6 +18,11 @@
 //   line-linger      a line or line graphic in frame more than 20 frames after every owner retired or left frame
 //   level-run        two lines in a row resting level (within 8 degrees) with no tilted or sideways retired text in frame
 // Phase 2 (DOGE K10, Fable item 48):
+//   joint-distance   a FAN block starting more than 213 screen px from the old line's end; fan-angle: the lines' screen
+//                    angles at the new first word's sung frame differ from `fan` (error) or are not split -fan/2, +fan/2 (warning)
+//   quarter-clear    a QUARTER key in a hole shorter than 18 to 27 frames; run-speed: a RUN key over 22 px per frame;
+//   dive-rate        a key named 'DIVE' changing zoom by more than 6 percent per frame
+//   behind           a BEHIND plate still over a hidden word on its sung frame
 //   carry            a chunk carry whose board camera moves, whose type is not clear of the edge at B, or whose outgoing
 //                    type is still in frame when the chunk unmounts
 import {FPS, HANDOFFS, HEIGHT, LINES, WIDTH, WORDS} from './config';
@@ -27,6 +32,8 @@ import {countersMeasured, resolveAnchor} from './letters';
 import {FONT_INFO} from './metrics';
 import {panelQuad} from './panel';
 import {rigMoves, rigOwnAt, rigTransits} from './rig';
+import {behindFailures} from './emergence/behind';
+import {RUN_SPEED, quarterClearFrames} from './authoring';
 import {CARRY_TAIL, SLIDE_UP_IN_MIN_Y, SLIDE_UP_OUT_MAX_Y, carrySpan} from './carry';
 import {drawnOpacityAt} from './smearSampling';
 import {ruleAt} from './rules';
@@ -42,6 +49,8 @@ import type {Violation} from './validate';
  *  quarter stance). */
 export const GIANT_CAP = 240;
 export const GIANT_SPAN = 800;
+/** FAN Joint distance cap in screen px (DOGE item 45: 320 world px at its 1920-wide world, two thirds of a screen px each). */
+export const JOINT_MAX = 213;
 
 const local = (w: WordGeom, m: WordMod, x0: number, y0: number, x1: number, y1: number) => {
   const cx = w.x + w.w / 2, cy = w.y + w.h / 2;
@@ -428,8 +437,60 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
     for (const path of board.paths ?? []) if (!h.elements.some((e) => e.kind === 'mark' && e.path === path.id)) out.push({board: name, rule: 'handoff-extra', severity: 'warn', from: f, detail: `${id} (${side}): the board has ${path.label ?? 'path ' + path.id} and the handoff picture does not (check it is off frame)`});
   }
 
+  // ---------------------------------------------------------------- DOGE moves: FAN, QUARTER, RUN, BEHIND (phase 2)
+  const sfs = L.order.map((i) => L.words.get(i)!.sf).sort((a, b) => a - b);
+  L.blocks.forEach((b, k) => {
+    if (b.def.attach !== 'FAN' || k === 0) return;
+    const p = L.blocks[k - 1];
+    const r = p.rows[p.rows.length - 1];
+    const oldEnd = blockToWorld(p, {x: r.width, y: r.baseline}), newStart = blockToWorld(b, {x: 0, y: b.rows[0].baseline});
+    const first = b.words.reduce((a, w) => (w.sf < a.sf ? w : a), b.words[0]);
+    const oldLast = p.words.reduce((a, w) => (w.i > a.i ? w : a), p.words[0]);
+    const cam = camForBlock(board, k, first.sf);
+    const dist = Math.hypot(newStart.x - oldEnd.x, newStart.y - oldEnd.y) * cam.zoom;
+    const base = {board: name, word: first.i, text: first.text, line: first.line, from: first.sf};
+    if (dist > JOINT_MAX + 0.5) out.push({...base, rule: 'joint-distance', severity: 'error', detail: `FAN: the old line's end and the new line's start are ${dist.toFixed(0)} screen px apart at the Joint (at most ${JOINT_MAX}, DOGE item 45: 320 of its world px)`});
+    const fan = b.def.fan ?? 18;
+    const oldA = normDeg(p.angle + cam.rot), newA = normDeg(b.angle + cam.rot);
+    const diff = normDeg(newA - oldA);
+    if (Math.abs(diff - fan) > 3) out.push({...base, rule: 'fan-angle', severity: 'error', detail: `FAN: old and new lines are ${diff.toFixed(1)} degrees apart on screen; the block says ${fan}`});
+    else if (Math.abs(oldA + fan / 2) > 4 || Math.abs(newA - fan / 2) > 4) out.push({...base, rule: 'fan-angle', severity: 'warn', detail: `FAN: at the new first word's sung frame the lines read at ${oldA.toFixed(1)} and ${newA.toFixed(1)} degrees; DOGE item 56 reads the old last word "${oldLast.text}" at ${(-fan / 2).toFixed(0)} and the new first at ${(fan / 2).toFixed(0)} (time fanTurn so it is half done there)`});
+  });
+  for (const m of rigMoves(board)) {
+    if (m.key.name === 'QUARTER') {
+      const deg = Math.abs(m.target.rot - m.from.rot);
+      const before = sfs.filter((x) => x <= m.start).pop(), after = sfs.find((x) => x > m.start);
+      const need = quarterClearFrames(deg);
+      if (deg < 55 || deg > 95) out.push({board: name, rule: 'quarter-clear', severity: 'warn', from: m.start, detail: `QUARTER turns ${deg.toFixed(0)} degrees (DOGE item 64: 60 to 90)`});
+      if (before !== undefined && after !== undefined && after - before < need) out.push({board: name, rule: 'quarter-clear', severity: 'error', from: before, to: after, detail: `QUARTER of ${deg.toFixed(0)} degrees in a hole of ${after - before} frames between landings (needs ${need})`});
+    }
+    if (m.key.name === 'DIVE') {
+      // DOGE K9: a DIVE changes zoom by at most 6 percent per frame
+      let worst = 0;
+      for (let f = Math.ceil(m.start) + 1; f <= m.start + m.dur; f++) worst = Math.max(worst, Math.abs(Math.log(cameraAt(board, f).zoom / cameraAt(board, f - 1).zoom)));
+      if (worst > Math.log(1.06) + 1e-3) out.push({board: name, rule: 'dive-rate', severity: 'error', from: m.start, to: m.start + m.dur, detail: `DIVE changes zoom by up to ${((Math.exp(worst) - 1) * 100).toFixed(1)} percent per frame (DOGE K9: 6); give it more frames`});
+    }
+    if (m.key.name === 'RUN') {
+      let worst = 0;
+      for (let f = Math.ceil(m.start) + 1; f <= m.start + m.dur; f++) {
+        const c0 = cameraAt(board, f - 1), c1 = cameraAt(board, f);
+        worst = Math.max(worst, Math.hypot(c1.x - c0.x, c1.y - c0.y) * c1.zoom);
+      }
+      if (worst > RUN_SPEED + 0.5) out.push({board: name, rule: 'run-speed', severity: 'error', from: m.start, to: m.start + m.dur, detail: `RUN camera travels up to ${worst.toFixed(1)} px per frame (DOGE item 63: ${RUN_SPEED}); start it earlier or shorten the row`});
+    }
+  }
+  L.blocks.forEach((b, k) => {
+    const cue = cues[k];
+    if (!cue || b.def.emerge?.move !== 'behind') return;
+    for (const h of behindFailures(cue, L)) out.push({board: name, rule: 'behind', severity: 'error', word: h, text: WORDS[h].text, from: L.words.get(h)!.sf, detail: 'the BEHIND plate still overlaps this hidden word on its sung frame (DOGE K6 build failure); start the move earlier or use DRAWER from the same edge'});
+  });
+
   // ---------------------------------------------------------------- chunk carries (DOGE K10, item 75; carry.ts)
   for (const cy of board.carry ?? []) {
+    if (cy.kind === 'quarterCW' && cy.side === 'in' && cy.firstWord !== undefined && L.order.length) {
+      const f0 = Math.min(...L.order.map((i) => L.words.get(i)!.sf));
+      if (Math.abs(f0 - cy.firstWord) > 0.5) out.push({board: name, rule: 'carry', severity: 'error', detail: `quarterCW (in) at frame ${cy.B}: firstWord is ${cy.firstWord} but the board's first word is sung on ${f0}`});
+    }
     const what = `${cy.kind} (${cy.side}) at frame ${cy.B}`;
     let span: [number, number];
     try { span = carrySpan(cy); } catch (e) { out.push({board: name, rule: 'carry', severity: 'error', detail: `${what}: ${(e as Error).message}`}); continue; }
@@ -443,7 +504,7 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
       if (dr > 0.5 || dz > 0.01 || dm > 2) { out.push({board: name, rule: 'carry', severity: 'error', from: f, detail: `${what}: the board's own camera moves during the carry (turn ${dr.toFixed(1)} deg, zoom ${(dz * 100).toFixed(1)} percent, travel ${dm.toFixed(0)} px); give it a hold with still: true from frame ${cy.B}`}); break; }
     }
     if (cy.side === 'in') {
-      if (board.start * FPS > cy.B + 0.5) out.push({board: name, rule: 'carry', severity: 'error', detail: `${what}: the incoming board starts after B`});
+      if (board.start * FPS > Math.min(cy.B, span[0]) + 0.5) out.push({board: name, rule: 'carry', severity: 'error', detail: `${what}: the incoming board starts after B or after the carry's motion starts`});
       if (cy.kind === 'slideUp') for (const x of inks(cy.B)) {
         const top = Math.min(...x.q.map((p) => p.y));
         if (top < SLIDE_UP_IN_MIN_Y - 0.5) out.push({board: name, rule: 'carry', severity: 'error', word: x.i, text: x.w.text, from: cy.B, detail: `${what}: incoming type at y ${top.toFixed(0)} on frame B (it must sit below ${SLIDE_UP_IN_MIN_Y})`});

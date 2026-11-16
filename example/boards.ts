@@ -9,8 +9,8 @@
 // From L1 on the rig rests at R = -90 or -78, and blocks are set at world angle 90, so they read level or tilted 12
 // degrees; S(C, R) maps a screen point to the world point under it for a rest framed at C.
 import './song';
-import {LINES, drawer, fanTurn, morph, rays, type Carry, type Block, type Board, type BoardPanel, type DecorGraphic, type Pt, type RigKey, type RuleDef} from '../engine';
-import {CREAM, NIGHT, RED, SLATE, YELLOW} from './song';
+import {LINES, behind, drawer, fanTurn, quarter, runTrack, morph, rays, type Carry, type Block, type Board, type BoardPanel, type DecorGraphic, type Pt, type RigKey, type RuleDef} from '../engine';
+import {CREAM, DURATION_S, NIGHT, RED, SLATE, YELLOW} from './song';
 
 /** Global index of word k of line `line`. */
 const w = (line: number, k: number) => LINES[line].words[k];
@@ -130,13 +130,55 @@ export const BOARD2: Board = {
   id: 'fan and drawer', start: 14, end: (B_SLIDE + 45) / 30, bg: NIGHT, colour: CREAM, exit: 'none', font: 'anton',
   rigStart: {x: 640, y: 400, zoom: 1, rot: 0}, rig: rig2, rules: rules2, blocks: b2, carry: [carryOut],
 };
+// Third board (20.5 to 31.7 s): SLIDE UP comes in with the carry, then
+//   L9   HIDE BEHIND IT        BEHIND: SLIDE UP carries a plate, which slides up and away; HIDE BEHIND IT is already there
+//   L10  RUN ALONG THE WHOLE ROW  RUN: one row wider than the frame, the camera tracks along it (runTrack)
+//   L11  TURN RIGHT            QUARTER: the rig rolls -90 about ROW's last letter; the block is attached CW (so it reads
+//                              level); the row stays in frame as a vertical strip. A STEP then carries both to the
+//                              left band, where the quarterCW turns them off the top of the frame
+// then a quarterCW carry (B = frame 910, the incoming first word on 945) turns TURN RIGHT off the bottom of the frame
+// while the fourth board, ALL THE WAY ROUND, turns in from -90.
+const B_QUARTER = 910;
+const FIRST_ROUND = 945;
 const rules3: RuleDef[] = [{id: 'floor3', job: 'shelf', from: {x: 300, y: 420}, angle: 0, length: 680, persistent: true}];
+const b3: Block[] = [];
+const add3 = (b: Block) => b3.push(b) - 1;
+const bSlide = add3({words: range(8, 0, 1), attach: 'FREE', font: 'anton', cap: 150, width: 1000, showFrom: B_SLIDE / 30, z: 1,
+  anchor: {to: {rule: 'floor3', s: 0}, align: 'baselineL', offset: {x: 10, y: -8}},
+  emerge: {move: 'shelf', from: {rule: 'floor3', s: 0.1}, params: {per: 'block'}}});
+add3({words: range(9, 0, 2), attach: 'FREE', font: 'anton', cap: 72, rows: [3], width: 900, z: 0,
+  style: {[w(9, 2)]: {tier: 1}},
+  anchor: {to: {block: bSlide, corner: 'tl'}, align: 'tl', angle: -12, offset: {x: 10, y: 80}},
+  emerge: behind({cover: [w(8, 0), w(8, 1)], exit: 'slide-up'})});
+const bRun = add3({words: range(10, 0, 4), attach: 'FREE', font: 'anton', cap: 120, rows: [5], width: 4000,
+  style: {[w(10, 1)]: {tier: 1}, [w(10, 2)]: {tier: 1}},
+  anchor: {to: {block: bSlide, corner: 'bl'}, align: 'tl', angle: -12, offset: {x: 0, y: 330}},
+  emerge: {move: 'seam', from: {word: w(9, 2), letter: 'last', part: 'foot'}, at: lineStart(10, 26), params: {side: 'D', order: 'rigid'}}});
+const bTurn2 = add3({words: range(11, 0, 1), attach: 'CW', font: 'anton', cap: 100, rows: [1, 1], width: 400,
+  emerge: {move: 'sprout', from: {word: w(10, 4), letter: 'last', part: 'flankR'}}});
+const rig3: RigKey[] = [
+  {t: B_SLIDE / 30, kind: 'hold', still: true, label: 'hold through the slideUp carry'},
+  {t: lineStart(10, 22), kind: 'tilt', frames: 10, by: 12, to: {frame: {word: w(10, 0)}, screen: {x: 390, y: 360}}, label: 'TILT +12 to the start of the RUN row'},
+  runTrack({words: range(10, 0, 4), lead: -6, screen: {x: 1080, y: 360}}),
+  quarter({t: lineStart(11, 16), by: -90, joint: w(10, 4), frames: 12, to: {frame: {block: bTurn2}, screen: {x: 1060, y: 360}}}),
+  {t: 29.8, kind: 'step', frames: 8, to: {frame: {block: bTurn2}, screen: {x: 130, y: 360}}, label: 'STEP to the left band before the quarterCW'},
+  {t: B_QUARTER / 30, kind: 'hold', still: true, label: 'hold through the quarterCW carry'},
+];
+void bRun;
 export const BOARD3: Board = {
-  id: 'slide up', start: B_SLIDE / 30, end: 25, bg: NIGHT, colour: CREAM, exit: 'none', font: 'anton',
-  rigStart: {x: 640, y: 360, zoom: 1, rot: 0}, rules: rules3, carry: [carryIn],
-  rig: [{t: B_SLIDE / 30, kind: 'hold', still: true, label: 'hold through the slideUp carry'}],
-  blocks: [{words: range(8, 0, 1), attach: 'FREE', font: 'anton', cap: 150, width: 1000, showFrom: B_SLIDE / 30,
-    anchor: {to: {rule: 'floor3', s: 0}, align: 'baselineL', offset: {x: 10, y: -8}},
-    emerge: {move: 'shelf', from: {rule: 'floor3', s: 0.1}, params: {per: 'block'}}}],
+  id: 'slide up', start: B_SLIDE / 30, end: (B_QUARTER + 45) / 30, bg: NIGHT, colour: CREAM, exit: 'none', font: 'anton',
+  rigStart: {x: 640, y: 360, zoom: 1, rot: 0}, rules: rules3, rig: rig3, blocks: b3,
+  carry: [carryIn, {kind: 'quarterCW', B: B_QUARTER, side: 'out', firstWord: FIRST_ROUND}],
+  waive: [{rule: 'two-scales', why: 'a short demonstration board: no line here is set at the giant level'}],
 };
-export const BOARDS: Board[] = [BOARD, BOARD2, BOARD3];
+const rules4: RuleDef[] = [{id: 'floor4', job: 'shelf', from: {x: 160, y: 470}, angle: 0, length: 960, persistent: true}];
+export const BOARD4: Board = {
+  id: 'all the way round', start: B_QUARTER / 30, end: DURATION_S, bg: NIGHT, colour: CREAM, exit: 'none', font: 'anton',
+  rigStart: {x: 640, y: 360, zoom: 1, rot: 0}, rules: rules4,
+  carry: [{kind: 'quarterCW', B: B_QUARTER, side: 'in', firstWord: FIRST_ROUND}],
+  rig: [{t: B_QUARTER / 30, kind: 'hold', still: true, label: 'hold through the quarterCW carry'}],
+  blocks: [{words: range(12, 0, 3), attach: 'FREE', font: 'anton', width: 960, rows: [2, 2], showFrom: B_QUARTER / 30,
+    anchor: {to: {rule: 'floor4', s: 0}, align: 'bl', offset: {x: 0, y: -12}},
+    emerge: {move: 'shelf', from: {rule: 'floor4', s: 0.1}, params: {per: 'block'}}}],
+};
+export const BOARDS: Board[] = [BOARD, BOARD2, BOARD3, BOARD4];

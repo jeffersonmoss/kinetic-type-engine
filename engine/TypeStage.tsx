@@ -100,6 +100,7 @@ const WordView: React.FC<{board: Board; L: BoardLayout; b: BlockGeom; g: WordGeo
     const pad = (g.opts.plate?.pad ?? 0.18) * g.size;
     return (
       <g key={key} transform={tf(dx, dy)} opacity={op}>
+        {m.underlay}
         {g.opts.plate && (
           <>
             {g.opts.plate.shadow !== false && <rect x={g.x - pad + shOff.x} y={g.y - pad + shOff.y} width={g.w + 2 * pad} height={g.boxH + 2 * pad} fill={PALETTE.shadow} />}

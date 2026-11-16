@@ -7,7 +7,8 @@
 // Declare it on the target block: emerge: {move: 'morph', from: {word: BUG}, params: {keep: 'UG'}}, or build it with
 // morph({from, to, keep}) from authoring.ts. params: fromWords (source words, default the anchor's word), keep (letters kept, in
 // order, e.g. 'UG'; or pairs [[sourceLetter, targetLetter], ...] over the letters of all source / target words in reading
-// order), arc ({about: Pt (world), dir: 1 | -1}: kept letters travel round it), collapse (10), delay (3).
+// order), arc ({about: Pt (world), dir: 1 | -1}: kept letters travel round it), collapse (10), delay (3); roll (true: the
+// changed letters roll over a horizontal axis instead, DOGE item 61) with frames (8: out in the first half, in in the second).
 import {FPS} from '../config';
 import {letterBoxes} from '../letters';
 import type {BoardLayout, Pt, VerbCue} from '../types';
@@ -64,10 +65,14 @@ export const morphPlan = (cue: VerbCue, L: BoardLayout): Plan => {
     } else dist = Math.max(dist, Math.hypot(q.x - p.x, q.y - p.y));
   }
   // 12 to 14 frames in all (ruling 194.10): each stage 10 frames, the opening 3 behind the closing (overlap 7)
-  const collapse = Math.max(8, PC(cue, 'collapse', 10));
-  const delay = PC(cue, 'delay', 3);
+  // roll (DOGE item 61, K5): the changed letters roll over a horizontal axis, the old ones out in the first half of
+  // `frames` (default 8) and the new ones in during the second
+  const roll = PC(cue, 'roll', false) === true;
+  const half = Math.max(3, Math.round(PC(cue, 'frames', 8) / 2));
+  const collapse = roll ? half : Math.max(8, PC(cue, 'collapse', 10));
+  const delay = roll ? half : PC(cue, 'delay', 3);
   const travel = pairs.length ? capFrames(dist, z, collapse + delay, SINE_PEAK) : 0;
-  const dur = Math.max(delay + collapse, travel, MORPH_MIN_FRAMES);
+  const dur = Math.max(delay + collapse, travel, roll ? 2 * half : MORPH_MIN_FRAMES);
   const start = cue.at !== undefined ? cue.at * FPS : cue.params?.showFrom !== undefined ? (cue.params.showFrom as number) * FPS : land - dur;
   const plan = {start, travel, collapse, delay, end: start + dur, pairs, S, T};
   memo.set(cue, plan);
@@ -87,6 +92,7 @@ registerVerb('morph', {
     const pl = morphPlan(c.cue, c.L);
     const f = c.f;
     const isSrc = srcWords(c.cue, c.L).includes(c.i);
+    const rolls = PC(c.cue, 'roll', false) === true;
     const n = c.geom.adv.length;
     if (isSrc) {
       if (f < pl.start) return null;
@@ -95,7 +101,10 @@ registerVerb('morph', {
       const letters: LetterMod[] = Array.from({length: n}, (_, k) => {
         const si = base + k;
         const pair = pl.pairs.find(([a]) => a === si);
-        if (!pair) { const w = Math.max(0.001, 1 - easeInOutSine((f - pl.start) / pl.collapse)); return {...letterIdentity(), sx: w, opacity: sliver(w)}; }
+        if (!pair) {
+          if (rolls) { const h = Math.max(0.001, Math.cos((Math.PI / 2) * clamp((f - pl.start) / pl.collapse))); return {...letterIdentity(), s: h, sx: 1 / h, opacity: sliver(h)}; }
+          const w = Math.max(0.001, 1 - easeInOutSine((f - pl.start) / pl.collapse)); return {...letterIdentity(), sx: w, opacity: sliver(w)};
+        }
         const from = pl.S[si], to = pl.T[pair[1]];
         const u = pl.travel > 0 ? easeInOutSine((f - pl.start) / pl.travel) : 1;
         const arc = c.cue.params?.arc as {about: Pt; dir?: number} | undefined;
@@ -123,6 +132,7 @@ registerVerb('morph', {
       const ti = base + k;
       if (pl.pairs.some(([, b]) => b === ti)) return {...letterIdentity(), opacity: 0}; // the travelling letter stands in
       const o = clamp((f - pl.start - pl.delay) / pl.collapse);
+      if (rolls) { const h = Math.max(0.001, Math.sin((Math.PI / 2) * o)); return {...letterIdentity(), s: h, sx: 1 / h, opacity: sliver(h)}; }
       const e = Math.max(0.001, easeInOutSine(o));
       return {...letterIdentity(), sx: e, opacity: sliver(e)};
     });

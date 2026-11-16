@@ -419,6 +419,8 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
     if (ls.peakBright > 15) out.push({board: name, rule: 'load', severity: 'warn', line: ls.line, detail: `${ls.peakBright} bright words in frame (max 15)`});
     if (ls.peakVisible > 26) out.push({board: name, rule: 'load', severity: 'warn', line: ls.line, detail: `${ls.peakVisible} words in frame (max 26)`});
   }
+  // board.waive: named rules this board waives, with the reason; their errors are reported as warnings
+  for (const v of out) { const wv = board.waive?.find((x) => x.rule === v.rule); if (wv && v.severity === 'error') { v.severity = 'warn'; v.detail = `${v.detail} [waived: ${wv.why}]`; } }
   return {board: name, violations: out, lines};
 };
 

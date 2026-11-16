@@ -21,6 +21,8 @@ export interface WordMod {
   hidden?: boolean;
   /** Graphics in block-local coordinates drawn with the word (they inherit its transform and opacity). */
   marks?: ReactNode[];
+  /** As marks, but drawn under the word's glyphs (BEHIND's opaque plate). */
+  underlay?: ReactNode[];
   /** Vertical skew in degrees (hinge's fake perspective). */
   skewY?: number;
   /** Ignore line-based dimming and fading (shove: the shoved word stays until the board clears). */
@@ -39,6 +41,7 @@ export const composeMod = (a: WordMod, b: Partial<WordMod> | null | undefined, n
     sx: a.sx * (b.sx ?? 1), sy: a.sy * (b.sy ?? 1), opacity: a.opacity * (b.opacity ?? 1),
     clip: b.clip ?? a.clip, colour: b.colour ?? a.colour, tint: b.tint ?? a.tint, hidden: a.hidden || b.hidden,
     marks: b.marks ? [...(a.marks ?? []), ...b.marks] : a.marks,
+    underlay: b.underlay ? [...(a.underlay ?? []), ...b.underlay] : a.underlay,
     skewY: (a.skewY ?? 0) + (b.skewY ?? 0) || undefined,
     keepAlive: a.keepAlive || b.keepAlive,
     ghosts: b.ghosts ? [...(a.ghosts ?? []), ...b.ghosts] : a.ghosts,

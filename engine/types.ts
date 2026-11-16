@@ -180,7 +180,7 @@ export type AnchorRef =
 /** Which point of a block sits on its anchor: corners, edge midpoints, centre, or the ends of the first row's baseline. */
 export type BlockAlign = 'tl' | 'tr' | 'bl' | 'br' | 'ml' | 'mr' | 'tc' | 'bc' | 'centre' | 'baselineL' | 'baselineR';
 /** The fifteen emergence moves of the style bible (rules 54 to 68). */
-export type EmergeMove = 'seam' | 'sprout' | 'nest' | 'door' | 'morph' | 'shove' | 'hinge' | 'fold' | 'stack' | 'shelf' | 'tip' | 'swell' | 'extrude' | 'type' | 'portal' | 'drawer';
+export type EmergeMove = 'seam' | 'sprout' | 'nest' | 'door' | 'morph' | 'shove' | 'hinge' | 'fold' | 'stack' | 'shelf' | 'tip' | 'swell' | 'extrude' | 'type' | 'portal' | 'drawer' | 'behind';
 export interface Emergence {
   move: EmergeMove;
   /** The text (or rule, or Line) it comes out of. Required (rule 181.5). */
@@ -236,6 +236,8 @@ export interface RigKey {
   speed?: number; dir?: number;
   /** Free text shown in the validator's per-line motion plan. */
   label?: string;
+  /** The named move this key belongs to (set by fanTurn, quarter, runTrack); the validator checks it by its rules. */
+  name?: 'FAN' | 'QUARTER' | 'RUN' | 'DIVE';
 }
 
 /** A Paper hairline with a job (rule 52, rule 173). */
@@ -372,6 +374,9 @@ export interface Board {
   /** Chunk carries (DOGE K10, Fable item 48): the board moves as one sheet with the neighbouring chunk across a
    *  boundary, applied as an outer screen transform to everything it draws and checks (engine/carry.ts). */
   carry?: Carry[];
+  /** Style rules this board waives, each with its reason (for example `two-scales` on a short test board, or a house
+   *  rule of another video's style bible). Their errors are reported as warnings carrying the reason. */
+  waive?: {rule: string; why: string}[];
 }
 /** A chunk carry: `slideUp` (520 px up over frames B+2 to B+31) or `quarterCW` (90 degrees clockwise about the frame
  *  centre over 27 frames ending 8 before `firstWord`). `side` 'out' for the outgoing chunk (its tail runs to B+45),

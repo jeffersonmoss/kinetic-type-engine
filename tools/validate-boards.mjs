@@ -1,5 +1,5 @@
 // The one validator command: runs validateBoards() over a boards module in node and prints the report.
-// Usage (paths relative to the repo root, or absolute):
+// Usage (paths relative to the current directory, or absolute):
 //   node tools/validate-boards.mjs example/boards.ts [EXPORT_NAME=BOARDS] [--step N] [--json] [--layout] [--at SECONDS]
 //   --layout prints every block's placement and row sizes; --at T prints each word's screen box at song second T.
 //   If the module also exports ELEMENTS (an array of TrackedElement for screen-space graphics), those are checked with
@@ -23,7 +23,8 @@ const atIdx = args.indexOf('--at');
 const at = atIdx >= 0 ? Number(args[atIdx + 1]) : null;
 const pos = args.filter((a, k) => !a.startsWith('--') && args[k - 1] !== '--step' && args[k - 1] !== '--at');
 if (!pos[0]) { console.error('usage: node tools/validate-boards.mjs <boards module> [export name] [--step N] [--json]'); process.exit(2); }
-const modPath = path.resolve(root, pos[0]);
+// a relative module path is taken from the current directory (a host video runs this from its own folder)
+const modPath = path.resolve(process.cwd(), pos[0]);
 const exportName = pos[1] ?? 'BOARDS';
 const PREFIX = 'kinetic-type-engine-validate-';
 

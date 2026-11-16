@@ -14,6 +14,7 @@
 import {FPS, HEIGHT, WIDTH} from './config';
 import {toWorld} from './camera';
 import {rigAt, rigTransits, toScreenCam} from './rig';
+import {carrySpan} from './carry';
 import type {Board, Pt} from './types';
 import type {WordMod} from './verbRegistry';
 import {boardActive, retireFrame, wordStateAt} from './wordState';
@@ -26,8 +27,10 @@ export const SMEAR_SPAN = SMEAR_SHUTTER / 360;
 
 const probes = (): Pt[] => [0, 0.5, 1].flatMap((u) => [0, 0.5, 1].map((v) => ({x: u * WIDTH, y: v * HEIGHT})));
 
-/** Is frame f inside one of a board's rig transits (after its first frame, up to and including its last)? */
-export const inRigTransit = (board: Board, f: number) => rigTransits(board).some((tr) => f > tr.start && f < tr.end + 1e-6);
+/** Is frame f inside one of a board's rig transits (after its first frame, up to and including its last)? A chunk
+ *  carry in motion (carry.ts) counts as a transit here, so a slideUp or quarterCW blurs. */
+export const inRigTransit = (board: Board, f: number) => rigTransits(board).some((tr) => f > tr.start && f < tr.end + 1e-6)
+  || (board.carry ?? []).some((c) => { const [a, b] = carrySpan(c); return f > a - 1 && f <= b + 1e-6; });
 
 /** Largest per-frame screen displacement of a frame point at frame f, over the boards in a transit (0 otherwise). */
 export const rigDisplacementAt = (boards: Board[], f: number): number => {

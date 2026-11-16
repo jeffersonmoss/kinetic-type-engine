@@ -1,16 +1,16 @@
 // Authoring helpers : small builders for the moves that need more than one declaration (a morph, a
 // relight bind, a TIP with its rig tilt, a PORTAL with its wipe and dive, the STEP keys of a STACK). Each returns plain
 // data to put on a board; nothing here keeps state.
-import {FPS, PALETTE, WORDS} from './config';
+import {FPS, HEIGHT, PALETTE, WIDTH, WORDS} from './config';
 import type {AnchorRef, Emergence, GroundWipe, Pt, RigKey, RigTarget, VerbCue} from './types';
 
 const sungAt = (i: number) => WORDS[i]?.start_s ?? 0;
 
 /** MORPH: the emergence to put on the target block. `from` is the source word (or words), `keep` the letters shared
  *  (a string in order, e.g. 'UG', or [sourceLetter, targetLetter] pairs). `arc` sends the kept letters round a point. */
-export const morph = (o: {from: number | number[]; keep: string | [number, number][]; at?: number; arc?: {about: Pt; dir?: 1 | -1}; collapse?: number; delay?: number}): Emergence => {
+export const morph = (o: {from: number | number[]; keep: string | [number, number][]; at?: number; arc?: {about: Pt; dir?: 1 | -1}; collapse?: number; delay?: number; roll?: boolean; frames?: number}): Emergence => {
   const src = Array.isArray(o.from) ? o.from : [o.from];
-  return {move: 'morph', from: {word: src[0]}, at: o.at, params: {fromWords: src, keep: o.keep, arc: o.arc, collapse: o.collapse, delay: o.delay}};
+  return {move: 'morph', from: {word: src[0]}, at: o.at, params: {fromWords: src, keep: o.keep, arc: o.arc, collapse: o.collapse, delay: o.delay, roll: o.roll, frames: o.frames}};
 };
 
 /** The rig move that marks a morph as the event of its line (Fable items 7 and 35): a DIVE, by default 1.25 (the
@@ -73,7 +73,7 @@ export const rigDiveInto = (o: {t: number; frame: RigTarget['frame']; cap?: numb
 export const fanTurn = (o: {t: number; fan: number; joint: number | AnchorRef; frames?: number; to?: RigTarget; label?: string}): RigKey => ({
   t: o.t, kind: 'tilt', by: -o.fan, frames: o.frames ?? 10, to: o.to,
   about: typeof o.joint === 'number' ? {word: o.joint, letter: 'last', part: 'flankR'} : o.joint,
-  label: o.label ?? `FAN ${o.fan > 0 ? '+' : ''}${o.fan}`,
+  label: o.label ?? `FAN ${o.fan > 0 ? '+' : ''}${o.fan}`, name: 'FAN',
 });
 
 /** DRAWER (DOGE item 59, K7): the emergence of a block that slides out from behind an edge of a word (`host`, a word
@@ -84,3 +84,32 @@ export const drawer = (o: {host?: number; rect?: {x: number; y: number; w: numbe
   const from: AnchorRef = o.host !== undefined ? {word: o.host} : {point: {x: o.rect!.x + o.rect!.w / 2, y: o.rect!.y + o.rect!.h / 2}};
   return {move: 'drawer', from, params: {edge: o.edge, rect: o.rect, depth: o.depth, lead: o.lead}};
 };
+
+/** QUARTER (DOGE item 64): the camera rolls `by` degrees (60 to 90 either way) about the Joint, so the old line becomes a
+ *  tilted or vertical strip and the new line is upright; SmearStage blurs it as a transit. It needs a hole of 18 clear
+ *  frames for 60 degrees and 27 for 90 between the old line's last landing and the new line's first (validator
+ *  `quarter-clear`). Put it into board.rig. */
+export const quarter = (o: {t: number; by: number; joint: number | AnchorRef; frames?: number; to?: RigTarget; label?: string}): RigKey => ({
+  t: o.t, kind: 'roll', by: o.by, frames: o.frames ?? 12, to: o.to,
+  about: typeof o.joint === 'number' ? {word: o.joint, letter: 'last', part: 'flankR'} : o.joint,
+  label: o.label ?? `QUARTER ${o.by}`, name: 'QUARTER',
+});
+/** Clear frames a QUARTER of `deg` degrees needs (18 at 60, 27 at 90, linear between). */
+export const quarterClearFrames = (deg: number) => Math.ceil(18 + (9 * (Math.min(90, Math.max(60, Math.abs(deg))) - 60)) / 30);
+
+/** RUN (DOGE item 63): one row wider than the frame; the camera tracks along it at up to 22 px per frame so each word
+ *  lands ahead of the camera, inside the safe frame. Give the block `rows: [n]` and a wide `width`. The key runs from
+ *  `lead` frames (default 12; negative starts after it, so the first word keeps its 20 frames) before the first word is sung to the last word's sung frame, ending with the last word at
+ *  `screen` (default 62 percent across, at the frame's mid height). Validator `run-speed` checks the 22 px cap. */
+export const RUN_SPEED = 22;
+export const runTrack = (o: {words: [number, number]; lead?: number; screen?: Pt; label?: string}): RigKey => {
+  const lead = o.lead ?? 12;
+  const f0 = Math.round(sungAt(o.words[0]) * FPS) - lead, f1 = Math.round(sungAt(o.words[1]) * FPS);
+  return {t: f0 / FPS, kind: 'track', frames: Math.max(6, f1 - f0), ease: 'linear', to: {frame: {word: o.words[1]}, screen: o.screen ?? {x: 0.62 * WIDTH, y: HEIGHT / 2}},
+    label: o.label ?? 'RUN', name: 'RUN'};
+};
+
+/** BEHIND (DOGE item 60, K6): the emergence of the hidden block. `cover` the old line's words (one block; default the
+ *  anchor word's block), `exit` how the plate leaves. Lay the hidden block out in the cover's box, with a lower z. */
+export const behind = (o: {cover: number[]; exit?: 'hinge-down' | 'hinge-up' | 'slide-left' | 'slide-right' | 'slide-up'; frames?: number; pad?: number; colour?: string; at?: number}): Emergence =>
+  ({move: 'behind', from: {word: o.cover[0]}, at: o.at, params: {cover: o.cover, exit: o.exit ?? 'slide-up', frames: o.frames, pad: o.pad, colour: o.colour}});
