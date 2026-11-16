@@ -25,7 +25,7 @@
 //   behind           a BEHIND plate still over a hidden word on its sung frame
 //   carry            a chunk carry whose board camera moves, whose type is not clear of the edge at B, or whose outgoing
 //                    type is still in frame when the chunk unmounts
-import {FPS, HANDOFFS, HEIGHT, LINES, WIDTH, WORDS} from './config';
+import {FPS, FORMAT, HANDOFFS, HEIGHT, LINES, WIDTH, WORDS} from './config';
 import {camForBlock, cameraAt, toScreen} from './camera';
 import {blockToWorld} from './layout';
 import {countersMeasured, resolveAnchor} from './letters';
@@ -52,7 +52,7 @@ export const GIANT_CAP = 240;
 export const GIANT_SPAN = 800;
 /** Caption checks (kit pass 21): the same 48 px margin, 56 px cap and 15-frame floor as sung words (validate.ts SAFE,
  *  SUNG_MIN_CAP, motion.ts MIN_VISIBLE_FRAMES; repeated here because validate.ts imports this file). */
-const CAPTION_SAFE = 48;
+
 const CAPTION_MIN_CAP = 56;
 const CAPTION_MIN_FRAMES = 15;
 /** FAN Joint distance cap in screen px (DOGE item 45: 320 world px at its 1920-wide world, two thirds of a screen px each). */
@@ -413,9 +413,9 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
       if (op < 0.5) return;
       const cap = g.caption!.cap * (g.layer === 'screen' ? 1 : zoom);
       const xs = sp.flat().map((p) => p.x), ys = sp.flat().map((p) => p.y);
-      const over = Math.max(CAPTION_SAFE - Math.min(...xs), Math.max(...xs) - (WIDTH - CAPTION_SAFE), CAPTION_SAFE - Math.min(...ys), Math.max(...ys) - (HEIGHT - CAPTION_SAFE));
+      const over = Math.max(FORMAT.safeInsets.left - Math.min(...xs), Math.max(...xs) - (WIDTH - FORMAT.safeInsets.right), FORMAT.safeInsets.top - Math.min(...ys), Math.max(...ys) - (HEIGHT - FORMAT.safeInsets.bottom));
       const base = {board: name, rule: 'caption', severity: 'error' as const, text: g.caption!.text};
-      if (over > 0.5) note(`capm ${g.id}`, {...base, detail: `caption "${g.id}" is outside the 48 px safe margin`}, f, over);
+      if (over > 0.5) note(`capm ${g.id}`, {...base, detail: `caption "${g.id}" is outside the ${FORMAT.id === 'wide' ? '48 px safe margin' : 'format safe box'}`}, f, over);
       if (cap < CAPTION_MIN_CAP - 0.25) note(`capc ${g.id}`, {...base, detail: `caption "${g.id}" cap height below ${CAPTION_MIN_CAP} px on screen`}, f, CAPTION_MIN_CAP - cap);
       if (over <= 0.5 && cap >= CAPTION_MIN_CAP - 0.25) capRead.set(g.id, (capRead.get(g.id) ?? 0) + step);
       const cam = cameraAt(board, f);

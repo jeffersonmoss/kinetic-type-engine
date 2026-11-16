@@ -5,6 +5,7 @@
 //
 // One configuration per bundle: the values are module-level bindings, so a Remotion entry point (and a validator run)
 // holds one song. Give each video, the example and each fixture its own entry point (see KIT.md, section 1).
+import {WIDE, type FrameFormat} from './format';
 import type {FontKey, Handoff, Tier, WordOpts} from './types';
 
 /** One sung word from the lyric alignment. `line` is the index of its line in `lines`. */
@@ -62,6 +63,8 @@ export interface WordRules {
 export interface EngineConfig {
   /** Frames per second (default 30) and frame size in px (default 1280 x 720). */
   fps?: number; width?: number; height?: number;
+  /** Optional format supplies frame dimensions and asymmetric safe insets. */
+  format?: FrameFormat;
   words: SongWord[];
   lines: SongLine[];
   /** Beat times: the beat length sets the one-state-change-per-beat rule (default 19 frames without beats). */
@@ -94,6 +97,7 @@ const NUMBER_WORDS = /^(\d.*|one|two|three|four|five|six|seven|eight|nine|ten|el
 
 // ------------------------------------------------------------------ the configured values (live bindings)
 export let FPS = 30;
+export let FORMAT: FrameFormat = WIDE;
 export let WIDTH = 1280;
 export let HEIGHT = 720;
 export let WORDS: SongWord[] = [];
@@ -174,8 +178,9 @@ export const guardDisplay = (s: string): string => {
 /** Sets the song, frame, palette and fonts. Call once at set-up, before any board is laid out. */
 export const configureEngine = (c: EngineConfig): void => {
   FPS = c.fps ?? 30;
-  WIDTH = c.width ?? 1280;
-  HEIGHT = c.height ?? 720;
+  FORMAT = c.format ?? WIDE;
+  WIDTH = c.width ?? FORMAT.width;
+  HEIGHT = c.height ?? FORMAT.height;
   WORDS = c.words;
   LINES = c.lines;
   BEATS = c.beats ?? [];

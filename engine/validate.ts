@@ -3,7 +3,7 @@
 // readability); rig transits are exempt and the words sung during one are checked when it ends; speed is the smaller
 // of screen and board-relative speed (the rig is exempt from the cap); every block must declare its emergence from a
 // resolvable anchor; stances, handoffs and rig keys are checked.
-import {FPS, HANDOFFS, HEIGHT, LINES, WIDTH, WORDS, bannedIn} from './config';
+import {FPS, FORMAT, HANDOFFS, HEIGHT, LINES, WIDTH, WORDS, bannedIn} from './config';
 import {camForBlock, cameraAt, toScreen} from './camera';
 import {groundAt} from './ground';
 import {blockToWorld, layoutBoard} from './layout';
@@ -342,13 +342,13 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
       if (!s.vis && b.def.on && f < w.sf + PANEL_REVEAL_GRACE && (board.panels ?? []).some((p) => p.id !== b.def.on && panelSwinging(p, f / FPS))) continue;
       if (!s.vis || s.m.opacity < threshold) { note(`vis${i}`, {...base, rule: 'visible', detail: `opacity ${s.m.opacity.toFixed(2)} (needs ${threshold})`}, f, 1 - s.m.opacity); continue; }
       const xs = s.quad.map((p) => p.x), ys = s.quad.map((p) => p.y);
-      const over = Math.max(SAFE - Math.min(...xs), Math.max(...xs) - (WIDTH - SAFE), SAFE - Math.min(...ys), Math.max(...ys) - (HEIGHT - SAFE));
+      const over = Math.max(FORMAT.safeInsets.left - Math.min(...xs), Math.max(...xs) - (WIDTH - FORMAT.safeInsets.right), FORMAT.safeInsets.top - Math.min(...ys), Math.max(...ys) - (HEIGHT - FORMAT.safeInsets.bottom));
       const capPx = w.h * Math.abs(s.m.sy) * bcam.zoom;
       // Fable item 29: a word stays whole inside the margin for 12 frames after its sung frame
       // if its cap is 200 px or more on screen (20 frames otherwise); after that it may be cropped, but never to less
       // than half its height in frame while its own line is still being sung (`crop-half`)
       const wholeFor = capAtSung(i) >= MARGIN_BIG_CAP ? MARGIN_WHOLE_BIG : MARGIN_WHOLE;
-      if (over > 0.5 && f < w.sf + wholeFor) note(`margin${i}`, {...base, rule: 'margin', detail: `outside the 48 px safe margin within ${wholeFor} frames of its sung frame`}, f, over);
+      if (over > 0.5 && f < w.sf + wholeFor) note(`margin${i}`, {...base, rule: 'margin', detail: `outside the ${FORMAT.id === 'wide' ? '48 px safe margin' : 'format safe box'} within ${wholeFor} frames of its sung frame`}, f, over);
       if (f >= w.sf + wholeFor && f < lineSungEnd(w.line)) {
         // a word wholly out of frame (the rig has moved on down a stack) is not cropped; a sliver of it is
         const kept = heightInFrame(s.quad);

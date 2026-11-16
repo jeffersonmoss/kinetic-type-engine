@@ -26,3 +26,8 @@ Requests from videos built on this engine, worked in the next engine pass.
 11. HubO is now one fixed poker chip (Ink body, Paper keyline, 8 wedge inserts, dashed ring, upright spade; `rot` to counter the rig, `exit` slide-up; colour, counter states and bulbs retired). IPO kit commit 34d66d0.
 12. `letterTimes(word, [t...])` verb: each letter hidden until its own sung time, 4-frame pop from 0.85 scale (9ddf0dc).
 13. Figure `kneel` pose (ebfceab). Captions may carry a ruled `minCap` (ebfceab).
+
+
+## Vertical format plumbing — 16 November 2026
+
+`engine/format.ts` provides WIDE and SHORT_916, safe insets and overlay zones; `configureEngine({format})` applies them to validation. `engine/cut.ts` maps section cuts; audio-splice and review-overlay CLIs are in `tools/`. DOGE can import the engine directly; IPO may mirror the format layer into its own kit. Neither preset re-stages existing boards: each Short needs its own tall layouts. See KIT.md, Vertical Shorts.

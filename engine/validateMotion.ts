@@ -15,7 +15,7 @@
 //   framing          (warning, DOGE) the sung line's widest row spans under 60 percent of the safe width on screen
 //   prop-size        (error) a tracked element with `minSize` whose longer side is under it on screen while it is shown
 //   empty            (warning, timeline) more than 12 frames with no unretired lyric word in frame (validateBoards)
-import {FPS, HEIGHT, WIDTH} from './config';
+import {FPS, FORMAT, HEIGHT, WIDTH} from './config';
 import {cameraAt, toScreen, toWorld} from './camera';
 import {carrySpan, carryStillSpan} from './carry';
 import {inkQuad} from './validateRules';
@@ -32,7 +32,7 @@ export const FAST_SPACING = 20;
 export const STILL_MAX = 30;
 export const MIN_ROW_FILL = 0.6;
 export const EMPTY_FRAMES = 12;
-const SAFE = 48;
+
 
 /** Allowed lengths of a fast move by its size (Huang amendment A9). */
 export const fastLimits = (from: {x: number; y: number; zoom: number; rot: number}, to: {x: number; y: number; zoom: number; rot: number}) => {
@@ -113,7 +113,7 @@ export const motionRuleChecks = (board: Board, name: string, L: BoardLayout): Vi
   }
 
   // framing: the sung line's widest row against the safe width
-  const safeW = WIDTH - 2 * SAFE;
+  const safeW = WIDTH - FORMAT.safeInsets.left - FORMAT.safeInsets.right;
   const lines = [...new Set(L.order.map((i) => L.words.get(i)!.line))];
   for (const ln of sheet ? lines : []) {
     const ids = L.order.filter((i) => L.words.get(i)!.line === ln);
