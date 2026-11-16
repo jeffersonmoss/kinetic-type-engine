@@ -1,4 +1,4 @@
-// A contact sheet of every prop in props/, each fitted into a cell of a 7 by 6 grid on the example's palette, with
+// A contact sheet of every prop in props/, each fitted into a cell of an 8 by 6 grid on the example's palette, with
 // its working parts cycling over 3 seconds (a squash, an opening, a progress) so the verbs can be checked by eye.
 // Not a lyric scene: no board, no validator. Registered in Root.tsx as "PropsGallery".
 import React from 'react';
@@ -8,7 +8,7 @@ import {FONT_FAMILY, type Pt} from '../engine';
 import * as P from '../props';
 import {CREAM, NIGHT} from './song';
 
-const W = 1280, H = 720, COLS = 7, ROWS = 6;
+const W = 1280, H = 720, COLS = 8, ROWS = 6;
 const CW = W / COLS, CH = H / ROWS;
 
 type Placed = {x: number; y: number; size?: number};
@@ -61,6 +61,8 @@ export const PropsGallery: React.FC = () => {
     {name: 'Rocket', natural: 124, quad: P.rocketQuad, draw: (p) => <P.Rocket {...p} burn={u} flicker={f * 0.5} />},
     {name: 'HabitatDome', natural: 84, quad: P.habitatDomeQuad, draw: (p) => <P.HabitatDome {...p} draw={u} />},
     {name: 'Mars', natural: 260, quad: P.marsQuad, draw: (p) => <P.Mars {...p} domes={3 * u} />},
+    {name: 'PancakeStack', natural: 336, quad: P.pancakeStackQuad, draw: (p) => <P.PancakeStack {...p} />},
+    {name: 'ButterPat', natural: 56, quad: P.butterPatQuad, draw: (p) => <P.ButterPat {...p} turn={30 + 20 * u} />},
   ];
   const cells: React.ReactNode[] = entries.map((e, k) => {
     const cx = (k % COLS + 0.5) * CW, cy = (Math.floor(k / COLS) + 0.45) * CH;
@@ -69,10 +71,10 @@ export const PropsGallery: React.FC = () => {
     const p = {x: cx - ((b.x0 + b.x1) / 2) * s, y: cy - ((b.y0 + b.y1) / 2) * s, size: e.natural * s};
     return <g key={e.name}>{e.draw(p)}{label(e.name, k)}</g>;
   });
-  // the world-px props (no size): strip, paper, truss, wave, spray in the last cells
+  // the world-px props (no size): strip, paper, truss, wave, spray, speech bubble in the last cells
   const at = (k: number) => ({cx: (k % COLS + 0.5) * CW, cy: (Math.floor(k / COLS) + 0.45) * CH});
   const n = entries.length;
-  const c1 = at(n), c2 = at(n + 1), c3 = at(n + 2), c4 = at(n + 3), c5 = at(n + 4);
+  const c1 = at(n), c2 = at(n + 1), c3 = at(n + 2), c4 = at(n + 3), c5 = at(n + 4), c6 = at(n + 5);
   const strip = {x: c1.cx - 70, y: c1.cy - 30, size: 140, text: '$8,000', width: 490, t, printFrom: 0.3, printTo: 1.6, strikes: [{chars: [1, 5] as [number, number], at: 2}]};
   return (
     <AbsoluteFill style={{backgroundColor: NIGHT}}>
@@ -83,6 +85,7 @@ export const PropsGallery: React.FC = () => {
         <P.Truss x0={c3.cx - 70} x1={c3.cx + 70} y={c3.cy} />{label('Truss', n + 2)}
         <P.WaveLine x0={c4.cx - 70} x1={c4.cx + 70} y={c4.cy} phase={f * 3} amplitude={8} wavelength={50} />{label('WaveLine', n + 3)}
         <P.ChipSpray x={c5.cx - 40} y={c5.cy + 20} p={(f % 30) / 30} scale={0.25} angle={-40} />{label('ChipSpray', n + 4)}
+        <P.SpeechBubble x={c6.cx - 28} y={c6.cy - 36} w={88} h={52} radius={14} tailTip={{x: c6.cx - 58, y: c6.cy + 12}} tailBase={{side: 'left', from: c6.cy - 8, to: c6.cy + 10}} tailBow={{x: 0, y: 4}} grow={0.3 + 0.7 * u} strokeWidth={3} />{label('SpeechBubble', n + 5)}
       </svg>
     </AbsoluteFill>
   );
