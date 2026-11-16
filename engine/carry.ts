@@ -94,3 +94,7 @@ export const carryCam = (board: Board, frame: number, cam: CameraState): CameraS
 /** True while any carry of the board is in motion at the frame. */
 export const carrying = (board: Board, frame: number) =>
   (board.carry ?? []).some((c) => { const [a, b] = carrySpan(c); return frame >= a && frame <= b; });
+/** True from B on for a board with an outgoing carry (slideUp or quarterCW). From then the board draws no Ground and no
+ *  vignette, so its type rides over the incoming board, which draws them (KIT 36.1, item 72). */
+export const carriedOff = (board: Board, frame: number) =>
+  (board.carry ?? []).some((c) => c.side === 'out' && frame >= c.B);

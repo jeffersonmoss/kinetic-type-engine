@@ -2,7 +2,7 @@
 import React from 'react';
 import {FPS, HEIGHT, PALETTE, WIDTH} from './config';
 import {SCREEN_CAM, cameraAt, cameraTransform, toScreen} from './camera';
-import {carryCam} from './carry';
+import {carriedOff, carryCam} from './carry';
 import {Ground, Vignette} from './ground';
 import {ruleAt} from './rules';
 import {blockToWorld, layoutBoard, wordCorners, worldToBlock} from './layout';
@@ -193,16 +193,19 @@ export const BoardView: React.FC<{board: Board; t: number; uid?: string; smearPa
     return <g key={k}>{def.overlay(baseCtx(cue, L, f))}</g>;
   });
   const sid = `${uid}-${sfOf(board.start)}`;
+  // an outgoing carry's board rides over the incoming board from B: no ground of its own, no second vignette (item 72)
+  const bare = carriedOff(board, f);
+  const vig = board.vignette !== false && !bare;
   let inner = sharpPass ? (
     <g>
       <g transform={cameraTransform(cam)}>{sharpBlocks}</g>
       {pinned}
       {drawGraphics(board, ctx, 'screen')}
-      {board.vignette !== false && <Vignette uid={sid} />}
+      {vig && <Vignette uid={sid} />}
     </g>
   ) : (
     <g>
-      <Ground board={board} t={t} />
+      {!bare && <Ground board={board} t={t} />}
       <g>
         <g transform={cameraTransform(cam)}>
           {drawGraphics(board, ctx, 'under')}
@@ -215,7 +218,7 @@ export const BoardView: React.FC<{board: Board; t: number; uid?: string; smearPa
       </g>
       {!blurPass && pinned}
       {!blurPass && drawGraphics(board, ctx, 'screen')}
-      {!blurPass && board.vignette !== false && <Vignette uid={sid} />}
+      {!blurPass && vig && <Vignette uid={sid} />}
     </g>
   );
   const df = f - endF;
