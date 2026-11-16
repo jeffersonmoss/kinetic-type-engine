@@ -2,7 +2,8 @@
 // relight bind, a TIP with its rig tilt, a PORTAL with its wipe and dive, the STEP keys of a STACK). Each returns plain
 // data to put on a board; nothing here keeps state.
 import {FPS, HEIGHT, PALETTE, WIDTH, WORDS} from './config';
-import type {AnchorRef, Emergence, GroundWipe, Pt, RigKey, RigTarget, VerbCue} from './types';
+import type {AnchorRef, Board, Emergence, GroundWipe, Pt, RigKey, RigTarget, VerbCue} from './types';
+import {blockToWorld, layoutBoard} from './layout';
 
 const sungAt = (i: number) => WORDS[i]?.start_s ?? 0;
 
@@ -122,3 +123,41 @@ export const runTrack = (o: {words: [number, number]; lead?: number; screen?: Pt
  *  anchor word's block), `exit` how the plate leaves. Lay the hidden block out in the cover's box, with a lower z. */
 export const behind = (o: {cover: number[]; exit?: 'hinge-down' | 'hinge-up' | 'slide-left' | 'slide-right' | 'slide-up'; frames?: number; pad?: number; colour?: string; at?: number}): Emergence =>
   ({move: 'behind', from: {word: o.cover[0]}, at: o.at, params: {cover: o.cover, exit: o.exit ?? 'slide-up', frames: o.frames, pad: o.pad, colour: o.colour}});
+
+/** station() (Fable item 40, Huang `station`): a rig key that puts world point `pin.world` at screen point `pin.screen`
+ *  with the camera at angle `rot` and zoom `zoom` (each kept from the pose before when left out), so a scene can be laid
+ *  out station by station. Default a 12-frame step; `kind` 'roll', 'tilt', 'dive' or 'soar' when the move is one. */
+export const station = (o: {t: number; pin: {world: Pt; screen: Pt}; rot?: number; zoom?: number; frames?: number; kind?: 'step' | 'roll' | 'tilt' | 'dive' | 'soar' | 'whip'; label?: string}): RigKey => ({
+  t: o.t, kind: o.kind ?? 'step', frames: o.frames ?? 12, label: o.label ?? 'station',
+  to: {frame: {point: o.pin.world}, screen: o.pin.screen, rot: o.rot, zoom: o.zoom},
+});
+
+/** cameraFollow() (Fable item 47, Huang camera.follow): a CRANE that follows the sung words, holding the word being sung
+ *  (from its start) at screen point `screen`, damped: each hand-on from one word to the next eases over `lag` frames
+ *  (default 12), so the camera glides along a line instead of stepping. `board` is a thunk for the board the key belongs
+ *  to (its layout is read lazily). `to` may set the crane's zoom or angle (the crane honours to.zoom and to.rot). */
+export const cameraFollow = (o: {t: number; frames: number; words: number[]; board: () => Board; screen?: Pt; lag?: number; to?: RigTarget; label?: string}): RigKey => {
+  let pts: {s: number; p: Pt}[] | null = null;
+  const points = () => {
+    if (pts) return pts;
+    const L = layoutBoard(o.board());
+    pts = o.words.filter((i) => L.words.has(i)).map((i) => {
+      const g = L.words.get(i)!;
+      return {s: WORDS[i].start_s, p: blockToWorld(L.blocks[g.block], {x: g.x + g.w / 2, y: g.y + g.h / 2})};
+    });
+    return pts;
+  };
+  const lag = (o.lag ?? 12) / FPS;
+  const screen = o.screen ?? {x: WIDTH / 2, y: HEIGHT / 2};
+  const ease = (x: number) => 0.5 - 0.5 * Math.cos(Math.PI * Math.min(1, Math.max(0, x)));
+  return {
+    t: o.t, kind: 'crane', frames: o.frames, to: o.to, label: o.label ?? 'follow',
+    follow: (t: number) => {
+      const P = points();
+      if (!P.length) return {board: {x: 0, y: 0}, screen};
+      let x = P[0].p.x, y = P[0].p.y;
+      for (let k = 1; k < P.length; k++) { const e = ease((t - P[k].s) / lag); x += (P[k].p.x - P[k - 1].p.x) * e; y += (P[k].p.y - P[k - 1].p.y) * e; }
+      return {board: {x, y}, screen};
+    },
+  };
+};

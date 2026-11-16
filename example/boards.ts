@@ -10,7 +10,7 @@
 // degrees; S(C, R) maps a screen point to the world point under it for a rest framed at C.
 import './song';
 import {createElement} from 'react';
-import {LINES, behind, drawer, rise, slideFrom, fanTurn, quarter, runTrack, morph, rays, type Carry, type Block, type Board, type BoardPanel, type DecorGraphic, type Pt, type RigKey, type RuleDef} from '../engine';
+import {LINES, behind, cameraFollow, drawer, rise, slideFrom, station, fanTurn, quarter, runTrack, morph, rays, type Carry, type Block, type Board, type BoardPanel, type DecorGraphic, type Pt, type RigKey, type RuleDef} from '../engine';
 import {CREAM, DURATION_S, NIGHT, RED, SLATE, YELLOW} from './song';
 
 /** Global index of word k of line `line`. */
@@ -191,10 +191,10 @@ export const BOARD4: Board = {
 const LAMP = {x: 1760, y: 330, w: 120, h: 170};
 const lampQuad: Pt[] = [{x: LAMP.x, y: LAMP.y}, {x: LAMP.x + LAMP.w, y: LAMP.y}, {x: LAMP.x + LAMP.w, y: LAMP.y + LAMP.h}, {x: LAMP.x, y: LAMP.y + LAMP.h}];
 export const BOARD5: Board = {
-  id: 'sheet rules', start: 34, end: DURATION_S, bg: NIGHT, colour: CREAM, exit: 'none', font: 'anton', sheetRules: true, carryOut: true,
+  id: 'sheet rules', start: 34, end: 41, bg: NIGHT, colour: CREAM, exit: 'none', font: 'anton', sheetRules: true, carryOut: true,
   rigStart: {x: 640, y: 360, zoom: 1, rot: 0},
   waive: [{rule: 'two-scales', why: 'a short demonstration board: no line here is set at the giant level'}, {rule: 'level-run', why: 'a short demonstration board of two level lines'}],
-  rules: [{id: 'floor5', job: 'shelf', from: {x: 800, y: 430}, angle: 0, length: 900, t0: 37.2, until: DURATION_S}],
+  rules: [{id: 'floor5', job: 'shelf', from: {x: 800, y: 430}, angle: 0, length: 900, t0: 37.2, until: 41}],
   rig: [
     {t: lineStart(14, 22), kind: 'step', frames: 12, to: {frame: {point: {x: 1340, y: 360}}, screen: {x: 640, y: 360}}, label: 'STEP 700 px right'},
   ],
@@ -204,8 +204,37 @@ export const BOARD5: Board = {
     {words: range(14, 0, 2), attach: 'FREE', font: 'anton', width: 900, rows: [3], anchor: {to: {rule: 'floor5', s: 0}, align: 'bl', offset: {x: 0, y: -14}}, style: {[w(14, 1)]: {tier: 1}},
       emerge: rise({from: {rule: 'floor5', s: 0.2}})},
   ],
-  graphics: [{id: 'lamp', layer: 'under', from: 37.2, until: DURATION_S, persistent: true, box: () => [lampQuad],
+  graphics: [{id: 'lamp', layer: 'under', from: 37.2, until: 41, persistent: true, box: () => [lampQuad],
     draw: (_c, life) => createElement('rect', {x: LAMP.x, y: LAMP.y, width: LAMP.w, height: LAMP.h, fill: SLATE, opacity: Math.min(1, life.age / 6)})}],
-  track: [{id: 'lamp', clear: true, minSize: 120, from: 37.2, to: DURATION_S - 0.1, sample: (t) => (t >= 37.2 ? {opacity: Math.min(1, (t - 37.2) * 5), quad: lampQuad} : null)}],
+  track: [{id: 'lamp', clear: true, minSize: 120, from: 37.2, to: 40.9, sample: (t) => (t >= 37.2 ? {opacity: Math.min(1, (t - 37.2) * 5), quad: lampQuad} : null)}],
 };
-export const BOARDS: Board[] = [BOARD, BOARD2, BOARD3, BOARD4, BOARD5];
+
+// ------------------------------------------------------------------ group 3 (41 to 49 s): follow, station, sheet verbs
+// L15 FOLLOW THE LONG LINE HOME is one row wider than the frame, rising out of a floor rule; a cameraFollow CRANE glides
+// along it, holding the word being sung left of centre, and LONG grows (grow) with the row opening round it. station()
+// takes the camera down to L16 TUMBLE TURN SINK SLIDE, rising from behind their own foot line, where each word then does its own verb: TUMBLE's letters fall
+// out of frame, TURN turns its back, SINK sinks behind a shelf line, SLIDE slides off along the row.
+const rules6: RuleDef[] = [{id: 'floor6', job: 'shelf', from: {x: 80, y: 520}, angle: 0, length: 2500, t0: 41.0, until: 44.2}];
+export const BOARD6: Board = {
+  id: 'follow and verbs', start: 41, end: DURATION_S, bg: NIGHT, colour: CREAM, exit: 'none', font: 'anton',
+  rigStart: {x: 640, y: 360, zoom: 1, rot: 0}, rules: rules6,
+  waive: [{rule: 'two-scales', why: 'a short demonstration board: no line here is set at the giant level'}, {rule: 'level-run', why: 'a short demonstration board of two level lines'}],
+  rig: [
+    cameraFollow({t: 41.5, frames: Math.round((43.6 - 41.5) * 30), words: [w(15, 0), w(15, 1), w(15, 2), w(15, 3), w(15, 4)], board: () => BOARD6, screen: {x: 520, y: 400}, lag: 14}),
+    station({t: lineStart(16, 12), pin: {world: {x: 700, y: 1000}, screen: {x: 660, y: 380}}, frames: 12, label: 'station: down to L16'}),
+  ],
+  blocks: [
+    {words: range(15, 0, 4), attach: 'FREE', font: 'anton', cap: 130, width: 2400, rows: [5], anchor: {to: {rule: 'floor6', s: 0}, align: 'bl', offset: {x: 0, y: -14}},
+      style: {[w(15, 1)]: {tier: 1}}, emerge: {move: 'shelf', from: {rule: 'floor6', s: 0.05}},
+      verb: [{name: 'grow', word: w(15, 2), at: 42.75, params: {to: 1.3, frames: 8}}]},
+    {words: range(16, 0, 3), attach: 'FREE', font: 'anton', cap: 96, width: 900, rows: [4], anchor: {to: {point: {x: 120, y: 940}}, align: 'tl'},
+      emerge: rise({from: {point: {x: 640, y: 1060}}}),
+      verb: [
+        {name: 'tumble', word: w(16, 0), at: 46.3, params: {span: 12}},
+        {name: 'turnBack', word: w(16, 1), at: 46.5, params: {direction: 'left'}},
+        {name: 'sinkBehind', word: w(16, 2), at: 46.7, params: {shelf: 520}},
+        {name: 'slideAlong', word: w(16, 3), at: 46.9, params: {angle: 0, dist: 420}},
+      ]},
+  ],
+};
+export const BOARDS: Board[] = [BOARD, BOARD2, BOARD3, BOARD4, BOARD5, BOARD6];

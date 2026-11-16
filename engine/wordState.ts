@@ -13,6 +13,7 @@ import {clamp, easeInQuad, easeOutCubic, rand, rot, sfOf} from './util';
 import {SPEED_CAP} from './motion';
 import {IDENTITY, composeMod, getVerb, type VerbCtxBase, type VerbDef, type WordMod} from './verbRegistry';
 import './verbs';
+import './verbsSheet';
 import './emergence';
 
 /** Board exit durations (all at least MIN_TRANSITION_FRAMES; leave and fall also respect the speed cap). */
