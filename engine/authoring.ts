@@ -79,6 +79,15 @@ export const fanTurn = (o: {t: number; fan: number; joint: number | AnchorRef; f
 /** DRAWER (DOGE item 59, K7): the emergence of a block that slides out from behind an edge of a word (`host`, a word
  *  index) or of a prop (`rect`, a world box with an optional angle about its centre), clipped at that edge. Each word's
  *  slide ends on its own sung frame. */
+type EdgeOpts = {frames?: number; linear?: {speed: number; settle: number}; at?: number};
+/** slideFrom (Fable item 37): each word slides in from a frame edge on the Huang slide profile, ending on its sung frame.
+ *  `from` is the edge it enters from. It comes out of the frame itself, so the emergence anchor is the frame centre. */
+export const slideFrom = (o: EdgeOpts & {from: 'left' | 'right' | 'top' | 'bottom'; drop?: number; dropFrames?: number; earlyOk?: number}): Emergence =>
+  ({move: 'slideFrom', from: {point: {x: 0, y: 0}}, at: o.at, params: {edge: o.from, frames: o.frames, linear: o.linear, drop: o.drop, dropFrames: o.dropFrames, earlyOk: o.earlyOk}});
+/** rise (Fable item 37): each word rises from behind a line just under its own landed box (or, with `dir`, from its
+ *  own trailing side), clipped there. `from` names what it rises out of (a rule, a word), as every emergence does. */
+export const rise = (o: EdgeOpts & {from: AnchorRef; dir?: 'up' | 'down' | 'left' | 'right'; gap?: number}): Emergence =>
+  ({move: 'rise', from: o.from, at: o.at, params: {dir: o.dir, gap: o.gap, frames: o.frames, linear: o.linear}});
 export const drawer = (o: {host?: number; rect?: {x: number; y: number; w: number; h: number; angle?: number}; edge: 'top' | 'bottom' | 'left' | 'right'; depth?: number; lead?: number}): Emergence => {
   if (o.host === undefined && !o.rect) throw new Error('drawer: give host (a word) or rect (a prop box)');
   const from: AnchorRef = o.host !== undefined ? {word: o.host} : {point: {x: o.rect!.x + o.rect!.w / 2, y: o.rect!.y + o.rect!.h / 2}};

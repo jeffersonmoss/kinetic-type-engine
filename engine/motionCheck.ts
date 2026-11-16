@@ -26,6 +26,11 @@ export interface TrackedElement {
   from?: number; to?: number;
   /** Rules this element is deliberately exempt from (say why in a comment where you set it). */
   exempt?: MotionRule[];
+  /** The element is a prop type must keep clear of (Fable item 38): no word may overlap it, and a word in its first
+   *  15 frames from its sung frame stays 24 px from it (validator `prop-clear`). board.track only. */
+  clear?: boolean;
+  /** Smallest on-screen longer side, px, while shown at opacity 0.5 or more (validator `prop-size`, Fable item 45). */
+  minSize?: number;
 }
 export type MotionRule = 'speed' | 'min-visible' | 'state-rate' | 'flash' | 'abrupt';
 

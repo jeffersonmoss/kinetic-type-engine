@@ -180,7 +180,7 @@ export type AnchorRef =
 /** Which point of a block sits on its anchor: corners, edge midpoints, centre, or the ends of the first row's baseline. */
 export type BlockAlign = 'tl' | 'tr' | 'bl' | 'br' | 'ml' | 'mr' | 'tc' | 'bc' | 'centre' | 'baselineL' | 'baselineR';
 /** The fifteen emergence moves of the style bible (rules 54 to 68). */
-export type EmergeMove = 'seam' | 'sprout' | 'nest' | 'door' | 'morph' | 'shove' | 'hinge' | 'fold' | 'stack' | 'shelf' | 'tip' | 'swell' | 'extrude' | 'type' | 'portal' | 'drawer' | 'behind';
+export type EmergeMove = 'seam' | 'sprout' | 'nest' | 'door' | 'morph' | 'shove' | 'hinge' | 'fold' | 'stack' | 'shelf' | 'tip' | 'swell' | 'extrude' | 'type' | 'portal' | 'drawer' | 'behind' | 'slideFrom' | 'rise';
 export interface Emergence {
   move: EmergeMove;
   /** The text (or rule, or Line) it comes out of. Required (rule 181.5). */
@@ -346,6 +346,15 @@ export interface Board {
   colour?: string;
   /** World-space polygons that graphics occupy at song time t; the validator checks no word overlaps them. */
   keepClear?: (t: number) => Pt[][];
+  /** Carry-out (Fable item 34, Huang sheetExit): a word whose box a transit leaves partly out of frame (at the move's end
+   *  or the end of the hold after it) fades out over that move instead of resting half cropped. Opt-in. */
+  carryOut?: boolean;
+  /** With carryOut: a word also fades over the Nth transit after the one that brought in its line (Huang residueLife). */
+  residueLife?: number;
+  /** The sheet-camera rules of the Huang and DOGE videos (Fable items 33, 35, 36, 45), opt-in per board: `fast-move`,
+   *  `still-camera`, `entrance-in-move` and `camera-rest`, `framing`, and the timeline `empty` warning. Off, the first
+   *  video's camera style applies (6-frame steps, deliberate stills, a word sung during a transit read when it ends). */
+  sheetRules?: boolean;
   /** The board's graphics, each with a finite life and a declared box (ruling 198). There is no free-form decor: a
    *  graphic the engine cannot end is not allowed. */
   graphics?: DecorGraphic[];

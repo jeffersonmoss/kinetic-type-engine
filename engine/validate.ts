@@ -3,7 +3,7 @@
 // readability); rig transits are exempt and the words sung during one are checked when it ends; speed is the smaller
 // of screen and board-relative speed (the rig is exempt from the cap); every block must declare its emergence from a
 // resolvable anchor; stances, handoffs and rig keys are checked.
-import {FPS, HANDOFFS, HEIGHT, LINES, WIDTH, WORDS} from './config';
+import {FPS, HANDOFFS, HEIGHT, LINES, WIDTH, WORDS, bannedIn} from './config';
 import {camForBlock, cameraAt, toScreen} from './camera';
 import {groundAt} from './ground';
 import {blockToWorld, layoutBoard} from './layout';
@@ -19,6 +19,7 @@ import {checkTrack, type TrackedElement} from './motionCheck';
 import {panelTracks, separatingPanel} from './panels';
 import {panelGoneAt, panelQuad, panelSwingExempt, panelSwinging} from './panel';
 import {boardRuleChecks} from './validateRules';
+import {emptyTimeline, motionRuleChecks} from './validateMotion';
 import {EXIT_FRAMES, RETIRE_AFTER, baseCtx, boardCues, cueAffects, cueAt, retireFrame, wordStateAt} from './wordState';
 
 export const SAFE = 48;
@@ -80,6 +81,9 @@ const screenQuad = (board: Board, w: WordGeom, m: WordMod, f: number, camIn?: Ca
 type Agg = {v: Violation; worst: number};
 
 /** Checks one board. `opts.step` samples every n-th frame (default 1: every frame). */
+/** Fable item 38 (Huang item 37): a word in its first 15 frames stays this far from a keep-clear prop. */
+export const PROP_CLEAR = 24;
+export const PROP_CLEAR_FRAMES = 15;
 export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardReport => {
   const step = opts.step ?? 1;
   const name = board.id ?? `board@${board.start.toFixed(2)}`;
@@ -255,6 +259,8 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
       states.set(i, {m, quad: vis ? screenQuad(board, w, m, f) : [], vis});
     }
     const clear = board.keepClear?.(f / FPS) ?? [];
+    // tracked props flagged `clear` are keep-clear shapes too (Fable item 38)
+    for (const el of board.track ?? []) { if (!el.clear) continue; const s = el.sample(f / FPS); if (s && s.opacity > 0.05) clear.push(s.quad); }
     const clearScreen = clear.map((poly) => poly.map((p) => toScreen(cam, p)));
     const overlapPass = (i: number, w: WordGeom, s: {m: WordMod; quad: Pt[]; vis: boolean}, f: number, base: Violation) => {
       for (const j of L.order) {
@@ -329,7 +335,10 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
         if (st !== 'quarter-' && st !== 'quarter+') { const q = quarterRun.get(i); if (q) { quarterDone.push({i, start: q.start, len: q.len}); quarterRun.delete(i); } }
       }
       overlapPass(i, w, s, f, base);
-      clearScreen.forEach((poly, k) => { if (polysOverlap(s.quad, poly, 3)) note(`gr${i}-${k}`, {...base, rule: 'overlap', detail: `overlaps keepClear graphic ${k}`}, f, 1); });
+      clearScreen.forEach((poly, k) => {
+        if (polysOverlap(s.quad, poly, 3)) note(`gr${i}-${k}`, {...base, rule: 'overlap', detail: `overlaps keepClear graphic ${k}`}, f, 1);
+        else if (f >= w.sf && f < w.sf + PROP_CLEAR_FRAMES && polysOverlap(s.quad, poly, -PROP_CLEAR)) note(`pc${i}-${k}`, {...base, rule: 'prop-clear', detail: `within ${PROP_CLEAR} px of keepClear shape ${k} in its first ${PROP_CLEAR_FRAMES} frames (Fable item 38)`}, f, 1);
+      });
     }
     // Reading load per line
     if (f > fEndReading) continue;
@@ -412,6 +421,7 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
   if (board.handoff?.start) out.push(...checkHandoff(board, name, board.handoff.start, 'start'));
   if (board.handoff?.end && board.handoff.end !== 'open') out.push(...checkHandoff(board, name, board.handoff.end, 'end'));
   out.push(...boardRuleChecks(board, {name, L, intervals, step, addPlan}));
+  out.push(...motionRuleChecks(board, name, L));
   for (const [l, p] of plan) { const st = lineStats.get(l) ?? {line: l, transits: 0, peakBright: 0, peakVisible: 0}; st.plan = p; lineStats.set(l, st); }
   for (const st of lineStats.values()) st.transits = transits.filter((x) => lineAtFrame(x.start) === st.line).length;
   const lines = [...lineStats.values()].sort((a, b) => a.line - b.line);
@@ -474,6 +484,18 @@ export const checkHandoff = (board: Board, name: string, id: HandoffId, side: 's
 /** Checks a module's boards. When the song defines handoffs, the module must start and end on one (rule 181.5). */
 export const validateBoards = (boards: Board[], opts?: {step?: number}) => {
   const reports = boards.map((b) => validateBoard(b, opts));
+  // the timeline `empty` warning, reported on the board where the empty run starts
+  const layouts = boards.map((b) => layoutBoard(b));
+  for (const e of emptyTimeline(boards, layouts)) {
+    const k = Math.max(0, boards.findIndex((b) => e.from >= b.start * FPS && e.from < b.end * FPS));
+    reports[k]?.violations.push({board: reports[k].board, rule: 'empty', severity: 'warn', from: e.from, to: e.to, frames: e.to - e.from + 1, detail: `${e.to - e.from + 1} frames with no unretired lyric word in frame (more than 12)`});
+  }
+  // display guard over the handoff pictures (displayed words are guarded where they are laid out)
+  for (const [id, h] of Object.entries(HANDOFFS)) for (const e of h.elements) {
+    if (e.kind !== 'word') continue;
+    const b = bannedIn(e.text);
+    if (b && reports.length) reports[0].violations.push({board: reports[0].board, rule: 'guard', severity: 'error', detail: `handoff ${id} shows "${e.text}", which holds the banned spelling "${b}"`});
+  }
   if (Object.keys(HANDOFFS).length && reports.length) {
     if (!boards[0].handoff?.start) reports[0].violations.push({board: reports[0].board, rule: 'handoff', severity: 'error', detail: 'the first board of the module declares no start handoff (handoff.start)'});
     const n = boards.length - 1;

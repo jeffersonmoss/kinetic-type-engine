@@ -30,7 +30,7 @@ export {ruleAt, ruleTracks, ruleGrowFrames, RULE_OPACITY, RULE_WIDTH} from './ru
 export {Ground, Vignette, groundAt, wipeFrames, wipeFullAt} from './ground';
 export {Panel, panelStateAt, panelQuad, panelTrack, panelSwingExempt, SWING_EXEMPT_FRAMES} from './panel';
 export type {PanelDef, PanelOp, PanelKind} from './panel';
-export {morph, morphMarker, MORPH_MARKER_DIVE, relight, tip, portal, stackSteps, rigDiveInto, fanTurn, drawer, quarter, quarterClearFrames, runTrack, RUN_SPEED, behind} from './authoring';
+export {morph, morphMarker, MORPH_MARKER_DIVE, relight, tip, portal, stackSteps, rigDiveInto, fanTurn, drawer, quarter, quarterClearFrames, runTrack, RUN_SPEED, behind, slideFrom, rise} from './authoring';
 export {carryAt, carryCam, carrySpan, carrying, CARRY_TAIL, CARRY_LEAD, SLIDE_UP_PX, SLIDE_UP_FROM, SLIDE_UP_FRAMES, QUARTER_FRAMES, QUARTER_END_BEFORE_WORD, SLIDE_UP_OUT_MAX_Y, SLIDE_UP_IN_MIN_Y} from './carry';
 export {rays, lineMarks, graphicLife, drawLines, drawGraphics, ownersRetire, LINGER_FRAMES, LINE_EXIT_FRAMES, GRAPHIC_EXIT_FRAMES} from './lines';
 export type {LineSeg} from './lines';

@@ -90,6 +90,39 @@ export const retireFrame = (board: Board, i: number): number => {
 const cullMemo = new WeakMap<Board, Map<number, number>>();
 /** Frame from which a retired word is culled (Infinity if never): farther than a frame diagonal from the frame centre,
  *  or the board is cleared by a PORTAL (a ground wipe with `clears`). TIP and FOLD remove their words themselves. */
+const carryMemo = new WeakMap<Board, Map<number, {from: number; to: number} | null>>();
+const inFrame = (q: Pt[]) => q.every((p) => p.x >= -0.5 && p.x <= WIDTH + 0.5 && p.y >= -0.5 && p.y <= HEIGHT + 0.5);
+const outOfFrame = (q: Pt[]) => q.every((p) => p.x <= 0) || q.every((p) => p.x >= WIDTH) || q.every((p) => p.y <= 0) || q.every((p) => p.y >= HEIGHT);
+/** Carry-out (board.carryOut, Fable item 34): the frames over which word i fades out because a transit leaves it partly
+ *  out of frame, or null. From the later of the move's start and the word's retire frame, to the move's end (at
+ *  least 6 frames); a word already fully out of frame at the move's start is culled there. */
+export const carryOutSpan = (board: Board, i: number): {from: number; to: number} | null => {
+  if (!board.carryOut) return null;
+  let memo = carryMemo.get(board);
+  if (!memo) { memo = new Map(); carryMemo.set(board, memo); }
+  if (memo.has(i)) return memo.get(i)!;
+  const L = layoutBoard(board);
+  const w = L.words.get(i)!;
+  const b = L.blocks[w.block];
+  const corners = wordCorners(b, {...w, h: w.boxH});
+  const quad = (f: number) => { const cam = camForBlock(board, w.block, f); return corners.map((p) => toScreen(cam, p)); };
+  const tr = rigTransits(board);
+  const own = tr.filter((m) => m.end <= w.sf + 1e-6).length;
+  const last = Math.ceil(board.end * FPS);
+  let out: {from: number; to: number} | null = null;
+  for (let k = 0; k < tr.length; k++) {
+    const M = tr[k];
+    if (M.end < w.sf + MIN_VISIBLE_FRAMES) continue;
+    const holdEnd = Math.min((tr[k + 1]?.start ?? last) - 1, last);
+    const aged = board.residueLife !== undefined && k + 1 - own > board.residueLife;
+    if (!aged && inFrame(quad(M.end)) && inFrame(quad(holdEnd))) continue;
+    if (outOfFrame(quad(M.start))) out = {from: M.start, to: M.start};
+    else { const from = Math.max(M.start, retireFrame(board, i)); out = {from, to: Math.max(M.end, from + 6)}; }
+    break;
+  }
+  memo.set(i, out);
+  return out;
+};
 export const cullFrame = (board: Board, i: number): number => {
   let memo = cullMemo.get(board);
   if (!memo) { memo = new Map(); cullMemo.set(board, memo); }
@@ -98,7 +131,7 @@ export const cullFrame = (board: Board, i: number): number => {
   const L = layoutBoard(board);
   const w = L.words.get(i)!;
   const ret = retireFrame(board, i);
-  let out = Infinity;
+  let out = carryOutSpan(board, i)?.to ?? Infinity;
   for (const g of board.ground ?? []) if (g.clears) { const fa = wipeFullAt(board, g) * FPS; if (ret <= fa) out = Math.min(out, fa); }
   const corners = wordCorners(L.blocks[w.block], {...w, h: w.boxH});
   const half = Math.hypot(w.w, w.boxH) / 2;
@@ -180,6 +213,8 @@ export const wordStateAt = (board: Board, i: number, f: number): WordMod => {
   if (f >= cullFrame(board, i)) return {...IDENTITY, hidden: true, opacity: 0};
   const ret = retireFrame(board, i);
   if (f > ret) m = composeMod(m, {opacity: 1 - (1 - RETIRE_OPACITY) * clamp((f - ret) / RETIRE_FRAMES)}, n);
+  const co = carryOutSpan(board, i);
+  if (co && f >= co.from) m = composeMod(m, {opacity: 1 - clamp((f - co.from) / Math.max(1, co.to - co.from))}, n);
   // board exit
   const endF = board.end * FPS;
   if (f >= endF) {

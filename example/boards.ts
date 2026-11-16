@@ -9,7 +9,8 @@
 // From L1 on the rig rests at R = -90 or -78, and blocks are set at world angle 90, so they read level or tilted 12
 // degrees; S(C, R) maps a screen point to the world point under it for a rest framed at C.
 import './song';
-import {LINES, behind, drawer, fanTurn, quarter, runTrack, morph, rays, type Carry, type Block, type Board, type BoardPanel, type DecorGraphic, type Pt, type RigKey, type RuleDef} from '../engine';
+import {createElement} from 'react';
+import {LINES, behind, drawer, rise, slideFrom, fanTurn, quarter, runTrack, morph, rays, type Carry, type Block, type Board, type BoardPanel, type DecorGraphic, type Pt, type RigKey, type RuleDef} from '../engine';
 import {CREAM, DURATION_S, NIGHT, RED, SLATE, YELLOW} from './song';
 
 /** Global index of word k of line `line`. */
@@ -173,7 +174,7 @@ export const BOARD3: Board = {
 };
 const rules4: RuleDef[] = [{id: 'floor4', job: 'shelf', from: {x: 160, y: 470}, angle: 0, length: 960, persistent: true}];
 export const BOARD4: Board = {
-  id: 'all the way round', start: B_QUARTER / 30, end: DURATION_S, bg: NIGHT, colour: CREAM, exit: 'none', font: 'anton',
+  id: 'all the way round', start: B_QUARTER / 30, end: 34, bg: NIGHT, colour: CREAM, exit: 'none', font: 'anton',
   rigStart: {x: 640, y: 360, zoom: 1, rot: 0}, rules: rules4,
   carry: [{kind: 'quarterCW', B: B_QUARTER, side: 'in', firstWord: FIRST_ROUND}],
   rig: [{t: B_QUARTER / 30, kind: 'hold', still: true, label: 'hold through the quarterCW carry'}],
@@ -181,4 +182,30 @@ export const BOARD4: Board = {
     anchor: {to: {rule: 'floor4', s: 0}, align: 'bl', offset: {x: 0, y: -12}},
     emerge: {move: 'shelf', from: {rule: 'floor4', s: 0.1}, params: {per: 'block'}}}],
 };
-export const BOARDS: Board[] = [BOARD, BOARD2, BOARD3, BOARD4];
+
+// ------------------------------------------------------------------ group 2 (34 to 43 s): the sheet-camera rules on
+// L13 SLIDE IN FROM THE RIGHT slides up into a low row from the bottom frame edge (slideFrom: a word lands near the edge
+// it enters from, or `slide-early` fails it); a fast STEP 700 px right leaves its first words cropped, so they are carried
+// out (carryOut) while the rest stay; L14 RISE AND SHINE rises from behind its own foot line (rise). A lamp box at the
+// right is a tracked prop the type keeps clear of (prop-clear, prop-size).
+const LAMP = {x: 1760, y: 330, w: 120, h: 170};
+const lampQuad: Pt[] = [{x: LAMP.x, y: LAMP.y}, {x: LAMP.x + LAMP.w, y: LAMP.y}, {x: LAMP.x + LAMP.w, y: LAMP.y + LAMP.h}, {x: LAMP.x, y: LAMP.y + LAMP.h}];
+export const BOARD5: Board = {
+  id: 'sheet rules', start: 34, end: DURATION_S, bg: NIGHT, colour: CREAM, exit: 'none', font: 'anton', sheetRules: true, carryOut: true,
+  rigStart: {x: 640, y: 360, zoom: 1, rot: 0},
+  waive: [{rule: 'two-scales', why: 'a short demonstration board: no line here is set at the giant level'}, {rule: 'level-run', why: 'a short demonstration board of two level lines'}],
+  rules: [{id: 'floor5', job: 'shelf', from: {x: 800, y: 430}, angle: 0, length: 900, t0: 37.2, until: DURATION_S}],
+  rig: [
+    {t: lineStart(14, 22), kind: 'step', frames: 12, to: {frame: {point: {x: 1340, y: 360}}, screen: {x: 640, y: 360}}, label: 'STEP 700 px right'},
+  ],
+  blocks: [
+    {words: range(13, 0, 4), attach: 'FREE', font: 'anton', width: 1100, rows: [5], anchor: {to: {point: {x: 90, y: 520}}, align: 'tl'}, style: {[w(13, 1)]: {tier: 1}, [w(13, 3)]: {tier: 1}},
+      emerge: slideFrom({from: 'bottom'})},
+    {words: range(14, 0, 2), attach: 'FREE', font: 'anton', width: 900, rows: [3], anchor: {to: {rule: 'floor5', s: 0}, align: 'bl', offset: {x: 0, y: -14}}, style: {[w(14, 1)]: {tier: 1}},
+      emerge: rise({from: {rule: 'floor5', s: 0.2}})},
+  ],
+  graphics: [{id: 'lamp', layer: 'under', from: 37.2, until: DURATION_S, persistent: true, box: () => [lampQuad],
+    draw: (_c, life) => createElement('rect', {x: LAMP.x, y: LAMP.y, width: LAMP.w, height: LAMP.h, fill: SLATE, opacity: Math.min(1, life.age / 6)})}],
+  track: [{id: 'lamp', clear: true, minSize: 120, from: 37.2, to: DURATION_S - 0.1, sample: (t) => (t >= 37.2 ? {opacity: Math.min(1, (t - 37.2) * 5), quad: lampQuad} : null)}],
+};
+export const BOARDS: Board[] = [BOARD, BOARD2, BOARD3, BOARD4, BOARD5];

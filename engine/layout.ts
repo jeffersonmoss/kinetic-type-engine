@@ -1,5 +1,5 @@
 // Block and board layout: rows, word sizes and block placement. Pure; memoised per Board object.
-import {DEFAULT_FONT, FONTS, WORD_RULE, WORDS} from './config';
+import {DEFAULT_FONT, FONTS, WORD_RULE, WORDS, guardDisplay} from './config';
 import {FONT_INFO, letterAdvances, type FontKey} from './metrics';
 import {defaultTier} from './words';
 import type {Block, BlockGeom, Board, BoardLayout, Pt, RowGeom, Tier, WordGeom, WordOpts} from './types';
@@ -21,9 +21,9 @@ const hasDescender = (text: string) => /[gjpqy]/.test(text);
 
 /** Displayed text of a word whose case follows font `font` (an `upper` font shows capitals; double quotes are dropped). */
 export const displayText = (i: number, font: FontKey, opts?: WordOpts) => {
-  if (opts?.text !== undefined) return opts.text;
+  if (opts?.text !== undefined) return guardDisplay(opts.text);
   const raw = WORDS[i].text.replace(/["“”]/g, '');
-  return FONTS[font]?.upper ? raw.toUpperCase() : raw;
+  return guardDisplay(FONTS[font]?.upper ? raw.toUpperCase() : raw);
 };
 
 type Item = {i: number; tier: Tier; font: FontKey; text: string; unitW: number; opts: WordOpts};
