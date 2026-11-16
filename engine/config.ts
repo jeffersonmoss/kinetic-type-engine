@@ -81,7 +81,12 @@ export interface EngineConfig {
   /** Display guard (Fable item 44, DOGE K15): spellings that must never be displayed (the sung spellings of names the
    *  screen spells otherwise). Every displayed word, and every string passed through guardDisplay(), is checked. */
   guard?: RegExp[];
+  /** The look every Figure prop draws in when its own `look` is not given: 'stroke' (default, the stick body) or
+   *  'pictogram' (the filled restroom-sign figure). A film sets it once here to switch all its Figures. */
+  figureLook?: FigureLook;
 }
+/** How the Figure prop is drawn (see props/Figure.tsx). */
+export type FigureLook = 'stroke' | 'pictogram';
 
 /** The default connectives (amendment K2 of the first video: personal pronouns are not connectives). */
 export const CONNECTIVES = ['the', 'a', 'an', 'of', 'to', 'and', 'in', 'on', 'it', 'is', 'that', 'this', 'so', 'or', 'at', 'for'];
@@ -151,6 +156,8 @@ export let CONFIGURED = false;
 /** The mono font role (EngineConfig.mono), or null. */
 export let MONO_FONT: MonoFont | null = null;
 export let BANNED_DISPLAY: RegExp[] = [];
+/** The engine-wide default look of the Figure prop (EngineConfig.figureLook). */
+export let FIGURE_LOOK: FigureLook = 'stroke';
 /** The banned spelling found in a string, or null. */
 export const bannedIn = (s: string): string | null => {
   for (const re of BANNED_DISPLAY) { const m = s.match(re); if (m) return m[0]; }
@@ -190,6 +197,7 @@ export const configureEngine = (c: EngineConfig): void => {
   METRICS = c.metrics;
   HANDOFFS = c.handoffs ?? {};
   BANNED_DISPLAY = c.guard ?? [];
+  FIGURE_LOOK = c.figureLook ?? 'stroke';
   CONNECTIVE_SET = new Set((c.wordRules?.connectives ?? CONNECTIVES).map((s) => s.toLowerCase()));
   EMPHASIS = c.wordRules?.emphasis ?? ((i) => NUMBER_WORDS.test((WORDS[i]?.text ?? '').toLowerCase().replace(/[^a-z0-9-]/g, '')));
   WORD_RULE = c.wordRules?.rule ?? (() => undefined);
