@@ -18,6 +18,8 @@ export const QUARTER_END_BEFORE_WORD = 8;
 export const SLIDE_UP_OUT_MAX_Y = 520;
 /** slideUp: incoming type sits below this screen y at B (item 75), so it starts off frame or at the bottom edge. */
 export const SLIDE_UP_IN_MIN_Y = 648;
+/** `clear` on an outgoing carry: the type fades over this many frames, starting the frame after the motion ends. */
+export const CARRY_CLEAR_FRAMES = 12;
 
 const ease = (u: number) => { const x = Math.min(1, Math.max(0, u)); return 0.5 - 0.5 * Math.cos(Math.PI * x); };
 
@@ -35,6 +37,44 @@ export const carryAt = (c: Carry, frame: number): {dx: number; dy: number; rot: 
   const p = ease((frame - (a - 1)) / (b - (a - 1)));
   if (c.kind === 'slideUp') return {dx: 0, dy: c.side === 'out' ? -SLIDE_UP_PX * p : SLIDE_UP_PX * (1 - p), rot: 0};
   return {dx: 0, dy: 0, rot: c.side === 'out' ? 90 * p : -90 * (1 - p)};
+};
+/** Frames over which the board's own camera must hold still for a carry (validator `carry`): from the earlier of B
+ *  and the motion's first frame, to B+44 on the outgoing side (its tail) or to the motion's last frame on the incoming
+ *  side. The `still-camera` rule (sheetRules) does not count these frames, so a carry needs no waiver. */
+export const carryStillSpan = (c: Carry): [number, number] => {
+  const [a, b] = carrySpan(c);
+  return [Math.min(c.B, a), c.side === 'out' ? Math.max(c.B + CARRY_TAIL - 1, b) : b];
+};
+/** The frame at which an outgoing carry ends the reading interval of every word on its board, or null. A quarterCW
+ *  ends it at the turn's first frame (type turning 90 degrees is not read, and after the turn it lies at +90); an
+ *  outgoing carry with `clear` ends it at the latest when the clear starts. */
+export const carryReadEnd = (c: Carry): number | null => {
+  if (c.side !== 'out') return null;
+  const ends: number[] = [];
+  if (c.kind === 'quarterCW') ends.push(carrySpan(c)[0]);
+  const cl = carryClearSpan(c);
+  if (cl) ends.push(cl[0]);
+  return ends.length ? Math.min(...ends) : null;
+};
+/** An outgoing carry's `clear`: [first frame of the fade, frame from which the type is hidden], or null. The fade
+ *  starts `after` frames (default 0) after the frame following the motion's end and runs `frames` (default 12). */
+export const carryClearSpan = (c: Carry): [number, number] | null => {
+  if (c.side !== 'out' || !c.clear) return null;
+  const o = c.clear === true ? {} : c.clear;
+  const s = carrySpan(c)[1] + 1 + (o.after ?? 0);
+  return [s, s + Math.max(1, o.frames ?? CARRY_CLEAR_FRAMES)];
+};
+/** The opacity factor the board's carry clears give its words at a frame: 1 before any clear, easing (sine) to 0 over
+ *  the clear, and 0 (the word hidden) from its end. */
+export const carryClearOpacity = (board: Board, frame: number): number => {
+  let o = 1;
+  for (const c of board.carry ?? []) {
+    const cl = carryClearSpan(c);
+    if (!cl || frame < cl[0]) continue;
+    if (frame >= cl[1]) return 0;
+    o *= 1 - ease((frame - cl[0]) / (cl[1] - cl[0]));
+  }
+  return o;
 };
 /** A camera state with the board's carries applied (identity when the board has none). */
 export const carryCam = (board: Board, frame: number, cam: CameraState): CameraState => {

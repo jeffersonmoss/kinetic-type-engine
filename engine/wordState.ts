@@ -4,6 +4,7 @@ import {panelCover, panelWordMod} from './panels';
 import {HANDOFF_CLEAR_FRAMES, handoffClearFrame} from './handoffWords';
 import {CULL_DISTANCE, FPS, HEIGHT, LINES, WIDTH, WORDS} from './config';
 import {camForBlock, cameraAt, toScreen} from './camera';
+import {carryClearOpacity} from './carry';
 import {rigTransits} from './rig';
 import {wipeFullAt} from './ground';
 import {MIN_VISIBLE_FRAMES} from './motion';
@@ -246,6 +247,9 @@ export const wordStateAt = (board: Board, i: number, f: number): WordMod => {
   }
   // retired 6 frames after its line ends, dims to 45 percent over 10 frames, stays on the board; culled far away
   if (f >= cullFrame(board, i)) return {...IDENTITY, hidden: true, opacity: 0};
+  // an outgoing chunk carry with `clear` fades the board's type after its motion and then hides it (carry.ts)
+  const cc = carryClearOpacity(board, f);
+  if (cc <= 0) return {...IDENTITY, hidden: true, opacity: 0};
   const ret = retireFrame(board, i);
   if (f > ret) m = composeMod(m, {opacity: 1 - (1 - RETIRE_OPACITY) * clamp((f - ret) / RETIRE_FRAMES)}, n);
   // the end handoff shows only its picture (rule 81.7): every other word fades out over the board's last frames
@@ -253,6 +257,7 @@ export const wordStateAt = (board: Board, i: number, f: number): WordMod => {
   if (f >= hc) m = composeMod(m, {opacity: 1 - clamp((f - hc) / HANDOFF_CLEAR_FRAMES)}, n);
   const co = carryOutSpan(board, i);
   if (co && f >= co.from) m = composeMod(m, {opacity: 1 - clamp((f - co.from) / Math.max(1, co.to - co.from))}, n);
+  if (cc < 1) m = composeMod(m, {opacity: cc}, n);
   // board exit
   const endF = board.end * FPS;
   if (f >= endF) {

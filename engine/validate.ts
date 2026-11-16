@@ -13,6 +13,7 @@ import {clipConvex, polyArea} from './validateRules';
 import {RIG_FRAME_RANGE, SLOW_SOAR_MAX, SLOW_SOAR_MIN, isSlowSoar, rigMoves, rigTransits} from './rig';
 import {handoffGraceEnd, handoffPairsNested, handoffWordSet} from './handoffWords';
 import {MIN_VISIBLE_FRAMES} from './motion';
+import {carryReadEnd} from './carry';
 import {ruleTracks} from './rules';
 import type {Board, CameraState, Handoff, HandoffId, Pt, WordGeom} from './types';
 import {normDeg, polysOverlap, rot} from './util';
@@ -136,6 +137,17 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
     const last = Math.max(...mine.map((i) => L.words.get(i)!.sf));
     const gap = Math.max(16, p.foldGap ?? 20);
     if (g * FPS < last + gap - 0.5) out.push({board: name, rule: 'panel-fold-early', severity: 'error', word: mine[mine.length - 1], text: WORDS[mine[mine.length - 1]].text, from: Math.round(g * FPS), detail: `panel "${p.id}" starts to fold or fall ${(g * FPS - last).toFixed(0)} frames after its last printed word is sung (at least ${gap}; Fable item 28)`});
+  }
+  // chunk carries (carry.ts): an outgoing quarterCW ends the reading interval of every word on the board at the turn's
+  // first frame, and an outgoing `clear` at the latest when its fade starts; a word cut there must have been readable
+  // for MIN_VISIBLE_FRAMES first (Jefferson's floor)
+  const carryEnd = Math.min(...(board.carry ?? []).map((c) => { try { return carryReadEnd(c) ?? Infinity; } catch { return Infinity; } }));
+  if (carryEnd < Infinity) for (const i of L.order) {
+    const w = L.words.get(i)!;
+    const natural = Math.min(retireFrame(board, i), removal.get(i) ?? Infinity, endF);
+    if (natural <= carryEnd) continue;
+    if (carryEnd - w.sf < MIN_VISIBLE_FRAMES && w.sf < endF) out.push({board: name, rule: 'carry', severity: 'error', word: i, text: w.text, line: w.line, from: Math.round(carryEnd), to: Math.round(carryEnd), frames: 1, detail: `sung on frame ${w.sf.toFixed(0)}, ${(carryEnd - w.sf).toFixed(0)} frames before the outgoing carry ends its reading at ${carryEnd} (the quarterCW turn's start, or the clear's): it cannot be read for ${MIN_VISIBLE_FRAMES} frames. Sing it earlier on this board, or move it to the next chunk`});
+    removal.set(i, Math.min(removal.get(i) ?? Infinity, carryEnd));
   }
   // kit pass 21: the end handoff's clear removes every word that is not in its picture; a nest drawn by the handoff
   // picture itself (LOVE in MOST's O) is not an overlap

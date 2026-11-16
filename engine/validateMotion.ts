@@ -5,7 +5,8 @@
 //   fast-move        (error, Huang A9) a fast move (a transit of 20 frames or fewer): a pivot of 45 degrees or more, a push
 //                    or pull of 1.5 times or more, or over 400 px of travel, outside 12 to 16 frames; any other outside 8 to
 //                    14; two fast moves starting under 20 frames apart
-//   still-camera     (error, Huang A5) the camera dead still for more than 30 frames (chunk carries excepted); waive it
+//   still-camera     (error, Huang A5) the camera dead still for more than 30 frames (a chunk carry's motion and the
+//                    frames the carry rule holds still excepted); waive it
 //                    for a deliberate still (board.waive)
 //   entrance-in-move (error, Huang A3) part of a word's entrance drawn during a fast move;
 //   camera-rest      (warning, the same) a word sung during a fast move
@@ -16,7 +17,7 @@
 //   empty            (warning, timeline) more than 12 frames with no unretired lyric word in frame (validateBoards)
 import {FPS, HEIGHT, WIDTH} from './config';
 import {cameraAt, toScreen, toWorld} from './camera';
-import {carrySpan} from './carry';
+import {carrySpan, carryStillSpan} from './carry';
 import {inkQuad} from './validateRules';
 import {SLIDE_EARLY_OK} from './emergence/slide';
 import {rigMoves, TRANSIT_KINDS} from './rig';
@@ -69,8 +70,9 @@ export const motionRuleChecks = (board: Board, name: string, L: BoardLayout): Vi
     if (prev && m.start - prev.start < FAST_SPACING) out.push({board: name, rule: 'fast-move', severity: 'error', from: prev.start, to: m.start, detail: `fast moves start ${(m.start - prev.start).toFixed(0)} frames apart (at least ${FAST_SPACING})`});
   });
 
-  // still-camera: dead still for more than 30 frames, chunk carries excepted
-  const spans = (board.carry ?? []).map(carrySpan);
+  // still-camera: dead still for more than 30 frames; a chunk carry's motion and the frames the carry rule requires
+  // still (carryStillSpan: B to B+44 on the outgoing side) are not counted and end a run
+  const spans = (board.carry ?? []).flatMap((c): [number, number][] => { try { return [carrySpan(c), carryStillSpan(c)]; } catch { return []; } });
   let run = 0, runStart = startF;
   let prev = cameraAt(board, startF);
   for (let f = startF + 1; sheet && f <= endF + 1; f++) {

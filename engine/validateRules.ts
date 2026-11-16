@@ -34,7 +34,7 @@ import {panelQuad} from './panel';
 import {rigMoves, rigOwnAt, rigTransits} from './rig';
 import {behindFailures} from './emergence/behind';
 import {RUN_SPEED, quarterClearFrames} from './authoring';
-import {CARRY_TAIL, SLIDE_UP_IN_MIN_Y, SLIDE_UP_OUT_MAX_Y, carrySpan} from './carry';
+import {CARRY_TAIL, SLIDE_UP_IN_MIN_Y, SLIDE_UP_OUT_MAX_Y, carrySpan, carryStillSpan} from './carry';
 import {drawnOpacityAt} from './smearSampling';
 import {ruleAt} from './rules';
 import type {Board, BoardLayout, Pt, WordGeom} from './types';
@@ -596,12 +596,13 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
     try { span = carrySpan(cy); } catch (e) { out.push({board: name, rule: 'carry', severity: 'error', detail: `${what}: ${(e as Error).message}`}); continue; }
     const inks = (f: number) => L.order.map((i) => ({i, w: L.words.get(i)!, m: st(i, f)})).filter((x) => vis(x.m)).map((x) => ({...x, q: inkQuad(board, L, x.w, x.m, f)}));
     // the board's own camera holds across the carry (item 75: rotation 0 and zoom 1.0 in DOGE's units): use a still hold
-    const holdTo = cy.side === 'out' ? cy.B + CARRY_TAIL - 1 : span[1];
-    const c0 = rigOwnAt(board, Math.max(startF, cy.B));
-    for (let f = Math.max(startF, cy.B); f <= Math.min(endF, holdTo); f++) {
+    // (from the earlier of B and the motion's start: a quarterCW whose B is the turn's last frame turns before B)
+    const [holdFrom, holdTo] = carryStillSpan(cy);
+    const c0 = rigOwnAt(board, Math.max(startF, holdFrom));
+    for (let f = Math.max(startF, holdFrom); f <= Math.min(endF, holdTo); f++) {
       const c1 = rigOwnAt(board, f);
       const dr = Math.abs(c1.rot - c0.rot), dz = Math.abs(Math.log(c1.zoom / c0.zoom)), dm = Math.hypot(c1.x - c0.x, c1.y - c0.y) * c1.zoom;
-      if (dr > 0.5 || dz > 0.01 || dm > 2) { out.push({board: name, rule: 'carry', severity: 'error', from: f, detail: `${what}: the board's own camera moves during the carry (turn ${dr.toFixed(1)} deg, zoom ${(dz * 100).toFixed(1)} percent, travel ${dm.toFixed(0)} px); give it a hold with still: true from frame ${cy.B}`}); break; }
+      if (dr > 0.5 || dz > 0.01 || dm > 2) { out.push({board: name, rule: 'carry', severity: 'error', from: f, detail: `${what}: the board's own camera moves during the carry (turn ${dr.toFixed(1)} deg, zoom ${(dz * 100).toFixed(1)} percent, travel ${dm.toFixed(0)} px); give it a hold with still: true from frame ${holdFrom}`}); break; }
     }
     if (cy.side === 'in') {
       if (board.start * FPS > Math.min(cy.B, span[0]) + 0.5) out.push({board: name, rule: 'carry', severity: 'error', detail: `${what}: the incoming board starts after B or after the carry's motion starts`});

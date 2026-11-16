@@ -396,7 +396,15 @@ export interface Board {
 /** A chunk carry: `slideUp` (520 px up over frames B+2 to B+31) or `quarterCW` (90 degrees clockwise about the frame
  *  centre over 27 frames ending 8 before `firstWord`). `side` 'out' for the outgoing chunk (its tail runs to B+45),
  *  'in' for the incoming chunk authored in its final place. `B` and `firstWord` are absolute song frames. */
-export interface Carry {kind: 'slideUp' | 'quarterCW'; B: number; side: 'in' | 'out'; firstWord?: number}
+export interface Carry {
+  kind: 'slideUp' | 'quarterCW'; B: number; side: 'in' | 'out'; firstWord?: number;
+  /** Outgoing side only: clear the board's type with the carry. Every word fades out (sine) over `frames` (12)
+   *  starting `after` frames (0) after the frame following the motion's end, and is hidden from then; its reading
+   *  interval ends when the fade starts (a quarterCW ends it earlier, at the turn's start, with or without `clear`).
+   *  DOGE's hook `hookClear` with `fadeAfter: B + 1 - turnStart, frames: 12` is `clear: true` on a quarterCW whose B is
+   *  the turn's last frame. */
+  clear?: boolean | {after?: number; frames?: number};
+}
 
 /** Geometry of one laid-out word. Local = block frame (x right along reading, y down). */
 export interface WordGeom {
