@@ -36,3 +36,7 @@ Organized notes for any chat making a 9:16 YouTube Short from a finished lyric v
 2. Commit c99781a: Terra plumbing. `video/src/short-index.ts`, composition `RightChipWrongHuangShort`, a frame module in the video's own kit that reads the format. Copy this pattern for a video that runs on its own kit rather than the shared engine.
 3. Commit 731d632: the approved audio wired in.
 4. Status as of this note: Sol's Huang layout is still running and has not been gated, so treat its picture approach as unproven.
+
+## Routing for the DOGEfather and Buy This IPO Shorts
+
+Jefferson, 16 November 2026: do not wait for Sol's Huang result. Build these two the way the original videos were built: Opus subagents build (plumbing and layout), Fable directs and gates, the main agent renders. Terra and Sol in the steps above describe the Huang Short only.
