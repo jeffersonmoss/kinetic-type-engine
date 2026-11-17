@@ -2,14 +2,16 @@
 
 Organized notes for any chat making a 9:16 YouTube Short from a finished lyric video. Jefferson's requirements and the order of work are below; reuse the tooling listed, do not rebuild it.
 
-## Jefferson's requirements
+## Specs and decisions for a Short
+
+Items 1, 3 (his approval of the cut), 4 and 8 trace to Jefferson's own requests for the Huang Short; the rest were compiled by the Huang chat. Weigh them with judgment.
 
 1. Format: 9:16, 1080x1920, 30 fps, H.264, yuv420p, AAC at 48 kHz.
-2. Length: over 1 minute and under 3 minutes.
+2. Length: the Huang chat aimed for over 1 minute and under 3 minutes (agent default; no source from Jefferson found).
 3. Cut: built from the song's hook plus the strongest verse (Huang used opening Hook, Verse 3, final Hook). Propose the cut; he approves it.
 4. Recompose the layout for vertical. No cropping the 16:9 master, no letterbox.
-5. Safe zones: keep sung type, captions and recognizable props out of the top 8%, right 15% and bottom 20%.
-6. The video's own on-screen rules still apply (for Huang: "Huang", never "Wong"; no likenesses, real logos or flashing; words readable for 15 frames or more, nothing covered).
+5. Safe zones: an agent estimate of where YouTube's Shorts interface covers the frame (top 8%, right 15%, bottom 20%). Keep important type and props clear of it.
+6. Carry over whichever of the full video's own choices suit the Short (for Huang, for example, the "Huang" spelling and the readability work).
 7. Vertical support lives in the shared engine as a reusable mode (already done, below).
 8. Save to the repo's `YouTube upload - FINAL/` folder as `<Song> - VERTICAL SHORT (<sections>).mp4`, add a README line. Do not upload.
 
