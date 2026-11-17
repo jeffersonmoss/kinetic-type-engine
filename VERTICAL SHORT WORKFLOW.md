@@ -1,6 +1,6 @@
 # Vertical Short workflow (from the Right Chip Wrong Huang Short, 16 November 2026)
 
-Organized notes for any chat making a 9:16 YouTube Short from a finished lyric video. Jefferson's requirements and the order of work are below; reuse the tooling listed, do not rebuild it.
+Organized notes for any chat making a 9:16 YouTube Short from a finished lyric video. Specs, advice and the order of work are below; reuse the tooling listed, do not rebuild it.
 
 ## Specs and decisions for a Short
 
@@ -24,7 +24,7 @@ Items 1, 3 (his approval of the cut), 4 and 8 trace to Jefferson's own requests 
 1. Audio first. Propose the cut, then measure the splice points from drum transients (cross-correlation), not from the song map's beat grid: on Huang the grid ran about 40 ms late. Build the full Short audio (trim, resample to 48 kHz, 20 ms equal-power crossfade, `acrossfade d=0.02 c1=qsin c2=qsin`) and have Jefferson approve it by ear before any picture work. Picture timing depends on it.
 2. Plumbing: Terra (`gpt-6.1-terra`, Codex build profile). A Short entry point and composition, the chunks mounted with Sequence offsets for the cut, the approved WAV as the audio, frame 0 check render.
 3. Layout: Sol (`gpt-6.1-sol`), Jefferson's choice for the Huang Short; a Claude pass only if Sol's layout falls short. Recompose each board for the 720x1280 logical frame inside the safe box.
-4. Fable gates review stills and short clips (rendered by the main agent; delegates never launch Chrome). Must-pass rules only.
+4. Fable gates review stills and short clips (rendered by the main agent; delegates never launch Chrome). Mechanical faults and things he raised block; the rest is polish.
 5. Main agent renders the final, opens it locally for Jefferson, and sounds off.
 
 ## Reusable tooling (in this repo, commit 2c0bd94)
