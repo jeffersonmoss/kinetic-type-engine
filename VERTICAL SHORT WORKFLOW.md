@@ -9,10 +9,13 @@ Organized notes for any chat making a 9:16 YouTube Short from a finished lyric v
 3. Cut: built from the song's hook plus the strongest verse (Huang used opening Hook, Verse 3, final Hook). Propose the cut; he approves it.
 4. Recompose the layout for vertical. No cropping the 16:9 master, no letterbox.
 5. Safe zones: keep sung type, captions and recognizable props out of the top 8%, right 15% and bottom 20%.
-6. Strong hook text on frame 0.
-7. The video's own on-screen rules still apply (for Huang: "Huang", never "Wong"; no likenesses, real logos or flashing; words readable for 15 frames or more, nothing covered).
-8. Vertical support lives in the shared engine as a reusable mode (already done, below).
-9. Save to the repo's `YouTube upload - FINAL/` folder as `<Song> - VERTICAL SHORT (<sections>).mp4`, add a README line. Do not upload.
+6. The video's own on-screen rules still apply (for Huang: "Huang", never "Wong"; no likenesses, real logos or flashing; words readable for 15 frames or more, nothing covered).
+7. Vertical support lives in the shared engine as a reusable mode (already done, below).
+8. Save to the repo's `YouTube upload - FINAL/` folder as `<Song> - VERTICAL SHORT (<sections>).mp4`, add a README line. Do not upload.
+
+## Context and craft suggestions (agents' advice, not Jefferson's requirements)
+
+9. Opening a Short on strong hook text tends to help retention. This came from an agent, not from Jefferson (he said so on 16 November 2026); weigh it with judgment like any other craft idea, alongside what suits the song.
 
 ## Order of work
 
