@@ -78,6 +78,8 @@ export interface Base<P extends object> {
 }
 export interface UnitEffectDef<P extends object> extends Base<P> {
   kind: 'enter' | 'exit' | 'accent';
+  /** Progress fraction to align with a sung accent's target frame. */
+  hit?: number;
   pose(u: number, unit: Unit, p: Readonly<P>, env: Env): Pose;
   ink(u: number, unit: Unit, p: Readonly<P>, env: Env): Box;
   bindsRepeats?: boolean;
@@ -110,7 +112,17 @@ type Call<P extends object, D extends Definition<P>> = Readonly<{name: string; d
 export interface UnitCall<P extends object> extends Call<P, UnitEffectDef<P>> {
   readonly cascade?: Readonly<CascadeOptions>;
   readonly reversed?: boolean;
+  readonly stressTarget?: StressSelector;
 }
+export interface StressSelector {
+  readonly kind: 'stress';
+  /** Display text or stable token ID. */
+  readonly word?: string;
+  readonly level?: 1 | 2;
+  readonly voice?: 'lead' | 'adlib';
+}
+export const onStress = (options: Omit<StressSelector, 'kind'> = {}): StressSelector =>
+  Object.freeze({...options, kind: 'stress'});
 export type PairCall<P extends object> = Call<P, PairTransformDef<P>>;
 export type CameraCall<P extends object> = Call<P, CameraRecipeDef<P>>;
 type Builder<P extends object, D extends Definition<P>, C> =
@@ -189,7 +201,9 @@ export function cascade<P extends object>(call: UnitCall<P>, options: CascadeOpt
     gap: frames(0),
     clock: {accepts: (value) => value === 'sung' || frames(0).accepts(value), expected: 'sung or a non-negative frame gap'},
   };
-  return Object.freeze({...call, cascade: parse(`${call.name} cascade`, schema, options)});
+  const parsed = parse(`${call.name} cascade`, schema, options);
+  const clock = parsed.by === 'syllable' && parsed.clock === undefined && parsed.gap === undefined ? 'sung' : parsed.clock;
+  return Object.freeze({...call, cascade: Object.freeze({...parsed, clock})});
 }
 export function reverse<P extends object>(entrance: UnitCall<P>): UnitCall<P> {
   if (entrance.def.kind !== 'enter' || entrance.reversed) throw new Error(`${entrance.name}: reverse requires an entrance`);

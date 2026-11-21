@@ -1,4 +1,5 @@
 import {withEngine, type EngineContext} from '../context';
+import {lowerAccents, type AccentSample} from './accents';
 import {isPair, isUnit, bind, type Diagnostic} from './bind';
 import {boundContext} from './defaults';
 import {finalizeEffects, lowerEntrance, setCamera, type BlockWork, type SceneWork} from './entrance';
@@ -6,7 +7,6 @@ import {lowerFates} from './fates';
 import {placeBlock, sourceOf, type Located} from './place';
 import {checkSource, inspect, readBoard} from './read';
 import {editClock, mapVocal, type EditRange, type SongMap} from '../song';
-import {lowerUnit, scheduleUnit, unitCues} from '../effects';
 import type {Board} from '../engine/types';
 import type {Film, Format, Ink} from '../score';
 import type {CompiledFilm, LineIndex, TokenReading, Transition} from './types';
@@ -63,6 +63,7 @@ export function compileScore(base: EngineContext, film: Film, song: SongMap, opt
     const byId = new Map<string, Located>();
     const lineIndex: Record<string, LineIndex> = Object.create(null);
     const transitions: Transition[] = [];
+    const accents: AccentSample[] = [];
     const readings: TokenReading[] = [];
     const firstOf = (scene: typeof scenes[number]) => Math.min(...scene.lines[0].lead.runs.map((run) => run.vocal?.onset ?? Infinity));
     const nominalEnd = (scene: typeof scenes[number]) => Math.max(...scene.lines.flatMap(({blocks}) =>
@@ -114,27 +115,7 @@ export function compileScore(base: EngineContext, film: Film, song: SongMap, opt
         transitions.push({line: item.id, board: scene.id, start: block.start, landing: block.landing, release: block.release,
           edge: item.card.from.kind === 'edge', handoff: isPair(item.card.enter), interlude: item.start !== undefined});
       }
-      for (const authored of lines) {
-        const owners = work.blocks.filter((block) => block.authored === authored);
-        for (const [n, call] of (authored.card.accents ?? []).entries()) {
-          if (call.def.kind !== 'accent') throw new Error(`${authored.id}: ${call.name} is not an accent`);
-          const params = call.params as {word?: string};
-          const selection = params.word ? owners.filter(({item}) => !item.reply) : owners.slice(0, 1);
-          const matches = selection.map((block) => ({block, targets: block.targets.filter(({word}) => !params.word ||
-            block.item.runs.some((run) => run.i === word && run.text.toUpperCase() === params.word!.toUpperCase()))}));
-          const count = matches.reduce((sum, {targets}) => sum + targets.length, 0);
-          if (!count) throw new Error(`${authored.id}: ${call.name} has no matching target "${params.word}"`);
-          if (params.word && count !== 1) throw new Error(`${authored.id}: ${call.name} has an ambiguous target "${params.word}"`);
-          for (const {block, targets} of matches) {
-            if (!targets.length) continue;
-            const name = `${call.name} · ${block.item.id} · ${n + 1}`;
-            const start = block.item.start !== undefined ? block.landing : Math.min(...targets.map(({sungFrame}) => sungFrame!));
-            const schedule = scheduleUnit(call, ctx, targets, start);
-            work.entries.push([name, lowerUnit(call, ctx, {schedule})]);
-            (board.blocks[block.index].verb ??= []).push(...unitCues(name, schedule, ctx.fps));
-          }
-        }
-      }
+      for (const authored of lines) lowerAccents(ctx, work, authored, diagnostics, accents);
       finalizeEffects(work);
       if (i) transitions.push({line: work.blocks[0].item.id, board: scene.id, start, landing: start, release: start,
         cut: true, handoff: works[i - 1].board.screenHandoffOut?.frame === start});
@@ -183,7 +164,7 @@ export function compileScore(base: EngineContext, film: Film, song: SongMap, opt
     if (!boards.length) throw new Error('The selected edit has no score boards');
     const emphasisWords = new Set(allBlocks.flatMap(({item}) => item.runs.flatMap((run) =>
       run.emphasis && run.vocal ? [run.vocal.token.id] : []))).size;
-    const inspection = inspect(ctx, format, duration, boardsById, allBlocks, readings, transitions, diagnostics);
+    const inspection = inspect(ctx, format, duration, boardsById, allBlocks, readings, transitions, diagnostics, accents);
     const result = frozen({format, boards, lineIndex, readings, transitions, diagnostics, inspection, clock, duration,
       rawBoards: boards.length - works.length, emphasisWords});
     // The context carries a private registration key, so keep the original identity.

@@ -1,7 +1,7 @@
 import type {EngineContext} from '../context';
 import type {Pt, TurnAxis, TurnPivot} from '../engine/types';
 import {
-  cascade, defineEffect, frames, nonempty, numberIn, oneOf, reverse,
+  cascade, defineEffect, frames, nonempty, numberIn, oneOf, reverse, type StressSelector,
   type Base, type Env, type Pose, type Unit, type UnitCall, type UnitEffectDef,
 } from './define';
 import type {EffectTarget} from './lower';
@@ -159,15 +159,21 @@ export const dockExit = unitEffect<Dock>({
   },
 });
 
-type Punch = Timed & {word: string; scale?: number};
+type Punch = Timed & {word?: string; scale?: number};
 const punch = unitEffect<Punch>({
-  name: 'beatPunch', kind: 'accent', source: 'none',
-  params: {word: nonempty, scale: numberIn(1, 1.35), frames: frames(6)},
+  name: 'beatPunch', kind: 'accent', source: 'none', hit: 0.5,
+  params: {word: {...nonempty, required: false}, scale: numberIn(1, 1.35), frames: frames(6)},
   duration: (p) => p.frames ?? 8,
-  pose(u, unit, p) {
-    if (u >= 1 || unit.text !== p.word) return {};
+  pose(u, _unit, p) {
+    if (u >= 1) return {};
     const s = 1 + ((p.scale ?? 1.12) - 1) * Math.sin(Math.PI * u) ** 2;
     return {sx: s, sy: s};
   },
 });
-export const beatPunch = Object.assign((word: string, params: Omit<Punch, 'word'> = {}) => punch({...params, word}), {def: punch.def});
+export const beatPunch = Object.assign((target: string | StressSelector, params: Omit<Punch, 'word'> = {}) => {
+  if (typeof target === 'string') {
+    if (!target.trim()) throw new Error('beatPunch: word must be nonempty text');
+    return punch({...params, word: target});
+  }
+  return Object.freeze({...punch(params), stressTarget: target});
+}, {def: punch.def});

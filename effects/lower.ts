@@ -85,7 +85,8 @@ export function scheduleUnit<P extends object>(call: UnitCall<P>, ctx: EngineCon
     if (options?.clock === 'sung' && !Number.isFinite(group.sung)) {
       throw new Error(`${call.name}: missing sung frame for ${options.by} of word ${group.targets[0].word}`);
     }
-    const s = options?.clock === 'sung' ? group.sung! - span : start + gap * index;
+    const lead = call.def.kind === 'accent' ? Math.round(span * (call.def.hit ?? 0)) : span;
+    const s = options?.clock === 'sung' ? group.sung! - lead : start + gap * index;
     const timing = {start: s, end: s + span};
     for (const {word, glyph} of group.targets) {
       const entry = result.get(word) ?? {word};
@@ -127,6 +128,7 @@ export interface UnitBinding {
   readonly holdThrough?: number;
   readonly excludeGlyphs?: readonly GlyphRef[];
   readonly binds?: readonly {display: number; sung: number}[];
+  readonly activeGlyphs?: ReadonlyMap<number, readonly number[]>;
 }
 
 const letter = (p: Pose): LetterMod => {
@@ -153,6 +155,7 @@ export function lowerUnit<P extends object>(call: UnitCall<P>, ctx: EngineContex
   const binds = binding.binds?.map((pair) => ({...pair}));
   const schedule = new Map(binding.schedule.map((word) => [word.word, word.span ? [{...word.span}] : word.glyphs!.map((span) => ({...span}))]));
   const whole = new Set(binding.schedule.filter((word) => word.span).map((word) => word.word));
+  const masks = new Map([...(binding.activeGlyphs ?? [])].map(([word, glyphs]) => [word, new Set(glyphs)]));
   const isEntry = call.def.kind === 'enter';
   const isExit = call.def.kind === 'exit';
   const first = Math.min(...[...schedule.values()].flatMap((spans) => spans.map((span) => span.start)));
@@ -184,7 +187,9 @@ export function lowerUnit<P extends object>(call: UnitCall<P>, ctx: EngineContex
     }
     if (spans.length !== unit.glyphs.length) throw new Error(`${call.name}: glyph schedule does not match word ${c.i}`);
     if (isEntry && frame < Math.min(...spans.map((span) => span.start))) return {pose: {hidden: true, opacity: 0}};
-    const glyphPose = (glyph: Glyph, span: Span) => frame < span.start ? (isEntry ? {opacity: 0} : {})
+    const mask = masks.get(c.i);
+    const glyphPose = (glyph: Glyph, span: Span) => frame < span.start || (mask && !mask.has(glyph.index))
+      ? (isEntry ? {opacity: 0} : {})
       : unitPose(call, progress(span), {...glyph, glyphs: [{...glyph, index: 0}]}, env(span, true));
     return {pose: {letters: unit.glyphs.map((glyph, index) => letter(isExit && excluded.has(glyphKey(glyph)) ? {} : glyphPose(glyph, spans[index])))}};
   }

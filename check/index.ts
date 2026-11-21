@@ -15,12 +15,14 @@ export function checkFilm(film: CompiledFilm, map: SongMap, earChecks: readonly 
     }
   }
   const tokens = new Map(map.tokens.map((token) => [token.id, token]));
+  const uncertain = new Set(map.lines.filter(line => line.uncertain).map(({id}) => id));
   const open = new Set(earChecks.filter(({status}) => status === 'open').map(({id}) => id));
   const sync = film.readings.map(({token, text, line, onset, vocalEnd, interval, landing, preset}) => {
     const fromMap = tokens.get(token);
     const openEarChecks = fromMap?.reviewIds.filter((id) => open.has(id) || (!earChecks.length && fromMap.reviewStatus === 'open')) ?? [];
     return {token, text, line, onset, vocalEnd, startOfProtectedReading: interval?.start, endOfProtectedReading: interval?.end,
-      landing, preset, openEarChecks};
+      landing, preset, openEarChecks, ...(fromMap?.syllables ?
+        {syllables: fromMap.syllables, scansionUncertain: uncertain.has(fromMap.lineId)} : {})};
   });
   return {diagnostics, sync, openEarChecks: new Set(sync.flatMap(({openEarChecks}) => openEarChecks)).size};
 }

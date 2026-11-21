@@ -8,8 +8,13 @@ import type {Board, VerbDef} from '../engine/types';
 import {getVerb} from '../engine';
 import {wordStateAt} from '../engine/wordState';
 import {follow} from '../effects';
-import {isPair, isUnit, key, type BoundLine} from './bind';
+import {isPair, isUnit, type BoundLine} from './bind';
 import type {Located, Source} from './place';
+import {inferredTargets, syllableTargets, type SyllableTarget} from './syllables';
+
+export interface BoundTarget extends EffectTarget {
+  stressSyllables?: SyllableTarget[];
+}
 
 export interface SceneWork {
   board: Board & {effects?: Board['effects']};
@@ -24,37 +29,31 @@ export interface BlockWork extends Located {
   start: number;
   landing: number;
   release: number;
-  targets: EffectTarget[];
+  targets: BoundTarget[];
   schedule?: WordSchedule[];
   kept?: readonly GlyphRef[];
   landingByWord: Map<number, number>;
 }
 
 export const spans = (schedule: readonly WordSchedule[]) => schedule.flatMap((w) => w.span ? [w.span] : w.glyphs!);
-export function targetsFor(work: BlockWork): EffectTarget[] {
+export function targetsFor(work: BlockWork): BoundTarget[] {
   const layout = layoutBoard(work.board);
   const syllables = work.item.card.syllables;
-  return work.item.runs.map(({i, text, vocal}) => {
+  return work.item.runs.map(run => {
+    const {i, text, vocal} = run;
     const g = layout.words.get(i)!;
     const parts = vocal && syllables?.[vocal.token.id];
-    const split = parts && work.item.runs.filter((run) => run.vocal?.token.id === vocal.token.id);
-    let index = 0;
-    const offset = split?.slice(0, split.findIndex((run) => run.i === i)).reduce((sum, run) => sum + [...run.text].length, 0) ?? 0;
     const count = [...text].length;
     if (work.item.start !== undefined) return {word: i, row: g.row, glyphs: count};
     const sungFrame = vocal?.onset ?? g.sf;
-    if (parts && key(parts.map((part) => part.text).join('')) !== key(vocal!.token.text)) {
-      throw new Error(`${work.item.id}: syllables must spell ${vocal!.token.text}`);
-    }
-    const partition = parts?.flatMap((part) => {
-      const glyphs = [...part.text].flatMap(() => {
-        const j = index++ - offset;
-        return j >= 0 && j < count ? [j] : [];
-      });
-      return glyphs.length ? [{glyphs, sungFrame: sungFrame + (part.offsetFrames ?? 0)}] : [];
-    });
+    const stressSyllables = inferredTargets(run, work.item.runs);
+    const partition = parts?.length ? syllableTargets(run, work.item.runs, parts.map(({text, offsetFrames}) =>
+      ({text, frame: sungFrame + (offsetFrames ?? 0)}))) : stressSyllables?.map(part => ({
+        ...part, sungFrame: part.sungFrame ?? sungFrame,
+      }));
     return {word: i, row: g.row, glyphs: count, sungFrame: Math.round(sungFrame),
-      glyphFrames: Array.from({length: count}, () => sungFrame), syllables: partition ?? [{glyphs: Array.from({length: count}, (_, i) => i), sungFrame}]};
+      glyphFrames: Array.from({length: count}, () => sungFrame),
+      syllables: partition ?? [{glyphs: Array.from({length: count}, (_, i) => i), sungFrame}], stressSyllables};
   });
 }
 function blockView(work: Located, reference = work.board): BlockView {

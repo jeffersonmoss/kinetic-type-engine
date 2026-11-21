@@ -2,13 +2,16 @@ import {cascade, fade, rise, type as typeOn} from '../effects';
 import {CONNECTIVES, type SongLine as EngineLine, type SongWord} from '../engine/config';
 import {clear, echo, opening, portraitCard, row, type Entrance, type Film, type Format, type Ink,
   type Interlude, type LineCard, type ReplyCard, type RowCard, type Scene, type Size} from '../score';
-import {mapVocal, type OutputRange, type SongMap, type SongToken} from '../song';
+import {mapVocal, type OutputRange, type SongMap, type SongToken, type TimedSyllable} from '../song';
 
 export interface Diagnostic {
   severity: 'error' | 'warn' | 'info'; code: string; message: string;
   line?: string; token?: string; frame?: number;
 }
-export interface Vocal {token: SongToken; onset: number; end: number; preset: boolean}
+export interface Vocal {
+  token: SongToken; onset: number; end: number; preset: boolean;
+  syllables?: readonly (TimedSyllable & {frame?: number})[];
+}
 export interface Run {i: number; text: string; vocal?: Vocal; font: string; ink: Ink; emphasis: boolean; mixed: boolean; reason?: string}
 export interface BoundRow {runs: Run[]; size: Size}
 export interface BoundBlock {
@@ -214,10 +217,15 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly 
       const record = songLines.get(id) ?? fail(id, 'no corresponding song-map line');
       const card = format === 'portrait' ? portraitCard(item.card) : {...item.card};
       const tokens = record.tokenIds.map((tokenId) => songTokens.get(tokenId) ?? fail(id, `unknown token ${tokenId}`));
-      const vocals = tokens.flatMap((token) => {
-        const timing = mapVocal(token, clock, fps);
+      const vocals = tokens.flatMap((token): Vocal[] => {
+        const range = clock.find(({start, end}) => token.start_s >= start && token.start_s < end);
+        if (!range) return [];
+        const timing = mapVocal(token, [range], fps)!;
         const preset = presetFor(card, token);
-        return timing ? [{token, ...timing, preset}] : [];
+        const syllables = token.syllables?.map(syllable => ({
+          ...syllable, frame: mapVocal(syllable, [range], fps)?.onset,
+        }));
+        return [{token, ...timing, preset, syllables}];
       });
       if (!vocals.length) continue;
       const calls = vocals.filter(({token}) => token.role === 'lead');

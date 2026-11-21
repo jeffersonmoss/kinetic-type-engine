@@ -4,6 +4,7 @@ import {crossesFrame, insideSafe, readingSampler} from '../engine/reading';
 import {boardActive} from '../engine/wordState';
 import type {Board} from '../engine/types';
 import type {Format} from '../score';
+import type {AccentSample} from './accents';
 import {isPair, isUnit, type Diagnostic, type Run} from './bind';
 import type {BlockWork} from './entrance';
 import type {InspectionFrame, TokenReading, Transition} from './types';
@@ -83,13 +84,15 @@ export function checkSource(ctx: EngineContext, work: BlockWork, board: Board, d
 }
 
 export function inspect(ctx: EngineContext, format: Format, duration: number, boards: Map<string, Board>,
-  blocks: readonly BlockWork[], readings: readonly TokenReading[], transitions: readonly Transition[], diagnostics: readonly Diagnostic[]) {
+  blocks: readonly BlockWork[], readings: readonly TokenReading[], transitions: readonly Transition[],
+  diagnostics: readonly Diagnostic[], accents: readonly AccentSample[]) {
   const reasons = new Map<number, Set<string>>();
   const mark = (frame: number, reason: string) => {
     if (frame < 0 || frame >= duration) return;
     if (!reasons.has(frame)) reasons.set(frame, new Set());
     reasons.get(frame)!.add(reason);
   };
+  for (const {frame, reason} of accents) mark(frame, reason);
   for (const reading of readings) {
     const label = `${reading.line} ${reading.text}`;
     if (reading.interval) mark(reading.interval.start, `${label} · start of protected reading`);
