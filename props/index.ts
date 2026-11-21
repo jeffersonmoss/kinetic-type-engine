@@ -46,3 +46,37 @@ export * from './Truss';
 export * from './WaveLine';
 export * from './WitnessChair';
 export * from './WitnessTable';
+// Sweet Distillation props (17 November 2026); roles.ts holds their colour roles and 3D helpers.
+export * from './roles';
+export * from './Book';
+export * from './BookPile';
+export * from './Still';
+export * from './HosePath';
+export * from './Mic';
+export * from './Bot';
+export * from './Megaphone';
+export * from './Glass';
+export * from './Coin';
+export * from './Palm';
+export * from './Mortarboard';
+// Paper Trail props (18 November 2026); drawingHelpers.ts holds their shared outline, dash, clip-id and mono-text helpers.
+export * from './drawingHelpers';
+export * from './Bug';
+export * from './ChatWindow';
+export * from './MemoryCard';
+export * from './SecurityCamera';
+export * from './TVSet';
+export * from './Backpack';
+export * from './Boardroom';
+export * from './Thumb';
+export * from './House';
+export * from './Wallet';
+export * from './IdCard';
+export * from './Earbuds';
+export * from './Sunglasses';
+export * from './ClaimForm';
+export * from './Scales';
+export * from './NoSign';
+export * from './Lanyard';
+// Paper Trail tissue (engine builder, 18 November 2026): tissue() band, Roll and TissueSheet.
+export * from './Tissue';

@@ -9,9 +9,16 @@ const sungAt = (i: number) => WORDS[i]?.start_s ?? 0;
 
 /** MORPH: the emergence to put on the target block. `from` is the source word (or words), `keep` the letters shared
  *  (a string in order, e.g. 'UG', or [sourceLetter, targetLetter] pairs). `arc` sends the kept letters round a point. */
-export const morph = (o: {from: number | number[]; keep: string | [number, number][]; at?: number; arc?: {about: Pt; dir?: 1 | -1}; collapse?: number; delay?: number; roll?: boolean; frames?: number}): Emergence => {
+export const morph = (o: {from: number | number[]; keep: string | [number, number][]; at?: number; arc?: {about: Pt; dir?: 1 | -1}; collapse?: number; delay?: number; roll?: boolean; frames?: number;
+  /** K7: 'end' matches a kept string from the ends of the words (a shared suffix); default 'start' (as before). */
+  match?: 'start' | 'end';
+  /** K7: the kept letters must hold still to within this many px (true: 1); validator `morph-pin` measures their drift. */
+  pin?: boolean | number}): Emergence => {
   const src = Array.isArray(o.from) ? o.from : [o.from];
-  return {move: 'morph', from: {word: src[0]}, at: o.at, params: {fromWords: src, keep: o.keep, arc: o.arc, collapse: o.collapse, delay: o.delay, roll: o.roll, frames: o.frames}};
+  const extra: Record<string, unknown> = {};
+  if (o.match !== undefined) extra.match = o.match;
+  if (o.pin !== undefined && o.pin !== false) extra.pin = o.pin === true ? 1 : o.pin;
+  return {move: 'morph', from: {word: src[0]}, at: o.at, params: {fromWords: src, keep: o.keep, arc: o.arc, collapse: o.collapse, delay: o.delay, roll: o.roll, frames: o.frames, ...extra}};
 };
 
 /** The rig move that marks a morph as the event of its line (Fable items 7 and 35): a DIVE, by default 1.25 (the

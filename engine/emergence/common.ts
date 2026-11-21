@@ -18,9 +18,11 @@ export const P = <T,>(c: {cue: VerbCue}, key: string, dflt: T): Wide<T> => ((c.c
 export const PC = <T,>(cue: VerbCue, key: string, dflt: T): Wide<T> => ((cue.params?.[key] as Wide<T> | undefined) ?? (dflt as Wide<T>));
 /** Peak speed over average speed of easeInOutSine. */
 export const SINE_PEAK = Math.PI / 2;
-/** Frames a move of `distLocal` world px needs at `zoom` so its peak speed stays within the cap (at least `min`). */
-export const capFrames = (distLocal: number, zoom: number, min: number, peak = SINE_PEAK) =>
-  Math.max(min, Math.ceil((Math.abs(distLocal) * Math.max(0.01, zoom) * peak) / SPEED_CAP - 1e-9));
+/** Frames a move of `distLocal` world px needs at `zoom` so its peak speed stays within the cap (at least `min`).
+ *  KIT 91: a cue whose emergence sets `speedCap: false` keeps its nominal `min` frames (type is exempt from the cap,
+ *  Fable brief, vertical energy pass, item 11). */
+export const capFrames = (distLocal: number, zoom: number, min: number, peak = SINE_PEAK, cue?: VerbCue) =>
+  cue?.params?.speedCap === false ? min : Math.max(min, Math.ceil((Math.abs(distLocal) * Math.max(0.01, zoom) * peak) / SPEED_CAP - 1e-9));
 /** Zoom at which a word is drawn at a frame (1 for screen-pinned blocks). */
 export const zoomOf = (L: BoardLayout, i: number, f: number) => camForBlock(L.board, L.words.get(i)?.block ?? 0, f).zoom;
 

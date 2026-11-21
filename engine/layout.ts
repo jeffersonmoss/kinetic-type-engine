@@ -26,6 +26,9 @@ export const displayText = (i: number, font: FontKey, opts?: WordOpts) => {
   return guardDisplay(FONTS[font]?.upper ? raw.toUpperCase() : raw);
 };
 
+/** K1: a word's text without round brackets (left as it is if nothing else would be left). */
+export const stripParens = (s: string) => { const t = s.replace(/[()]/g, ''); return t.length ? t : s; };
+
 type Item = {i: number; tier: Tier; font: FontKey; text: string; unitW: number; opts: WordOpts};
 
 /** Width per unit of row size of a word as set in its block. */
@@ -99,6 +102,8 @@ export const layoutBlock = (def: Block, index: number, board: Board): BlockGeom 
   const upper = !!FONTS[blockFont]?.upper;
   const connFont: FontKey = FONTS[blockFont]?.connectives ?? blockFont;
   const align = def.align ?? board.align ?? 'left';
+  // K1: a block a parenPair() brackets shows its words without "(" and ")" (the pair is the only bracket on screen)
+  const parened = (board.graphics ?? []).some((g) => g.parenBlock === index);
   const items: Item[] = [];
   for (let i = def.words[0]; i <= def.words[1]; i++) {
     const opts: WordOpts = {...(WORD_RULE(i)?.opts ?? {}), ...(def.style?.[i] ?? {})};
@@ -107,7 +112,8 @@ export const layoutBlock = (def: Block, index: number, board: Board): BlockGeom 
     const font: FontKey = opts.font ?? (tier === 0 ? connFont : blockFont);
     // A connective set in the block's connectives font keeps the block font's case.
     const caseFont: FontKey = upper && (font === blockFont || font === connFont) ? blockFont : font;
-    const text = displayText(i, caseFont, opts);
+    const shown = displayText(i, caseFont, opts);
+    const text = parened ? stripParens(shown) : shown;
     items.push({i, tier, font, text, opts, unitW: unitWidth(text, font, tier)});
   }
   if (def.cap !== undefined || def.stack) return layoutFixed(def, index, items, blockFont, W, align);
@@ -267,6 +273,24 @@ const defaultAlign = (ref: NonNullable<Block['anchor']>['to']): BlockAlign => {
   const part: LetterPart = ref.part ?? 'centre';
   return ({flankR: 'ml', flankL: 'mr', foot: 'tc', top: 'bc', stemTop: 'bc', tail: 'tl', terminal: 'ml', centreLine: 'centre', counter: 'centre', centre: 'centre'} as Record<LetterPart, BlockAlign>)[part];
 };
+/** K7 hanging punctuation: the width of the trailing punctuation of the block's last word (the run of non-letters after
+ *  its last letter or digit), in block px. It also moves the kern between that last letter and the punctuation onto the
+ *  punctuation (the word's width is unchanged), so the letters before it are spaced exactly as in the same word
+ *  without punctuation. Mutates the word's advances: call it once, at placement (placeAtAnchor, with anchor.hang). */
+export const hangPunctuation = (b: BlockGeom): number => {
+  const g = b.words[b.words.length - 1];
+  if (!g) return 0;
+  const chars = [...g.text];
+  let k0 = chars.length;
+  while (k0 > 0 && !/[\p{L}\p{N}]/u.test(chars[k0 - 1])) k0--;
+  if (k0 === 0 || k0 === chars.length) return 0;
+  const raw = letterAdvances(g.text, g.font, g.size);
+  const scale = g.w / (raw.reduce((a, x) => a + x, 0) || 1);
+  const kern = (FONT_INFO[g.font]?.kern[chars[k0 - 1] + chars[k0]] ?? 0) * g.size * scale;
+  if (kern) { g.adv[k0 - 1] -= kern; g.adv[k0] += kern; }
+  return g.adv.slice(k0).reduce((a, x) => a + x, 0);
+};
+
 /** Placement against an anchor (rule 167). */
 const placeAtAnchor = (b: BlockGeom, env: AnchorEnv) => {
   const A = b.def.anchor!;
@@ -274,7 +298,11 @@ const placeAtAnchor = (b: BlockGeom, env: AnchorEnv) => {
   const angle = A.angle === 'stroke' ? r.dir : A.angle ?? 0;
   const gap = A.gap ?? 0;
   const P = {x: r.p.x + Math.cos((r.dir * Math.PI) / 180) * gap, y: r.p.y + Math.sin((r.dir * Math.PI) / 180) * gap};
-  const al = rot(alignPoint(b, A.align ?? defaultAlign(A.to)), angle);
+  const align = A.align ?? defaultAlign(A.to);
+  const local = alignPoint(b, align);
+  // K7 hanging punctuation (opt-in): right-side aligns are measured from the end of the last letter
+  if (A.hang && (align === 'tr' || align === 'mr' || align === 'br' || align === 'baselineR')) local.x -= hangPunctuation(b);
+  const al = rot(local, angle);
   const off = A.offset ? rot(A.offset, angle) : {x: 0, y: 0};
   b.ox = P.x - al.x + off.x; b.oy = P.y - al.y + off.y; b.angle = angle;
 };

@@ -1,4 +1,4 @@
-// ContractSheet: a signed contract page. Ported from the DOGEfather kit (K14, S22).
+// ContractSheet: a signed contract page (`signed: false` leaves it unsigned, K6). Ported from the DOGEfather kit (K14, S22).
 import React from 'react';
 import type {DecorGraphic, Pt} from '../engine';
 import {type PropBase, type PropGraphicOpts, mix, place, propColours, propGraphic, propQuad, propTransform, rrectPath, strokeOf} from './common';
@@ -10,7 +10,10 @@ const CONTRACT_LINES = (() => {
   return ws.map((w, k) => rrectPath(-120, -122 + k * 24, w, 7, 3.5)).join('');
 })();
 const SCRIBBLE = 'M-104 136C-96 98 -82 100 -86 128C-89 150 -70 118 -60 112C-50 106 -56 134 -44 130C-30 126 -28 104 -16 110C-6 116 -12 136 0 132C14 128 16 114 30 119C40 122 44 131 58 124';
-export type ContractSheetProps = PropBase;
+export interface ContractSheetProps extends PropBase {
+  /** K6: false leaves the signature line blank (no scribble; the line and its x mark stay). Default true. */
+  signed?: boolean;
+}
 const contractPlace = (p: ContractSheetProps) => place(p, CONTRACT_SIZE.w);
 /** A contract page: paper sheet with a folded corner, a heading bar, ruled text lines, a signature line with an x mark
  *  and an accent2 (pen) scribble, and a date line. Anchor: centre. Natural size 300 x 400. */
@@ -25,7 +28,7 @@ export const ContractSheet: React.FC<ContractSheetProps> = (p) => {
       <path d={rrectPath(-120, -166, 150, 14, 3)} fill={C.ground} />
       <path d={CONTRACT_LINES} fill={mix(C.paper, C.ground, 0.35)} />
       <path d="M-120 146H60M80 146H124M-134 128L-124 138M-124 128L-134 138" stroke={C.ground} strokeWidth={3} strokeLinecap="round" />
-      <path d={SCRIBBLE} fill="none" stroke={C.accent2} strokeWidth={4} strokeLinecap="round" strokeLinejoin="round" />
+      {p.signed !== false && <path d={SCRIBBLE} fill="none" stroke={C.accent2} strokeWidth={4} strokeLinecap="round" strokeLinejoin="round" />}
     </g>
   );
 };

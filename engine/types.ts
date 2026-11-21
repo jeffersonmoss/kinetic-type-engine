@@ -9,7 +9,47 @@ export type FontKey = string;
 export type Tier = 0 | 1 | 2 | 3;
 export type Attach = 'R' | 'D' | 'CW' | 'CCW' | 'T+' | 'T-' | 'NEW' | 'FREE' | 'FAN';
 /** Board exits. 'none': the board is never wiped; it simply stops being drawn at `end` (use with a handoff). */
-export type ExitStyle = 'cut' | 'fall' | 'fade' | 'leave' | 'none';
+export type ExitStyle = 'cut' | 'fall' | 'fade' | 'leave' | 'none' | 'turn';
+/** The 3D turn (Fable brief, vertical energy pass, item 5; KIT 89). The axis the element turns about. */
+export type TurnAxis = 'y' | 'x';
+/** The edge (or the centre line) the element turns about. */
+export type TurnPivot = 'left' | 'right' | 'top' | 'bottom' | 'centre';
+/** A 3D turn with real perspective: emergence move 'turn', board exit 'turn', Block.exit, Block.turnSwap. */
+export interface TurnSpec {
+  /** 'y' (default): about a vertical line; 'x': about a horizontal line. */
+  axis?: TurnAxis;
+  /** default 'centre'. */
+  pivot?: TurnPivot;
+  /** Which way it swings; default 1. */
+  dir?: 1 | -1;
+  /** Degrees; default 90; 180 = full flip. */
+  deg?: number;
+  /** Frames of the turn; default 10. */
+  frames?: number;
+  /** Engine ease name. */
+  ease?: string;
+  /** Frames between letters; 0 = whole word. */
+  stagger?: number;
+  /** Logical units; default 900. */
+  perspective?: number;
+  /** What turns as one rigid plane: the whole 'block' (default), each 'row', or each 'word'. */
+  unit?: 'block' | 'row' | 'word';
+}
+/** A block (or some of its words) leaving by a 3D turn at song seconds `at` (Block.exit). */
+export interface BlockExit {
+  style: 'turn';
+  /** Song seconds when the turn starts. */
+  at: number;
+  turn?: TurnSpec;
+  /** Inclusive global word range that turns out (default: the whole block). */
+  words?: [number, number];
+}
+/** turnSwap (on the incoming block): `from` turns away to edge-on while this block turns in from edge-on on the same pivot. */
+export interface TurnSwap {
+  /** The outgoing element: a word or a whole block (block index on this board). */
+  from: {word: number} | {block: number};
+  spec?: TurnSpec;
+}
 /** Built-in verb names; any name registered with registerVerb() is also accepted. */
 export type VerbName =
   | 'explode' | 'vanish' | 'powerDown' | 'wipe' | 'overtake' | 'stretch' | 'sink' | 'burn' | 'smoke'
@@ -59,6 +99,11 @@ export interface WordOpts {
   scale?: number;
   /** Static tilt in degrees about the word's centre. */
   tilt?: number;
+  /** K2 picture word (Sweet Distillation): the id of a board graphic that draws this sung word instead of type. The word
+   *  is laid out as usual (its box holds its place in the row) but never drawn; the validator skips `visible`,
+   *  `sung-cap` and `margin` for it and checks the graphic instead (`picture`: wholly in frame, at least 180 px on its
+   *  longer side, at full opacity, from the sung frame for 15 frames). */
+  picture?: string;
 }
 
 export interface Block {
@@ -99,9 +144,19 @@ export interface Block {
    *  `angle` is the block's world angle in degrees (any value; default the anchor's direction for 'stroke', else 0);
    *  `align` names the point of this block that sits on the anchor; `gap` pushes it away along the anchor's outward
    *  direction; `offset` is a final nudge in this block's own frame. */
-  anchor?: {to: AnchorRef; angle?: number | 'stroke'; align?: BlockAlign; gap?: number; offset?: Pt};
+  anchor?: {to: AnchorRef; angle?: number | 'stroke'; align?: BlockAlign; gap?: number; offset?: Pt;
+    /** K7 hanging punctuation (opt-in): a right-side `align` ('tr', 'mr', 'br', 'baselineR') is measured from the end of
+     *  the block's last letter, so trailing punctuation of the last word ('!', '.') hangs outside the anchor, and the
+     *  kern between that letter and the punctuation is moved onto the punctuation. Meant for one-row blocks (the hub
+     *  words of a suffix morph); with several rows the last row must be the widest. */
+    hang?: boolean};
   /** the emergence move this block comes out of the previous arrangement by, and its anchor (rules 54 to 68, 181.5). */
   emerge?: Emergence;
+  /** KIT 89: the block (or `words` of it) leaves by a 3D turn. */
+  exit?: BlockExit;
+  /** KIT 89: this block turns in while `from` turns away on the same pivot (a revolving sign). Counts as its emergence
+   *  when `emerge` is not given. */
+  turnSwap?: TurnSwap;
   /** song seconds from which the block is set on the board and visible (the pre-set rule 47): its emergence runs then. */
   showFrom?: number;
   /** song seconds before which the block is not retired (rule 168; anchors, walls and morph sources a later line names). */
@@ -161,6 +216,9 @@ export interface DecorGraphic {
   /** A non-lyric caption (caption.tsx): the validator checks it like a sung word, in the safe margin, at least 56 px cap
    *  on screen, at full opacity for at least 15 frames, and crossed by no line, rule or other graphic (`caption`). */
   caption?: {text: string; cap: number; minFrames?: number};
+  /** K1 (Sweet Distillation): this graphic is one bracket of a parenPair() round block `parenBlock`; the words of that
+   *  block are displayed without "(" and ")" (the pair is the only bracket on screen). Set by parenPair(). */
+  parenBlock?: number;
   /** Its ink at song seconds t (polygons), or null when nothing is drawn. Keep it in the function draw() uses. */
   box: (c: {t: number; board: Board; layout: BoardLayout}) => Pt[][] | null;
   /** Draws it. `life.age` frames since `from`, `life.left` frames to `until`, `life.out` exit progress 0 to 1. */
@@ -186,7 +244,7 @@ export type AnchorRef =
 /** Which point of a block sits on its anchor: corners, edge midpoints, centre, or the ends of the first row's baseline. */
 export type BlockAlign = 'tl' | 'tr' | 'bl' | 'br' | 'ml' | 'mr' | 'tc' | 'bc' | 'centre' | 'baselineL' | 'baselineR';
 /** The fifteen emergence moves of the style bible (rules 54 to 68). */
-export type EmergeMove = 'seam' | 'sprout' | 'nest' | 'door' | 'morph' | 'shove' | 'hinge' | 'fold' | 'stack' | 'shelf' | 'tip' | 'swell' | 'extrude' | 'type' | 'portal' | 'drawer' | 'behind' | 'slideFrom' | 'rise';
+export type EmergeMove = 'seam' | 'sprout' | 'nest' | 'door' | 'morph' | 'shove' | 'hinge' | 'fold' | 'stack' | 'shelf' | 'tip' | 'swell' | 'extrude' | 'type' | 'portal' | 'drawer' | 'behind' | 'slideFrom' | 'rise' | 'turn';
 export interface Emergence {
   move: EmergeMove;
   /** The text (or rule, or Line) it comes out of. Required (rule 181.5). */
@@ -195,6 +253,12 @@ export interface Emergence {
   at?: number;
   /** Move parameters; see KIT.md. */
   params?: Record<string, unknown>;
+  /** move 'turn' (KIT 89): the turn's spec. */
+  turn?: TurnSpec;
+  /** KIT 91: false keeps the move at its nominal frames instead of stretching it to hold every corner under the speed
+   *  cap (sprout, swell, door, fold, drawer, shelf, relight, morph travel, shove's corner turn), and the validator does
+   *  not hold the block's words to the speed cap before their sung frame. Default: capped, as before. */
+  speedCap?: false;
 }
 
 /** Rig move kinds (rule 166.2). */
@@ -229,8 +293,10 @@ export interface RigKey {
   /** The board point that moves in a straight line on screen during the move (default: the framed target's centre, else
    *  the frame centre). A roll about the hub of a chorus keeps the hub still on screen. */
   about?: AnchorRef;
-  /** Ease (every key is eased): rolls cubic, whips quartic, dives cubic on log zoom, tracks linear with 6-frame ramps. */
-  ease?: 'cubic' | 'quart' | 'sine' | 'linear';
+  /** Ease (every key is eased): rolls cubic, whips quartic, dives cubic on log zoom, tracks linear with 6-frame ramps.
+   *  'out' (added 18 November 2026, Paper Trail vertical pull-back): cubic ease-out, so the speed only falls from the
+   *  first frame to rest. Opt-in only; no key gets it by default. */
+  ease?: 'cubic' | 'quart' | 'sine' | 'linear' | 'out';
   /** whip: directional smear in screen px (at most 40), only on the middle frames, never on a word 3 frames after it is sung. */
   smear?: number;
   /** hold: no DRIFT from this key until the next (the two stills of the film, and handoffs). */
@@ -312,8 +378,15 @@ export interface GroundWipe {
   r0?: number; r1?: number;
   /** Song seconds from which this colour is the whole ground (PORTAL: when the dive has filled the frame). */
   fullAt?: number;
-  /** PORTAL: culls every retired word when the colour becomes the whole ground. */
+  /** PORTAL: culls every retired word when the colour becomes the whole ground. With `keep` (below) it means the K4
+   *  travelling retirement edge instead. */
   clears?: boolean;
+  /** K4 travelling retirement edge (opt-in; Sweet Distillation): with `clears: true` on a `disc`, every word of the
+   *  board NOT listed here is retired by the disc's edge acting as a mask: it is clipped progressively as the edge
+   *  crosses it, hidden once the disc covers it, and its reading ends the frame the edge first touches it (validator
+   *  `ground-clear`: an error when that is under 15 frames after its sung frame). Listed words are untouched. Without
+   *  `keep`, `clears` keeps its PORTAL meaning (cull retired words when the colour is the whole ground). */
+  keep?: number[];
   /** Board discs: a world polygon the disc is clipped to until it is the whole ground (PORTAL: the counter's measured
    *  outline, so the wipe never spills over the letter; ruling 194.1). */
   clip?: Pt[];
@@ -335,6 +408,15 @@ export interface CameraState {x: number; y: number; zoom: number; rot: number}
 export interface Board {
   /** Optional label for validator output. */
   id?: string;
+  /** Motion blur for this board's type during rig transits (default true). false: every word is drawn once, sharp, at
+   *  the frame's own time, so no word is ever shown twice; grounds and graphics keep their blur (smearSampling.ts,
+   *  smearWordPass; Fable gate, vertical B motion 3). */
+  smearType?: boolean;
+  /** KIT 90 (Fable brief, vertical energy pass, items 10 and 11), opt-in: 'energy' loosens the validator for words in
+   *  transit (moving or turning): for up to 12 frames of a run of motion they may cross words, rotate, leave the type
+   *  box; each word must still read at rest for 8 frames from its sung frame (`energy-read`); type in a whip or a
+   *  turn is exempt from the speed cap; slide-early allows 12 frames. Without it the board validates as before. */
+  transitRules?: 'energy';
   /** Absolute song seconds when the board appears (it snaps the camera to its first block). */
   start: number;
   /** Absolute song seconds when the board's exit begins. */
@@ -342,6 +424,8 @@ export interface Board {
   bg: string;
   blocks: Block[];
   exit: ExitStyle;
+  /** exit 'turn' (KIT 89): the turn every block leaves by at `end`. */
+  turn?: TurnSpec;
   /** Default block width (640). */
   width?: number;
   /** 'center' centres D-attached blocks under each other. */
@@ -390,8 +474,19 @@ export interface Board {
    *  boundary, applied as an outer screen transform to everything it draws and checks (engine/carry.ts). */
   carry?: Carry[];
   /** Style rules this board waives, each with its reason (for example `two-scales` on a short test board, or a house
-   *  rule of another video's style bible). Their errors are reported as warnings carrying the reason. */
-  waive?: {rule: string; why: string}[];
+   *  rule of another video's style bible). Their errors are reported as warnings carrying the reason. A waiver with
+   *  `words` or `block` applies only to violations reported on those words (KIT 83). */
+  waive?: Waiver[];
+}
+/** A board waiver (KIT 83). Without `words` or `block` it waives the rule for the whole board, as before. With
+ *  `words: [first, last]` (global word indices, inclusive) it waives only violations reported on a word in that range;
+ *  with `block` (the block's index in `blocks`) only those reported on a word of that block. With both, a violation
+ *  must satisfy both. A violation that names no word is never matched by a scoped waiver. */
+export interface Waiver {
+  rule: string;
+  why: string;
+  words?: [number, number];
+  block?: number;
 }
 /** A chunk carry: `slideUp` (520 px up over frames B+2 to B+31) or `quarterCW` (90 degrees clockwise about the frame
  *  centre over 27 frames ending 8 before `firstWord`). `side` 'out' for the outgoing chunk (its tail runs to B+45),

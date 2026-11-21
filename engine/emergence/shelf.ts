@@ -12,7 +12,7 @@ import {BIG, P, PC, anchorOf, capFrames, rectPath, toWorld, wordsOfCue, zoomOf} 
 
 const riseFrames = (cue: VerbCue, L: BoardLayout, i: number) => {
   const g = L.words.get(i)!;
-  return capFrames(g.boxH, zoomOf(L, i, g.sf), PC(cue, 'frames', 6));
+  return capFrames(g.boxH, zoomOf(L, i, g.sf), PC(cue, 'frames', 6), undefined, cue);
 };
 const riseStart = (cue: VerbCue, L: BoardLayout, i: number) => {
   const ws = wordsOfCue(cue, L);

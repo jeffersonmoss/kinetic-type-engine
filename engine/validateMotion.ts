@@ -20,6 +20,7 @@ import {cameraAt, toScreen, toWorld} from './camera';
 import {carrySpan, carryStillSpan} from './carry';
 import {inkQuad} from './validateRules';
 import {SLIDE_EARLY_OK} from './emergence/slide';
+import {ENERGY_SLIDE_EARLY, energyRules} from './transitRules';
 import {rigMoves, TRANSIT_KINDS} from './rig';
 import type {Board, BoardLayout, Pt} from './types';
 import {normDeg} from './util';
@@ -103,7 +104,9 @@ export const motionRuleChecks = (board: Board, name: string, L: BoardLayout): Vi
     }
     // slide-early
     if (cue?.name === 'slideFrom') {
-      const ok = (cue.params?.earlyOk as number | undefined) ?? SLIDE_EARLY_OK;
+      const ok0 = (cue.params?.earlyOk as number | undefined) ?? SLIDE_EARLY_OK;
+      // KIT 90 (Fable amendment): under transitRules 'energy' a flying word lands on its sung frame or at most 6 before
+      const ok = energyRules(board) ? Math.min(ok0, ENERGY_SLIDE_EARLY) : ok0;
       for (let f = Math.max(startF, Math.floor(w.sf - 90)); f < w.sf - ok; f++) {
         const m = st(i, f);
         if (m.hidden || m.opacity <= 0.05) continue;

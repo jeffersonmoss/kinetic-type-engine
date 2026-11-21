@@ -13,7 +13,7 @@ export const relightTiming = (cue: VerbCue, L: BoardLayout) => {
   const sung = PC(cue, 'sung', -1);
   const sf = Math.round((WORDS[sung]?.start_s ?? g.start) * FPS);
   const sw = PC(cue, 'swell', 1.15);
-  const dur = capFrames((Math.hypot(g.w, g.boxH) / 2) * Math.abs(sw - 1), zoomOf(L, cue.word, sf), PC(cue, 'frames', 8));
+  const dur = capFrames((Math.hypot(g.w, g.boxH) / 2) * Math.abs(sw - 1), zoomOf(L, cue.word, sf), PC(cue, 'frames', 8), undefined, cue);
   return {start: cue.at !== undefined ? cue.at * FPS : sf - dur, dur, sw, sf};
 };
 registerVerb('relight', {

@@ -17,6 +17,7 @@ import './relight';
 import './drawer';
 import './behind';
 import './slide';
+import './turn';
 export {seamRows} from './seam';
 export {sproutTiming} from './sprout';
 export {typeStart} from './type';

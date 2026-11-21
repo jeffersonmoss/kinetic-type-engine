@@ -15,15 +15,19 @@ import {handoffGraceEnd, handoffPairsNested, handoffWordSet} from './handoffWord
 import {MIN_VISIBLE_FRAMES} from './motion';
 import {carryReadEnd} from './carry';
 import {ruleTracks} from './rules';
-import type {Board, CameraState, Handoff, HandoffId, Pt, WordGeom} from './types';
+import type {Board, CameraState, Handoff, HandoffId, Pt, Waiver, WordGeom} from './types';
 import {normDeg, polysOverlap, rot} from './util';
 import {getVerb, type WordMod} from './verbRegistry';
 import {checkTrack, type TrackedElement} from './motionCheck';
+import {ENERGY_READ_FRAMES, energyRules, transitExempt, wordMoving} from './transitRules';
 import {panelTracks, separatingPanel} from './panels';
 import {panelGoneAt, panelQuad, panelSwingExempt, panelSwinging} from './panel';
 import {boardRuleChecks} from './validateRules';
 import {emptyTimeline, motionRuleChecks} from './validateMotion';
-import {EXIT_FRAMES, RETIRE_AFTER, handoffClearAt, baseCtx, boardCues, cueAffects, cueAt, replacesEnterOf, retireFrame, wordStateAt} from './wordState';
+import {groundClearSpan} from './groundClear';
+import {graphicLife} from './lines';
+import {morphKeptDrift} from './morphPin';
+import {EXIT_FRAMES, RETIRE_AFTER, handoffClearAt, baseCtx, boardCues, cueAffects, cueAt, replacesEnterOf, retireFrame, wordStateAt, inkOpacity, GONE_OPACITY, blockEmergence, exitFramesOf} from './wordState';
 
 export const SAFE = 48;
 export type Severity = 'error' | 'warn';
@@ -74,7 +78,9 @@ const screenQuad = (board: Board, w: WordGeom, m: WordMod, f: number, camIn?: Ca
   const b = L.blocks[w.block];
   const cam = camIn ?? camForBlock(board, w.block, f);
   const cx = w.x + w.w / 2, cy = w.y + w.h / 2;
-  const local = [{x: w.x, y: w.y}, {x: w.x + w.w, y: w.y}, {x: w.x + w.w, y: w.y + w.boxH}, {x: w.x, y: w.y + w.boxH}].map((p) => {
+  // Paper Trail K2: a spread word's box reaches past its advance (m.extend; undefined for every other word)
+  const x0 = w.x - (m.extend?.l ?? 0), x1 = w.x + w.w + (m.extend?.r ?? 0);
+  const local = [{x: x0, y: w.y}, {x: x1, y: w.y}, {x: x1, y: w.y + w.boxH}, {x: x0, y: w.y + w.boxH}].map((p) => {
     const q = rot({x: (p.x - cx) * m.sx, y: (p.y - cy) * m.sy}, m.rot);
     return {x: q.x + cx + m.dx, y: q.y + cy + m.dy};
   });
@@ -83,6 +89,10 @@ const screenQuad = (board: Board, w: WordGeom, m: WordMod, f: number, camIn?: Ca
 
 type Agg = {v: Violation; worst: number};
 
+/** K2 picture words: the graphic that draws the word is wholly in frame, at least PICTURE_MIN_SIDE screen px on its
+ *  longer side and at full opacity (0.9) from the sung frame for PICTURE_FRAMES frames. */
+export const PICTURE_MIN_SIDE = 180;
+export const PICTURE_FRAMES = 15;
 /** Checks one board. `opts.step` samples every n-th frame (default 1: every frame). */
 /** Fable item 38 (Huang item 37): a word in its first 15 frames stays this far from a keep-clear prop. */
 export const PROP_CLEAR = 24;
@@ -93,6 +103,9 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
   const L = layoutBoard(board);
   const out: Violation[] = [];
   const agg = new Map<string, Agg>();
+  // KIT 90: opt-in transit rules (transitRules.ts); restFrames counts each word's frames read at rest
+  const energy = energyRules(board);
+  const restFrames = new Map<number, number>();
   const note = (key: string, v: Violation, f: number, worst: number) => {
     const a = agg.get(key);
     if (!a) agg.set(key, {v: {...v, from: f, to: f, frames: 1}, worst});
@@ -149,6 +162,15 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
     if (carryEnd - w.sf < MIN_VISIBLE_FRAMES && w.sf < endF) out.push({board: name, rule: 'carry', severity: 'error', word: i, text: w.text, line: w.line, from: Math.round(carryEnd), to: Math.round(carryEnd), frames: 1, detail: `sung on frame ${w.sf.toFixed(0)}, ${(carryEnd - w.sf).toFixed(0)} frames before the outgoing carry ends its reading at ${carryEnd} (the quarterCW turn's start, or the clear's): it cannot be read for ${MIN_VISIBLE_FRAMES} frames. Sing it earlier on this board, or move it to the next chunk`});
     removal.set(i, Math.min(removal.get(i) ?? Infinity, carryEnd));
   }
+  // K4: a clearing disc's travelling edge ends a word's reading on the frame it first touches the word; that must be at
+  // least MIN_VISIBLE_FRAMES after its sung frame
+  for (const i of L.order) {
+    const gc = groundClearSpan(board, i);
+    if (!gc) continue;
+    const w = L.words.get(i)!;
+    if (gc.touch - w.sf < MIN_VISIBLE_FRAMES && w.sf < endF) out.push({board: name, rule: 'ground-clear', severity: 'error', word: i, text: w.text, line: w.line, from: gc.touch, to: gc.touch, frames: 1, detail: `the clearing disc's edge reaches it on frame ${gc.touch}, ${gc.touch - w.sf} frames after it is sung (needs ${MIN_VISIBLE_FRAMES}): start the disc later, or put the word in its keep list`});
+    removal.set(i, Math.min(removal.get(i) ?? Infinity, gc.touch));
+  }
   // kit pass 21: the end handoff's clear removes every word that is not in its picture; a nest drawn by the handoff
   // picture itself (LOVE in MOST's O) is not an overlap
   const clearAt = new Map<number, number>();
@@ -174,7 +196,7 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
   // emergence declarations (rule 181.5)
   {
     for (const b of L.blocks) {
-      const e = b.def.emerge;
+      const e = blockEmergence(b.def);
       const first = b.words[0]?.i;
       if (!e) { out.push({board: name, rule: 'emerge', severity: 'error', word: first, text: first !== undefined ? WORDS[first].text : undefined, detail: `block ${b.index} declares no emergence (every block comes out of text, a rule, a panel or a path)`}); continue; }
       let ok = true, desc = '';
@@ -183,6 +205,17 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
       } catch (err) { ok = false; out.push({board: name, rule: 'emerge-anchor', severity: 'error', word: first, detail: `block ${b.index} (${e.move}): ${(err as Error).message}`}); }
       if (ok && first !== undefined) addPlan(L.words.get(first)!.line, `block ${b.index} "${b.words.map((w) => w.text).join(' ')}": ${e.move.toUpperCase()} from ${desc}`);
     }
+  }
+
+  // K7: a morph with `pin` must leave its kept letters still to within `pin` px (morphPin.ts)
+  for (const cue of cues) {
+    if (cue.name !== 'morph' || cue.params?.pin === undefined || cue.params.pin === false) continue;
+    const tol = cue.params.pin === true ? 1 : Number(cue.params.pin);
+    const d = morphKeptDrift(board, cue);
+    const tw = L.words.get(cue.word);
+    if (tw) addPlan(tw.line, `morph pin: ${d.pairs} kept letters drift at most ${d.max.toFixed(3)} px (frames ${d.from}-${d.to})`);
+    if (!d.pairs) out.push({board: name, rule: 'morph-pin', severity: 'error', word: cue.word, text: WORDS[cue.word]?.text, detail: 'a pinned morph keeps no letters (check keep and match)'});
+    else if (d.max > tol) out.push({board: name, rule: 'morph-pin', severity: 'error', word: cue.word, text: WORDS[cue.word]?.text, from: d.frame, to: d.frame, frames: 1, detail: `kept letter ${d.letter} drifts ${d.max.toFixed(2)} px from its landed place (pinned to ${tol} px): align the blocks on one anchor with hang, a fixed cap and match 'end'`});
   }
 
   // Block angles (a FAN seam sets its own angle, DOGE item 56; blocks at a FAN block's angle pass too)
@@ -289,12 +322,17 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
   for (let f = fStart; f <= fEnd; f += step) {
     const cam = cameraAt(board, f);
     const moving = inTransit(f);
-    const states = new Map<number, {m: WordMod; quad: Pt[]; vis: boolean}>();
+    // vis: the ink the render draws (KIT 83; overlap, bright count). shown: the word's own opacity, which the
+    // `visible` and margin checks keep using: a word whose letters a verb fades on its way out (slideAlong, closeAway)
+    // is judged by its own opacity and removal frame as before, not by its ink.
+    const states = new Map<number, {m: WordMod; quad: Pt[]; vis: boolean; shown: boolean}>();
     for (const i of L.order) {
       const w = L.words.get(i)!;
       const m = wordStateAt(board, i, f);
-      const vis = !m.hidden && m.opacity > 0.05;
-      states.set(i, {m, quad: vis ? screenQuad(board, w, m, f) : [], vis});
+      // KIT 83: judged on the ink the render draws (letter fades included), so a vanished word leaves the overlap pass
+      const shown = !m.hidden && m.opacity > GONE_OPACITY;
+      const vis = shown && inkOpacity(m) > GONE_OPACITY;
+      states.set(i, {m, quad: shown ? screenQuad(board, w, m, f) : [], vis, shown});
     }
     const clear = board.keepClear?.(f / FPS) ?? [];
     // tracked props flagged `clear` are keep-clear shapes too (Fable item 38)
@@ -306,6 +344,8 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
         const o = states.get(j)!;
         if (!o.vis || isExempt(i, j)) continue;
         if (f < w.sf || f < L.words.get(j)!.sf) continue; // a word still making its entrance may pass over a neighbour
+        // KIT 89 and 90: a word turning in 3D, or (transitRules 'energy') in its first 12 frames of motion, may cross
+        if (o.m.turn || transitExempt(board, j, f)) continue;
         if (!polysOverlap(s.quad, o.quad, 3)) continue;
         // Fable item 31 (KIT 79.5 narrowed): with a panel between their layers the overlap is skipped only where the
         // panel covers it; ink already uncovered while it opens or folds is checked
@@ -327,10 +367,14 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
         continue;
       }
       const w = L.words.get(i)!;
+      if (w.opts.picture !== undefined) continue; // K2: its graphic is checked instead (picture)
       const b = L.blocks[w.block];
       const s = states.get(i)!;
       const bcam = camForBlock(board, w.block, f);
       if (moving && b.def.pin !== 'screen') continue; // rule 181.2: checked when the transit ends
+      // KIT 89: a word turning in 3D is in transit (edge-on is not a wipe); KIT 90: so is, under transitRules 'energy',
+      // a word in its first 12 frames of motion. Both are checked again once they are still.
+      if (s.m.turn || transitExempt(board, i, f)) continue;
       if (f < (grace.get(i) ?? -Infinity)) continue; // rule 81.7: checked from 10 frames after the start handoff
       const base: Violation = {board: name, rule: '', severity: 'error', word: i, text: WORDS[i].text, line: w.line, detail: ''};
       // rule 58: a held morph source waits exempt from the readability rules, but nothing may touch its ink (Fable
@@ -339,8 +383,10 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
       const threshold = f === w.sf && !replacedEnter(i) ? 0.9 : 0.45;
       // Fable item 38a: a word printed on a page that a page above uncovers by folding (a DOOR flip) may complete up to
       // PANEL_REVEAL_GRACE frames after its sung frame; after that, and for anything else, the visibility check applies
-      if (!s.vis && b.def.on && f < w.sf + PANEL_REVEAL_GRACE && (board.panels ?? []).some((p) => p.id !== b.def.on && panelSwinging(p, f / FPS))) continue;
-      if (!s.vis || s.m.opacity < threshold) { note(`vis${i}`, {...base, rule: 'visible', detail: `opacity ${s.m.opacity.toFixed(2)} (needs ${threshold})`}, f, 1 - s.m.opacity); continue; }
+      if (!s.shown && b.def.on && f < w.sf + PANEL_REVEAL_GRACE && (board.panels ?? []).some((p) => p.id !== b.def.on && panelSwinging(p, f / FPS))) continue;
+      if (!s.shown || s.m.opacity < threshold) { note(`vis${i}`, {...base, rule: 'visible', detail: `opacity ${s.m.opacity.toFixed(2)} (needs ${threshold})`}, f, 1 - s.m.opacity); continue; }
+      // KIT 90: frames read at rest (shown, still, outside any rig transit), for `energy-read`
+      if (energy && !wordMoving(board, i, f)) restFrames.set(i, (restFrames.get(i) ?? 0) + step);
       const xs = s.quad.map((p) => p.x), ys = s.quad.map((p) => p.y);
       const over = Math.max(FORMAT.safeInsets.left - Math.min(...xs), Math.max(...xs) - (WIDTH - FORMAT.safeInsets.right), FORMAT.safeInsets.top - Math.min(...ys), Math.max(...ys) - (HEIGHT - FORMAT.safeInsets.bottom));
       const capPx = w.h * Math.abs(s.m.sy) * bcam.zoom;
@@ -386,7 +432,7 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
     let bright = 0, visible = 0;
     for (const i of L.order) {
       const s = states.get(i)!;
-      if (!s.vis) continue;
+      if (!s.shown) continue;
       const c = s.quad.reduce((a, p) => ({x: a.x + p.x / 4, y: a.y + p.y / 4}), {x: 0, y: 0});
       if (c.x < 0 || c.x > WIDTH || c.y < 0 || c.y > HEIGHT) continue;
       visible++;
@@ -395,6 +441,35 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
     const st = lineStats.get(curLine) ?? {line: curLine, transits: 0, peakBright: 0, peakVisible: 0};
     st.peakBright = Math.max(st.peakBright, bright); st.peakVisible = Math.max(st.peakVisible, visible);
     lineStats.set(curLine, st);
+  }
+  // K2 picture words: the graphic stands in for the word from its sung frame for PICTURE_FRAMES frames
+  for (const i of L.order) {
+    const w = L.words.get(i)!;
+    const id = w.opts.picture;
+    if (id === undefined) continue;
+    const g = board.graphics?.find((x) => x.id === id);
+    const base: Violation = {board: name, rule: 'picture', severity: 'error', word: i, text: w.text, line: w.line, detail: ''};
+    if (!g) { out.push({...base, detail: `its picture graphic "${id}" is not on this board`}); continue; }
+    for (let f = w.sf; f < w.sf + PICTURE_FRAMES; f++) {
+      const life = graphicLife(g, f / FPS);
+      const op = life ? (g.exitBy === 'shape' ? 1 : 1 - life.out) : 0;
+      const polys = life ? g.box({t: f / FPS, board, layout: L}) : null;
+      if (!life || op < 0.9 || !polys?.length) { note(`pic${i}`, {...base, detail: `picture graphic "${id}" is not shown at full opacity`}, f, 1 - op); continue; }
+      const cam = cameraAt(board, f);
+      const pts = (g.layer === 'screen' ? polys : polys.map((q) => q.map((p) => toScreen(cam, p)))).flat();
+      const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
+      const over = Math.max(-Math.min(...xs), Math.max(...xs) - WIDTH, -Math.min(...ys), Math.max(...ys) - HEIGHT);
+      if (over > 0.5) note(`picf${i}`, {...base, detail: `picture graphic "${id}" is not wholly in frame`}, f, over);
+      const side = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+      if (side < PICTURE_MIN_SIDE - 0.25) note(`pics${i}`, {...base, detail: `picture graphic "${id}" is under ${PICTURE_MIN_SIDE} px on its longer side`}, f, PICTURE_MIN_SIDE - side);
+    }
+  }
+  // KIT 90 (brief item 10.3): under transitRules 'energy' every word reads at rest for 8 frames of its reading interval
+  if (energy) for (const i of L.order) {
+    const w = L.words.get(i)!;
+    if (w.opts.picture !== undefined) continue;
+    const got = restFrames.get(i) ?? 0;
+    if (got < ENERGY_READ_FRAMES) out.push({board: name, rule: 'energy-read', severity: 'error', word: i, text: w.text, line: w.line, detail: `read at rest (shown, still, outside rig transits) for ${got} frames of its reading interval (needs ${ENERGY_READ_FRAMES}; transitRules 'energy')`});
   }
   for (const [i, q] of quarterRun) quarterDone.push({i, start: q.start, len: q.len});
   for (const q of quarterDone) if (q.len < QUARTER_HOLD) {
@@ -427,7 +502,7 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
     if (changes && m.dur > 0 && m.dur < 6) out.push({board: name, rule: 'rig-frames', severity: 'error', line: l, detail: `${m.kind} at frame ${m.start.toFixed(0)} changes the camera in ${m.dur} frames (transitions take at least 6)`});
   }
   // Motion legibility (brief 12.1 to 12.3): every word, and every tracked element, over the board's whole life.
-  const lifeEnd = endF + EXIT_FRAMES[board.exit] - 1;
+  const lifeEnd = endF + exitFramesOf(board) - 1;
   for (const i of L.order) {
     const w = L.words.get(i)!;
     let prevM: WordMod | null = null;
@@ -440,8 +515,14 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
       const relPrev = pm && !pm.hidden ? screenQuad(board, w, pm, f, cam) : undefined;
       const pid = L.blocks[w.block].def.on;
       const pp = pid ? board.panels?.find((x) => x.id === pid) : undefined;
-      return {opacity: m.opacity, quad: screenQuad(board, w, m, f, cam), state: m.colour ?? '', relPrev, swing: pp ? panelSwingExempt(pp, f / FPS) : undefined};
-    }, {word: i, abruptOk: gradualFor(i) || !!L.blocks[w.block].def.on, screen: {w: WIDTH, h: HEIGHT}, maxOpacityStep: 1 / MIN_TRANSITION_FRAMES});
+      // KIT 89: type in a 3D turn is not held to the speed cap (brief item 11); under 'energy' no type is (below)
+      const exemptType = m.turn || pm?.turn ? true : undefined;
+      // KIT 91: a block whose emergence sets speedCap false is not held to the cap before its words are sung
+      const uncapped = L.blocks[w.block].def.emerge?.speedCap === false && f <= w.sf ? true : undefined;
+      return {opacity: m.opacity, quad: screenQuad(board, w, m, f, cam), state: m.colour ?? '', relPrev, swing: (pp ? panelSwingExempt(pp, f / FPS) : undefined) || exemptType || uncapped};
+    }, {word: i, abruptOk: gradualFor(i) || !!L.blocks[w.block].def.on, screen: {w: WIDTH, h: HEIGHT}, maxOpacityStep: 1 / MIN_TRANSITION_FRAMES,
+      // KIT 90 (Fable amendment): under transitRules 'energy' type in any flight, whip or turn is exempt from the speed cap
+      ...(energy ? {exempt: ['speed' as const]} : {})});
     for (const v of viol) out.push({board: name, rule: v.rule, severity: 'error', word: i, text: WORDS[i].text, line: w.line, from: v.from, to: v.to, frames: v.frames, detail: v.detail});
   }
   // rules, panels and the tips of board paths are tracked automatically
@@ -475,8 +556,22 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
     if (ls.peakBright > 15) out.push({board: name, rule: 'load', severity: 'warn', line: ls.line, detail: `${ls.peakBright} bright words in frame (max 15)`});
     if (ls.peakVisible > 26) out.push({board: name, rule: 'load', severity: 'warn', line: ls.line, detail: `${ls.peakVisible} words in frame (max 26)`});
   }
-  // board.waive: named rules this board waives, with the reason; their errors are reported as warnings
-  for (const v of out) { const wv = board.waive?.find((x) => x.rule === v.rule); if (wv && v.severity === 'error') { v.severity = 'warn'; v.detail = `${v.detail} [waived: ${wv.why}]`; } }
+  // board.waive: named rules this board waives, with the reason; their errors are reported as warnings. KIT 83: a
+  // waiver with `words` or `block` matches only violations reported on those words (a bare string, tolerated at run
+  // time for hand-written boards, waives the rule board-wide with no reason)
+  const waiverMatches = (x: Waiver | string, v: Violation) => {
+    if (typeof x === 'string') return x === v.rule;
+    if (x.rule !== v.rule) return false;
+    if (x.words === undefined && x.block === undefined) return true;
+    if (v.word === undefined) return false;
+    if (x.words && (v.word < x.words[0] || v.word > x.words[1])) return false;
+    if (x.block !== undefined && L.words.get(v.word)?.block !== x.block) return false;
+    return true;
+  };
+  for (const v of out) {
+    const wv = (board.waive as (Waiver | string)[] | undefined)?.find((x) => waiverMatches(x, v));
+    if (wv && v.severity === 'error') { v.severity = 'warn'; v.detail = `${v.detail} [waived: ${typeof wv === 'string' ? 'no reason given' : wv.why}]`; }
+  }
   return {board: name, violations: out, lines};
 };
 

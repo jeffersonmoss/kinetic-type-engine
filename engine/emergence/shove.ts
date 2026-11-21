@@ -67,7 +67,7 @@ export const pushPlan = (cue: VerbCue, L: BoardLayout): Plan => {
   // pivot: the old block's far end (farthest along u), at its middle across
   const far = tc.reduce((a, p) => (proj(p) > proj(a) ? p : a), tc[0]);
   const len = Math.max(...tc.map(proj)) - Math.min(...tc.map(proj));
-  const turnF = corner ? capFrames((len * Math.PI) / 2, z, 9, SINE_PEAK) : 0;
+  const turnF = corner ? capFrames((len * Math.PI) / 2, z, 9, SINE_PEAK, cue) : 0;
   const plan = {u, D, v, start, travelF, contact, S, coast, turnStart: start + travelF + coast, turnF, pivot: far, corner};
   memo.set(cue, plan);
   return plan;

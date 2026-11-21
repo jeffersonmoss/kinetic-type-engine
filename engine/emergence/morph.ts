@@ -34,6 +34,18 @@ export const morphPairs = (cue: VerbCue, L: BoardLayout): [number, number][] => 
   if (Array.isArray(keep)) return keep;
   const S = lettersOf(L, srcWords(cue, L)), T = lettersOf(L, wordsOfCue(cue, L));
   const out: [number, number][] = [];
+  // K7 (opt-in, `match: 'end'`): match the kept letters from the ends of the words, for a shared suffix ('ation' in
+  // vacation, whose first A is not the suffix's); trailing punctuation that is not kept is skipped
+  if (PC(cue, 'match', 'start') === 'end') {
+    let si = S.length - 1, ti = T.length - 1;
+    for (const ch of [...(keep ?? '').toUpperCase()].reverse()) {
+      while (si >= 0 && S[si].ch !== ch) si--;
+      while (ti >= 0 && T[ti].ch !== ch) ti--;
+      if (si < 0 || ti < 0) break;
+      out.unshift([si--, ti--]);
+    }
+    return out;
+  }
   let si = 0, ti = 0;
   for (const ch of (keep ?? '').toUpperCase()) {
     while (si < S.length && S[si].ch !== ch) si++;
@@ -71,7 +83,7 @@ export const morphPlan = (cue: VerbCue, L: BoardLayout): Plan => {
   const half = Math.max(3, Math.round(PC(cue, 'frames', 8) / 2));
   const collapse = roll ? half : Math.max(8, PC(cue, 'collapse', 10));
   const delay = roll ? half : PC(cue, 'delay', 3);
-  const travel = pairs.length ? capFrames(dist, z, collapse + delay, SINE_PEAK) : 0;
+  const travel = pairs.length ? capFrames(dist, z, collapse + delay, SINE_PEAK, cue) : 0;
   const dur = Math.max(delay + collapse, travel, roll ? 2 * half : MORPH_MIN_FRAMES);
   const start = cue.at !== undefined ? cue.at * FPS : cue.params?.showFrom !== undefined ? (cue.params.showFrom as number) * FPS : land - dur;
   const plan = {start, travel, collapse, delay, end: start + dur, pairs, S, T};

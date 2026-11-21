@@ -7,7 +7,7 @@ import {layoutBoard, wordCorners} from './layout';
 import {resolveAnchor} from './letters';
 import {carryCam} from './carry';
 import type {BlockGeom, Board, BoardLayout, CameraState, Pt, RigKey, RigKind, RigTarget} from './types';
-import {clamp, easeInOutCubic, lerp, normDeg, rot} from './util';
+import {clamp, easeInOutCubic, easeOutCubic, lerp, normDeg, rot} from './util';
 
 export const DRIFT_ROT = 0.4; // degrees per second
 export const DRIFT_ZOOM = 0.015; // fraction per second
@@ -125,6 +125,7 @@ const easeFor = (k: RigKey, frames: number): ((p: number) => number) => {
   if (e === 'quart') return easeInOutQuart;
   if (e === 'sine') return easeSine;
   if (e === 'linear') return rampEase(frames, 6);
+  if (e === 'out') return easeOutCubic;
   return easeInOutCubic;
 };
 

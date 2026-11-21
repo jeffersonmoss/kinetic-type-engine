@@ -20,7 +20,7 @@ export const sproutTiming = (cue: VerbCue, L: BoardLayout): {start: number; dur:
   let far = 0;
   for (const i of words) { const g = L.words.get(i)!; for (const q of wordCorners(L.blocks[g.block], g)) far = Math.max(far, Math.hypot(q.x - pivot.x, q.y - pivot.y)); }
   const ov = Math.min(0.06, PC(cue, 'overshoot', 0.06));
-  const dur = capFrames(far * (1 + ov - S0), zoomOf(L, cue.word, land), PC(cue, 'frames', 9), 2.2);
+  const dur = capFrames(far * (1 + ov - S0), zoomOf(L, cue.word, land), PC(cue, 'frames', 9), 2.2, cue);
   const start = cue.at !== undefined ? cue.at * FPS : cue.params?.showFrom !== undefined ? (cue.params.showFrom as number) * FPS : land - dur;
   return {start, dur};
 };

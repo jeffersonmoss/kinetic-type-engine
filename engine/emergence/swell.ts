@@ -32,7 +32,7 @@ export const swellTiming = (cue: VerbCue, L: BoardLayout) => {
   const src = source(cue, L);
   const shift = src !== undefined ? (() => { const a = worldCentre(L, L.words.get(src)!), b = worldCentre(L, g); return Math.hypot(a.x - b.x, a.y - b.y); })() : 0;
   const land = isEmerge(cue) ? firstSf(cue, L) : g.sf;
-  const dur = capFrames(diag * Math.abs(s1 - s0) + shift, zoomOf(L, g.i, land), PC(cue, 'frames', 8));
+  const dur = capFrames(diag * Math.abs(s1 - s0) + shift, zoomOf(L, g.i, land), PC(cue, 'frames', 8), undefined, cue);
   const start = cue.at !== undefined ? cue.at * FPS : isEmerge(cue) ? land - dur : g.sf + 10;
   return {start, dur, s0, s1};
 };

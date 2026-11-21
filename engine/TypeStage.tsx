@@ -15,6 +15,7 @@ import {getVerb, type WordMod} from './verbRegistry';
 import {drawGraphics} from './lines';
 import {EXIT_FRAMES, baseCtx, boardActive, boardCues, wordStateAt} from './wordState';
 import {smearWordPass} from './smearSampling';
+import {TurnProjected} from './turn3d';
 
 /** Drawing order of a block: `z`, or -1 for a DOOR's new block so that it sits under the old word. */
 export const blockZ = (b: BlockGeom) => b.def.z ?? (b.def.emerge?.move === 'door' ? -1 : 0);
@@ -55,7 +56,11 @@ const letterXs = (g: WordGeom) => { const xs: number[] = []; let x = g.x; for (c
 const WordView: React.FC<{board: Board; L: BoardLayout; b: BlockGeom; g: WordGeom; m: WordMod; f: number; cam: CameraState; look: Pt; colour: string; uid: string}> = ({board, b, g, m, f, cam, look, colour, uid}) => {
   if (m.hidden || m.opacity <= 0.003) return null;
   const cx = g.x + g.w / 2, cy = g.y + g.h / 2;
-  const tf = (dx: number, dy: number) => `translate(${cx + dx} ${cy + dy}) rotate(${m.rot})${m.skewY ? ` skewY(${m.skewY})` : ''} scale(${m.sx} ${m.sy}) translate(${-cx} ${-cy})`;
+  // KIT 89: a 3D turn put its projected box into dx to sy as a stand-in for the validator; the word is drawn through the
+  // projection instead (turnBody), so that stand-in is taken back out of the word's own transform here
+  const tn = m.turn;
+  const wsx = tn ? m.sx / tn.stand.sx : m.sx, wsy = tn ? m.sy / tn.stand.sy : m.sy;
+  const tf = (dx: number, dy: number) => `translate(${cx + dx} ${cy + dy}) rotate(${m.rot})${m.skewY ? ` skewY(${m.skewY})` : ''} scale(${wsx} ${wsy}) translate(${-cx} ${-cy})`;
   const fill = m.tint ?? m.colour ?? colour;
   const fam = FONT_FAMILY[g.font], st = FONT_STYLE[g.font];
   const shadowOn = g.opts.shadow ?? (g.tier >= 2 && !isLightGround(board.bg));
@@ -64,14 +69,15 @@ const WordView: React.FC<{board: Board; L: BoardLayout; b: BlockGeom; g: WordGeo
   const xs = letterXs(g);
   const chars = [...g.text];
 
-  const textEl = (key: string, fillC: string, off: Pt) => {
-    if (!perLetter) {
+  const textEl = (key: string, fillC: string, off: Pt, only?: number) => {
+    if (!perLetter && only === undefined) {
       return <text key={key} x={g.x + off.x} y={g.baseline + off.y} fontFamily={fam} fontStyle={st.fontStyle} fontWeight={st.fontWeight} fontSize={g.size}
         fill={fillC} textLength={g.w} lengthAdjust="spacingAndGlyphs">{g.text}</text>;
     }
     return (
       <g key={key}>
         {chars.map((ch, k) => {
+          if (only !== undefined && k !== only) return null;
           const lm = m.letters?.[k];
           if ((lm?.opacity ?? 1) <= 0.003 || ch === ' ') return null;
           const art = g.opts.replace?.find((r) => r.index === k);
@@ -98,6 +104,7 @@ const WordView: React.FC<{board: Board; L: BoardLayout; b: BlockGeom; g: WordGeo
 
   const body = (dx: number, dy: number, op: number, key: string) => {
     const pad = (g.opts.plate?.pad ?? 0.18) * g.size;
+    if (tn) return turnBody(dx - tn.stand.dx, dy - tn.stand.dy, op, key, pad);
     return (
       <g key={key} transform={tf(dx, dy)} opacity={op}>
         {m.underlay}
@@ -113,6 +120,59 @@ const WordView: React.FC<{board: Board; L: BoardLayout; b: BlockGeom; g: WordGeo
       </g>
     );
   };
+  // KIT 89: the word (plate, shadow, glyphs, marks) drawn through its turning plane, or letter by letter through each
+  // letter's plane (a staggered turn; the plate splits into one tile per letter, a split-flap)
+  function turnBody(dx: number, dy: number, op: number, key: string, pad: number) {
+    const t = tn!;
+    const ov = 0.35 * g.size + Math.hypot(shOff.x, shOff.y);
+    const tid = `turn-${uid}-${g.i}-${key}`;
+    if (t.letters) {
+      const n = g.adv.length;
+      return (
+        <g key={key} transform={tf(dx, dy)} opacity={op}>
+          {m.underlay}
+          {t.letters.map((pl, k) => {
+            if (pl === 'hidden') return null;
+            const tx0 = k === 0 ? g.x - pad : xs[k], tx1 = k === n - 1 ? g.x + g.w + pad : xs[k] + g.adv[k];
+            const inner = (
+              <g>
+                {g.opts.plate && (
+                  <>
+                    {g.opts.plate.shadow !== false && <rect x={tx0 + shOff.x} y={g.y - pad + shOff.y} width={tx1 - tx0} height={g.boxH + 2 * pad} fill={PALETTE.shadow} />}
+                    <rect x={tx0} y={g.y - pad} width={tx1 - tx0} height={g.boxH + 2 * pad} fill={g.opts.plate.fill} />
+                  </>
+                )}
+                {shadowOn && !g.opts.plate && textEl('sh', PALETTE.shadow, shOff, k)}
+                {textEl('tx', fill, {x: 0, y: 0}, k)}
+              </g>
+            );
+            if (pl === null) return <g key={k}>{inner}</g>;
+            const r = {x0: Math.min(tx0, xs[k]) - ov, y0: g.y - pad - ov, x1: Math.max(tx1, xs[k] + g.adv[k]) + ov, y1: g.y + g.boxH + pad + ov};
+            return <TurnProjected key={k} plane={pl} rect={r} uid={`${tid}-l${k}`}>{inner}</TurnProjected>;
+          })}
+          {m.marks}
+        </g>
+      );
+    }
+    if (!t.plane || t.plane === 'hidden') return null;
+    const r = {x0: g.x - pad - ov, y0: g.y - pad - ov, x1: g.x + g.w + pad + ov, y1: g.y + g.boxH + pad + ov};
+    return (
+      <g key={key} transform={tf(dx, dy)} opacity={op}>
+        <TurnProjected plane={t.plane} rect={r} uid={tid}>
+          {m.underlay}
+          {g.opts.plate && (
+            <>
+              {g.opts.plate.shadow !== false && <rect x={g.x - pad + shOff.x} y={g.y - pad + shOff.y} width={g.w + 2 * pad} height={g.boxH + 2 * pad} fill={PALETTE.shadow} />}
+              <rect x={g.x - pad} y={g.y - pad} width={g.w + 2 * pad} height={g.boxH + 2 * pad} fill={g.opts.plate.fill} />
+            </>
+          )}
+          {shadowOn && !g.opts.plate && textEl('sh', PALETTE.shadow, shOff)}
+          {textEl('tx', fill, {x: 0, y: 0})}
+          {m.marks}
+        </TurnProjected>
+      </g>
+    );
+  }
   const content = (
     <g>
       {(m.ghosts ?? []).map((gh, k) => body(gh.dx, gh.dy, gh.opacity, `gh${k}`))}

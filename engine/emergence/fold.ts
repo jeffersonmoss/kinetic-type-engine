@@ -28,8 +28,8 @@ export const foldTiming = (cue: VerbCue, L: BoardLayout) => {
   const land = firstSf(cue, L);
   const z = zoomOf(L, cue.word, land);
   const tall = (ws: number[]) => Math.max(1, ...ws.map((i) => L.words.get(i)!.boxH));
-  const close = capFrames(tall(oldWords(cue, L)), z, PC(cue, 'frames', 8));
-  const open = capFrames(tall(wordsOfCue(cue, L)), z, PC(cue, 'frames', 8));
+  const close = capFrames(tall(oldWords(cue, L)), z, PC(cue, 'frames', 8), undefined, cue);
+  const open = capFrames(tall(wordsOfCue(cue, L)), z, PC(cue, 'frames', 8), undefined, cue);
   // the new block opens on the other side of the rule; on the same side it waits until the old block has closed, so the
   // two are never drawn through each other (rule 61, ruling 194.8)
   const same = sameSide(cue, L);

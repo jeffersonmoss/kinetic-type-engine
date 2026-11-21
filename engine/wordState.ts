@@ -9,18 +9,23 @@ import {rigTransits} from './rig';
 import {wipeFullAt} from './ground';
 import {MIN_VISIBLE_FRAMES} from './motion';
 import {blockToWorld, layoutBoard, wordCorners} from './layout';
-import type {Board, BoardLayout, Pt, VerbCue, WordGeom} from './types';
+import type {Block, Board, BoardLayout, Emergence, Pt, VerbCue, WordGeom} from './types';
+import {boardTurnExitFrames, boardTurnExitMod} from './emergence/turn';
 import {clamp, easeInQuad, easeOutCubic, rand, rot, sfOf} from './util';
 import {SPEED_CAP} from './motion';
 import {IDENTITY, composeMod, getVerb, type VerbCtxBase, type VerbDef, type WordMod} from './verbRegistry';
 import './verbs';
 import './verbsSheet';
+import './wah';
 import './emergence';
+import {groundClearClip, groundClearSpan} from './groundClear';
 
 /** Board exit durations (all at least MIN_TRANSITION_FRAMES; leave and fall also respect the speed cap). */
-export const EXIT_FRAMES: Record<Board['exit'], number> = {cut: 12, fall: 24, fade: 8, leave: 16, none: 0};
+export const EXIT_FRAMES: Record<Board['exit'], number> = {cut: 12, fall: 24, fade: 8, leave: 16, none: 0, turn: 10};
+/** Frames of a board's exit: EXIT_FRAMES, except 'turn', whose length is its spec's (KIT 89). */
+export const exitFramesOf = (board: Board) => (board.exit === 'turn' ? boardTurnExitFrames(board) : EXIT_FRAMES[board.exit]);
 /** Is the board drawn at frame f (from its start until its exit has finished)? */
-export const boardActive = (board: Board, f: number) => f >= board.start * FPS - 0.001 && f < board.end * FPS + EXIT_FRAMES[board.exit];
+export const boardActive = (board: Board, f: number) => f >= board.start * FPS - 0.001 && f < board.end * FPS + exitFramesOf(board);
 
 /** The resolved start (seconds) of a verb cue. */
 export const cueAt = (cue: VerbCue, L: BoardLayout, def?: VerbDef) =>
@@ -39,20 +44,39 @@ export const replacesEnterOf = (def: VerbDef, cue: VerbCue, L: BoardLayout, i: n
  *  name acting on the block's words; shove and hinge default to their modes 'push' and 'swing'. */
 export const emergeCue = (board: Board, k: number): VerbCue | null => {
   const b = board.blocks[k];
-  const e = b?.emerge;
+  const e = b ? blockEmergence(b) : undefined;
   if (!e) return null;
   const words: number[] = [];
   for (let i = b.words[0]; i <= b.words[1]; i++) words.push(i);
   const mode = e.move === 'shove' ? {mode: 'push'} : e.move === 'hinge' ? {mode: 'swing'} : {};
-  return {name: e.move, word: b.words[0], words, at: e.at, params: {...mode, ...(e.params ?? {}), from: e.from, block: k, showFrom: b.showFrom, emerged: true}};
+  // KIT 89: a turn (or a turnSwap) carries its spec; a swap also names the element it turns away
+  const turn = e.move === 'turn' ? (b.turnSwap ? {mode: 'swap', swapFrom: b.turnSwap.from, spec: {...(b.turnSwap.spec ?? {}), ...(e.turn ?? {})}} : {mode: 'in', spec: e.turn ?? {}}) : {};
+  // KIT 91: speedCap false reaches the move's own frame count (capFrames) through its params
+  const cap = e.speedCap === false ? {speedCap: false} : {};
+  return {name: e.move, word: b.words[0], words, at: e.at, params: {...mode, ...turn, ...(e.params ?? {}), ...cap, from: e.from, block: k, showFrom: b.showFrom, emerged: true}};
+};
+/** A block's emergence: its `emerge`, or (KIT 89) a 'turn' out of its turnSwap's outgoing element when it has none. */
+export const blockEmergence = (b: Block): Emergence | undefined =>
+  b.emerge ?? (b.turnSwap ? {move: 'turn', from: b.turnSwap.from} : undefined);
+/** KIT 89: the cue of a block's `exit: {style: 'turn'}` (mode 'out'), or null. */
+export const blockExitCue = (board: Board, k: number): VerbCue | null => {
+  const b = board.blocks[k];
+  const x = b?.exit;
+  if (!x || x.style !== 'turn') return null;
+  const [a, z] = x.words ?? b.words;
+  const words: number[] = [];
+  for (let i = Math.max(a, b.words[0]); i <= Math.min(z, b.words[1]); i++) words.push(i);
+  if (!words.length) return null;
+  return {name: 'turn', word: words[0], words, at: x.at, params: {mode: 'out', spec: x.turn ?? {}, block: k}};
 };
 const cueMemo = new WeakMap<Board, VerbCue[]>();
-/** All verb cues of a board (from every block, plus the cues derived from emergence declarations). */
+/** All verb cues of a board (from every block, plus the cues derived from emergence declarations and turn exits). */
 export const boardCues = (board: Board): VerbCue[] => {
   const hit = cueMemo.get(board);
   if (hit) return hit;
   const out = board.blocks.flatMap((b) => b.verb ?? []);
   board.blocks.forEach((_, k) => { const c = emergeCue(board, k); if (c) out.push(c); });
+  board.blocks.forEach((_, k) => { const c = blockExitCue(board, k); if (c) out.push(c); });
   cueMemo.set(board, out);
   return out;
 };
@@ -63,6 +87,15 @@ export const RETIRE_OPACITY = 0.45;
 export const RETIRE_FRAMES = 10;
 /** Frames after its line's last word ends before a word is retired. */
 export const RETIRE_AFTER = 6;
+/** Below this drawn opacity a word counts as gone for the validator's per-frame passes (overlap, ink, crop, framing):
+ *  the same threshold the hidden and fade exits already use. */
+export const GONE_OPACITY = 0.05;
+/** KIT 83: the opacity the render actually draws a word's ink at: its word opacity times its brightest letter. A verb
+ *  that fades only the letters (`vanish`, `closeIn`) leaves the word opacity at 1, so without this the validator kept
+ *  a vanished word on screen until a later exit. Computed from the same WordMod the render uses (wordStateAt), so the
+ *  timing is the render's own (per-letter delay and MIN_TRANSITION_FRAMES fade). */
+export const inkOpacity = (m: {hidden?: boolean; opacity: number; letters?: {opacity: number}[]}): number =>
+  m.hidden ? 0 : m.opacity * (m.letters?.length ? Math.max(...m.letters.map((l) => l.opacity)) : 1);
 /** A retired word is culled once its box is farther than one frame diagonal from the frame centre. */
 export {CULL_DISTANCE};
 const lineEndF = (lineId: number) => { const l = LINES[lineId]; return l ? WORDS[l.words[l.words.length - 1]].end_s * FPS : 0; };
@@ -142,7 +175,10 @@ export const cullFrame = (board: Board, i: number): number => {
   const w = L.words.get(i)!;
   const ret = retireFrame(board, i);
   let out = carryOutSpan(board, i)?.to ?? Infinity;
-  for (const g of board.ground ?? []) if (g.clears) { const fa = wipeFullAt(board, g) * FPS; if (ret <= fa) out = Math.min(out, fa); }
+  // (a clearing disc with a `keep` list retires by its edge instead, K4: the word is culled once the disc covers it)
+  for (const g of board.ground ?? []) if (g.clears && g.keep === undefined) { const fa = wipeFullAt(board, g) * FPS; if (ret <= fa) out = Math.min(out, fa); }
+  const gc = groundClearSpan(board, i);
+  if (gc) out = Math.min(out, gc.cover);
   const corners = wordCorners(L.blocks[w.block], {...w, h: w.boxH});
   const half = Math.hypot(w.w, w.boxH) / 2;
   const c = {x: (corners[0].x + corners[2].x) / 2, y: (corners[0].y + corners[2].y) / 2};
@@ -221,6 +257,8 @@ export const wordStateAt = (board: Board, i: number, f: number): WordMod => {
   const hiders = cues.filter((c) => !replacers.includes(c) && getVerb(c.name)?.hiddenBefore?.(c, L).includes(i));
   const hideBefore = replaced || hiders.length ? Math.min(...[...replacers, ...hiders].map((c) => baseCtx(c, L, 0).at * FPS - (getVerb(c.name)?.lead ?? 0))) : -Infinity;
   if (f < hideBefore) return {...IDENTITY, hidden: true, opacity: 0};
+  // K2: a picture word is drawn by its graphic, never as type (its box keeps its place in the row)
+  if (w.opts.picture !== undefined) return {...IDENTITY, hidden: true, opacity: 0};
   let m: WordMod = {...IDENTITY};
   if (w.opts.tilt) m = composeMod(m, {rot: w.opts.tilt}, n);
   // arrival: there is no default entrance (no slam, pop or slide and no opacity ramp). A word printed on a panel is
@@ -262,6 +300,8 @@ export const wordStateAt = (board: Board, i: number, f: number): WordMod => {
   const endF = board.end * FPS;
   if (f >= endF) {
     if (board.exit === 'fade') m = composeMod(m, {opacity: 1 - clamp((f - endF) / EXIT_FRAMES.fade)}, n);
+    // KIT 89: every block turns away (board.turn), the same turn as a block's exit
+    if (board.exit === 'turn') m = composeMod(m, boardTurnExitMod(board, L, w, f), n);
     if (board.exit === 'fall') {
       // Words drop in reading order (one frame apart, at most 6), each falling 18 frames on an ease-in that peaks at
       // the speed cap, fading over its last 12 frames, so all are gone when the exit ends.
@@ -288,13 +328,21 @@ export const wordStateAt = (board: Board, i: number, f: number): WordMod => {
   if (board.panels?.length && !out.hidden) {
     const b = L.blocks[w.block];
     const cx = w.x + w.w / 2, cy = w.y + w.boxH / 2;
-    const quad = [[w.x, w.y], [w.x + w.w, w.y], [w.x + w.w, w.y + w.boxH], [w.x, w.y + w.boxH]].map(([x, y]) => {
+    // Paper Trail K2: a spread word's box reaches past its advance (out.extend; undefined for every other word)
+    const x0 = w.x - (out.extend?.l ?? 0), x1 = w.x + w.w + (out.extend?.r ?? 0);
+    const quad = [[x0, w.y], [x1, w.y], [x1, w.y + w.boxH], [x0, w.y + w.boxH]].map(([x, y]) => {
       const q = rot({x: (x - cx) * out.sx, y: (y - cy) * out.sy}, out.rot);
       return blockToWorld(b, {x: q.x + cx + out.dx, y: q.y + cy + out.dy});
     });
     const pc = panelCover(board, L, w, f, quad);
     if (pc?.hidden) return {...IDENTITY, hidden: true, opacity: 0};
     if (pc?.clip && !out.clip) out = {...out, clip: pc.clip};
+  }
+  // K4: a clearing disc's travelling edge masks the word as it crosses it (a word already masked by its own move keeps
+  // that mask; it is still hidden when the disc covers it, through cullFrame)
+  if (board.ground?.length && !out.hidden && !out.clip) {
+    const gc = groundClearClip(board, i, f);
+    if (gc) out = {...out, clip: gc};
   }
   return out;
 };

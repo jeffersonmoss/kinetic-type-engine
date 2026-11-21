@@ -170,9 +170,11 @@ registerVerb('sinkBehind', {
 
 // slideAlong(angle): the word slides `dist` screen px (default 420) along a screen direction (degrees, 0 = right, 90 =
 // down), easing in and out at the speed cap or under, and is gone at the end (hooks 2 and 3). With `edgeX` it goes
-// under a vertical edge at that screen x (hook 3's lip at the foot of the slope).
+// under a vertical edge at that screen x (hook 3's lip at the foot of the slope). Opt-in `fade: true`: the word (and its
+// plate) also fades from 1 to 0 on the slide's easing, and its reading life ends as the slide starts (removesAt).
 registerVerb('slideAlong', {
   removesAt: (c) => {
+    if (c.cue.params?.fade === true) return Math.round(c.at * FPS);
     const dist = (c.cue.params?.dist as number | undefined) ?? 420;
     return Math.round(c.at * FPS) + ((c.cue.params?.frames as number | undefined) ?? Math.max(12, Math.ceil((1.571 * dist) / 30)));
   },
@@ -187,6 +189,7 @@ registerVerb('slideAlong', {
     // instead of being cut by the frame edge
     const edgeX = c.cue.params?.edgeX as number | undefined;
     const clip = edgeX === undefined ? undefined : screenPolyToBlockClip(c, [{x: edgeX, y: -2000}, {x: 4000, y: -2000}, {x: 4000, y: 4000}, {x: edgeX, y: 4000}]);
-    return {dx: v.x, dy: v.y, ...(clip ? {clip} : {}), opacity: c.df >= frames ? 0 : 1};
+    const fadeOut = c.cue.params?.fade === true ? 1 - easeInOutSine(clamp(c.df / frames)) : 1;
+    return {dx: v.x, dy: v.y, ...(clip ? {clip} : {}), opacity: c.df >= frames ? 0 : fadeOut};
   },
 });

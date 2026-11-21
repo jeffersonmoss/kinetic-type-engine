@@ -74,7 +74,17 @@ registerVerb('vanish', {
     const off = letterOffset(c);
     return {letters: c.geom.adv.map((_, k) => ({...letterIdentity(), opacity: 1 - clamp((c.df - per * (off + k)) / MIN_TRANSITION_FRAMES)}))};
   },
-  removesAt: (c) => c.at * FPS + P(c, 'perLetter', 2) * totalLetters(c.L, c.affected) + MIN_TRANSITION_FRAMES,
+  // KIT 83: per word, the frame its brightest (last) letter falls below the retirement opacity (0.45, RETIRE_OPACITY in
+  // wordState.ts), from the same per-letter timing as `modify`. Before, every affected word was kept until the last
+  // letter of the whole cue had gone, so an early word was "read" (and checked for visibility) after it had vanished.
+  removesAt: (c) => {
+    const per = P(c, 'perLetter', 2);
+    const k = c.affected.indexOf(c.i);
+    if (k < 0) return c.at * FPS + per * totalLetters(c.L, c.affected) + MIN_TRANSITION_FRAMES;
+    const off = c.affected.slice(0, k).reduce((a, i) => a + (c.L.words.get(i)?.adv.length ?? 0), 0);
+    const n = c.L.words.get(c.i)?.adv.length ?? 1;
+    return c.at * FPS + per * (off + n - 1) + (1 - 0.45) * MIN_TRANSITION_FRAMES;
+  },
 });
 
 // closeIn (DISAPPEAR, entry 92): the letters close to nothing from both ends inward, each to its own centre line over

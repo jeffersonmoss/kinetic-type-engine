@@ -19,7 +19,7 @@ export const doorTiming = (cue: VerbCue, L: BoardLayout) => {
   const edge = PC(cue, 'edge', 'left');
   const horiz = edge === 'left' || edge === 'right';
   const size = Math.max(1, ...old.map((i) => { const g = L.words.get(i)!; return horiz ? g.w : g.boxH; }));
-  const dur = capFrames(PC(cue, 'style', 'swing') === 'lid' ? size * 1.2 : size, zoomOf(L, cue.word, land), PC(cue, 'frames', 9));
+  const dur = capFrames(PC(cue, 'style', 'swing') === 'lid' ? size * 1.2 : size, zoomOf(L, cue.word, land), PC(cue, 'frames', 9), undefined, cue);
   // the new word is seen from the first frame of the opening, and must be whole when it is sung
   const start = cue.at !== undefined ? cue.at * FPS : cue.params?.showFrom !== undefined ? (cue.params.showFrom as number) * FPS : land - dur;
   return {start, dur, old};

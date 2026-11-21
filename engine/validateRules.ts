@@ -37,12 +37,13 @@ import {RUN_SPEED, quarterClearFrames} from './authoring';
 import {CARRY_TAIL, SLIDE_UP_IN_MIN_Y, SLIDE_UP_OUT_MAX_Y, carrySpan, carryStillSpan} from './carry';
 import {drawnOpacityAt} from './smearSampling';
 import {ruleAt} from './rules';
+import {transitExempt} from './transitRules';
 import type {Board, BoardLayout, Pt, WordGeom} from './types';
 import {normDeg, polysOverlap, rot} from './util';
 import {getVerb, type WordMod} from './verbRegistry';
 import {LINGER_FRAMES, graphicLife, lineMarks, ruleOwners, type LineSeg} from './lines';
 import {panelGoneAt} from './panel';
-import {baseCtx, boardCues, emergeCue, retireFrame, wordStateAt} from './wordState';
+import {baseCtx, boardCues, emergeCue, inkOpacity, retireFrame, wordStateAt} from './wordState';
 import {separatingPanel} from './panels';
 import type {Violation} from './validate';
 
@@ -58,8 +59,10 @@ const CAPTION_MIN_FRAMES = 15;
 /** FAN Joint distance cap in screen px (DOGE item 45: 320 world px at its 1920-wide world, two thirds of a screen px each). */
 export const JOINT_MAX = 213;
 
-const local = (w: WordGeom, m: WordMod, x0: number, y0: number, x1: number, y1: number) => {
+const local = (w: WordGeom, m: WordMod, x0In: number, y0: number, x1In: number, y1: number) => {
   const cx = w.x + w.w / 2, cy = w.y + w.h / 2;
+  // Paper Trail K2: a spread word's box reaches past its advance (m.extend; undefined for every other word)
+  const x0 = x0In - (m.extend?.l ?? 0), x1 = x1In + (m.extend?.r ?? 0);
   return [{x: x0, y: y0}, {x: x1, y: y0}, {x: x1, y: y1}, {x: x0, y: y1}].map((p) => {
     const q = rot({x: (p.x - cx) * m.sx, y: (p.y - cy) * m.sy}, m.rot);
     return {x: q.x + cx + m.dx, y: q.y + cy + m.dy};
@@ -161,6 +164,8 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
   const stateMemo = new Map<string, WordMod>();
   const st = (i: number, f: number) => { const k = `${i}@${f}`; let m = stateMemo.get(k); if (!m) { m = wordStateAt(board, i, f); stateMemo.set(k, m); } return m; };
   const vis = (m: WordMod, min = 0.05) => !m.hidden && m.opacity > min;
+  // KIT 83: the drawn ink (letter fades such as `vanish` included); used only by the ink-overlap pass
+  const inkVis = (m: WordMod, min = 0.05) => vis(m, min) && inkOpacity(m) > min;
 
   // ---------------------------------------------------------------- per frame: ink overlap, empty rig frames, giant rests
   const moves = rigMoves(board).filter((m) => m.dur > 0);
@@ -195,12 +200,14 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
   const giantAt = new Map<number, number>(); // line -> frames at rest with a giant word in frame
   const lineOfFrame = (f: number) => { let l = -1; for (const i of L.order) if (L.words.get(i)!.sf <= f) l = L.words.get(i)!.line; return l; };
   for (let f = startF; f <= endF; f += step) {
-    const shown = L.order.map((i) => ({i, w: L.words.get(i)!, m: st(i, f)})).filter((x) => vis(x.m));
+    const shown = L.order.map((i) => ({i, w: L.words.get(i)!, m: st(i, f)})).filter((x) => inkVis(x.m));
     const inks = new Map<number, Pt[]>();
     for (const x of shown) inks.set(x.i, inkQuad(board, L, x.w, x.m, f));
+    // KIT 89 and 90: a word turning in 3D, or (transitRules 'energy') in its first 12 frames of motion, may cross
+    const tx = (x: {i: number; m: WordMod}) => !!x.m.turn || transitExempt(board, x.i, f);
     // rows of one block never touch (ruling 194.11), checked for unretired words that have landed
     for (const a of shown) for (const b of shown) {
-      if (a.i >= b.i || a.w.block !== b.w.block || a.w.row === b.w.row) continue;
+      if (a.i >= b.i || a.w.block !== b.w.block || a.w.row === b.w.row || tx(a) || tx(b)) continue;
       if (f < Math.max(a.w.sf, b.w.sf) || f >= Math.min(retireFrame(board, a.i), retireFrame(board, b.i))) continue;
       if (polysOverlap(inks.get(a.i)!, inks.get(b.i)!, 0.5)) note(`rows${a.i}-${b.i}`, {board: name, rule: 'ink-overlap', severity: 'error', word: a.i, text: a.w.text, line: a.w.line, detail: `ink touches word ${b.i} "${b.w.text}" in the next row of its block (rows must not touch)`}, f, 1);
     }
@@ -210,10 +217,10 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
       return visMemo.get(x.i)!;
     };
     for (const a of shown) {
-      if (f >= a.w.sf || growing(a.m)) continue;
+      if (f >= a.w.sf || growing(a.m) || tx(a)) continue;
       for (const b of shown) {
         // b has landed, or is entering too (each such pair is checked once, from its later word)
-        if (b.i === a.i || (f < b.w.sf && b.i > a.i) || f >= retireFrame(board, b.i) || entryPairOk(a.i, b.i)) continue;
+        if (b.i === a.i || (f < b.w.sf && b.i > a.i) || f >= retireFrame(board, b.i) || entryPairOk(a.i, b.i) || tx(b)) continue;
         const va = visOf(a);
         if (!va) break;
         const vb = visOf(b);
@@ -225,7 +232,7 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
     if (rules.length) {
       const cam = cameraAt(board, f);
       for (const x of shown) {
-        if (f < x.w.sf || f >= retireFrame(board, x.i) || L.blocks[x.w.block].def.pin === 'screen') continue;
+        if (f < x.w.sf || f >= retireFrame(board, x.i) || L.blocks[x.w.block].def.pin === 'screen' || tx(x)) continue;
         const own = anchorRules(x.i);
         for (const r of rules) {
           if (own.has(r.d.id)) continue;
@@ -291,7 +298,8 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
       if (onPanel || bad >= 0) continue;
     }
     const m0 = st(i, f0);
-    if (typed || m0.letters) continue;
+    // KIT 89: a TURN (or turnSwap) arrives edge-on and opens by geometry, not by opacity
+    if (typed || m0.letters || mv === 'turn') continue;
     // reach full opacity
     let f1 = f0;
     while (f1 < f0 + 40 && drawn(i, f1) < 0.95) f1++;

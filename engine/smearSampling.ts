@@ -58,8 +58,13 @@ const shown = (m: WordMod) => !m.hidden && m.opacity > 0.02;
 export type SmearWordPass = 'sharp' | 'blur' | 'none';
 /** Which pass draws word i of a board at frame f while the smear is on (see the header). `state` defaults to wordStateAt. */
 export const smearWordPass = (board: Board, i: number, sf: number, f: number, state: (f: number) => WordMod = (x) => wordStateAt(board, i, x)): SmearWordPass => {
+  // board.smearType false: no blur for type; a word shown at f is drawn once, sharp (grounds and graphics still blur)
+  if (board.smearType === false) return shown(state(f)) ? 'sharp' : 'none';
   if (f >= sf + 3 && f < retireFrame(board, i)) return 'sharp';
   const now = state(f), early = state(f - SMEAR_SPAN);
+  // a word in a 3D turn (in, out or turnSwap, KIT 89) is never smeared, whatever the board's smear settings (Fable
+  // ruling, 18 November 2026: no motion blur on any 3D turn): drawn once, sharp, at the frame's own time, and no trail
+  if (now.turn || early.turn) return shown(now) ? 'sharp' : 'none';
   if (shown(now) && (!shown(early) || early.opacity < now.opacity - 0.05)) return 'sharp';
   return shown(now) || shown(early) ? 'blur' : 'none';
 };

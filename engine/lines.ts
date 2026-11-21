@@ -63,7 +63,9 @@ const inkWorld = (L: BoardLayout, i: number, f: number): Pt[] | null => {
   const desc = /[gjpqy,;]/.test(w.text) ? fi.inkDesc * w.size : 0;
   const cx = w.x + w.w / 2, cy = w.y + w.h / 2;
   const b = L.blocks[w.block];
-  return [{x: w.x, y: w.y - asc}, {x: w.x + w.w, y: w.y - asc}, {x: w.x + w.w, y: w.baseline + desc}, {x: w.x, y: w.baseline + desc}].map((p) => {
+  // Paper Trail K2: a spread word's box reaches past its advance (m.extend; undefined for every other word)
+  const x0 = w.x - (m.extend?.l ?? 0), x1 = w.x + w.w + (m.extend?.r ?? 0);
+  return [{x: x0, y: w.y - asc}, {x: x1, y: w.y - asc}, {x: x1, y: w.baseline + desc}, {x: x0, y: w.baseline + desc}].map((p) => {
     const q = rot({x: (p.x - cx) * m.sx, y: (p.y - cy) * m.sy}, m.rot);
     return blockToWorld(b, {x: q.x + cx + m.dx, y: q.y + cy + m.dy});
   });

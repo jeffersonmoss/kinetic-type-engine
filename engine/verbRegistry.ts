@@ -29,6 +29,12 @@ export interface WordMod {
   keepAlive?: boolean;
   /** Extra copies of the word (converge): offsets in block-local px and opacity. */
   ghosts?: {dx: number; dy: number; opacity: number}[];
+  /** Paper Trail K2 (`spread`): block-local px the word's box reaches past its landed advance on the left and right
+   *  (before the word's own scale), so every word box the validator builds grows with letters that move apart. */
+  extend?: {l: number; r: number};
+  /** KIT 89: a 3D turn in progress (turn3d.tsx): the plane(s) the renderer projects the word through, and the affine
+   *  stand-in it added to dx, dy, sx and sy (the projected box, which the validator measures). */
+  turn?: import('./turn3d').TurnDraw;
 }
 export const IDENTITY: WordMod = {dx: 0, dy: 0, rot: 0, sx: 1, sy: 1, opacity: 1};
 export const letterIdentity = (): LetterMod => ({dx: 0, dy: 0, rot: 0, s: 1, opacity: 1});
@@ -46,6 +52,9 @@ export const composeMod = (a: WordMod, b: Partial<WordMod> | null | undefined, n
     keepAlive: a.keepAlive || b.keepAlive,
     ghosts: b.ghosts ? [...(a.ghosts ?? []), ...b.ghosts] : a.ghosts,
   };
+  if (a.extend || b.extend) out.extend = {l: (a.extend?.l ?? 0) + (b.extend?.l ?? 0), r: (a.extend?.r ?? 0) + (b.extend?.r ?? 0)};
+  // KIT 89: one turn draws a word at a time (the later one wins, as for clip); its stand-in is already in dx to sy
+  if (a.turn || b.turn) out.turn = b.turn ?? a.turn;
   if (a.letters || b.letters) {
     out.letters = Array.from({length: nLetters}, (_, k) => {
       const x = a.letters?.[k] ?? letterIdentity(), y = b.letters?.[k] ?? letterIdentity();

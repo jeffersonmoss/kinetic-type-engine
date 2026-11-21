@@ -9,7 +9,7 @@ export * from './words';
 export {useSongTime, beatIndexAt, energyAt} from './time';
 export {layoutBoard, layoutBlock, blockToWorld, worldToBlock, wordCorners, displayText, alignPoint, DEFAULT_W, BLOCK_GAP} from './layout';
 export {cameraAt, cameraMoves, camForBlock, toScreen, toWorld, cameraTransform, SCREEN_CAM} from './camera';
-export {wordStateAt, boardCues, cueAt, cueAffects, replacesEnterOf, repeatScale, EXIT_FRAMES, emergeCue, retireFrame, cullFrame, lifeStage, RETIRE_OPACITY, RETIRE_FRAMES, RETIRE_AFTER, CULL_DISTANCE} from './wordState';
+export {wordStateAt, boardCues, cueAt, cueAffects, replacesEnterOf, repeatScale, EXIT_FRAMES, emergeCue, retireFrame, cullFrame, lifeStage, RETIRE_OPACITY, RETIRE_FRAMES, RETIRE_AFTER, CULL_DISTANCE, inkOpacity, GONE_OPACITY} from './wordState';
 export type {LifeStage} from './wordState';
 export {registerVerb, getVerb, verbNames, composeMod, IDENTITY, letterIdentity} from './verbRegistry';
 export type {VerbDef, VerbWordCtx, VerbCtxBase, WordMod, LetterMod} from './verbRegistry';
@@ -47,3 +47,16 @@ export {tumbleFallFrames, TUMBLE_FALL_FRAMES} from './verbsSheet';
 
 export * from './format';
 export * from './cut';
+// Sweet Distillation engine additions K1 to K7 (KIT.md section 20)
+export {parenPair} from './paren';
+export type {ParenPair, ParenPairDef, ParenRect, BracketState} from './paren';
+export {beatPosition, wahStillFrom, WAH_AMP, WAH_PHASE} from './wah';
+export {discAt, groundClearSpan, groundClearClip, isClearingDisc} from './groundClear';
+export type {GroundClearSpan} from './groundClear';
+export {morphKeptDrift, boardMorphDrifts, letterScreenQuad} from './morphPin';
+export type {MorphDrift} from './morphPin';
+export {hangPunctuation, stripParens} from './layout';
+export {PICTURE_MIN_SIDE, PICTURE_FRAMES} from './validate';
+// Paper Trail engine addition K2 (KIT.md section 21); importing it registers the `spread` verb
+export {spread, spreadAt, SPREAD_SPEED_SHARE, SPREAD_DEFAULT_TO, SPREAD_DEFAULT_FRAMES} from './spread';
+export type {SpreadDef, SpreadAnchor} from './spread';

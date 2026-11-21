@@ -88,7 +88,7 @@ const depthOf = (cue: VerbCue, L: BoardLayout, i: number) => {
 export const drawerLead = (cue: VerbCue, L: BoardLayout, i: number) => {
   const g = L.words.get(i)!;
   const want = Math.max(DRAWER_MIN_LEAD, Math.round((cue.params?.lead as number | undefined) ?? DRAWER_LEAD));
-  return capFrames(depthOf(cue, L, i), zoomOf(L, i, g.sf), want);
+  return capFrames(depthOf(cue, L, i), zoomOf(L, i, g.sf), want, undefined, cue);
 };
 
 registerVerb('drawer', {
