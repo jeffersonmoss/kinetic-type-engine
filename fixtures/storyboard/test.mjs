@@ -6,6 +6,9 @@ import {fileURLToPath} from 'node:url';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 try {
   const result = await build({stdin: {resolveDir: root, loader: 'tsx', contents: `
+    import React from 'react';
+    import {renderToStaticMarkup} from 'react-dom/server';
+    import {FilmFrame, sizes} from './host';
     import {compileScore, scoreContext} from './compile';
     import {withEngine} from './context';
     import {layoutBoard} from './engine/layout';
@@ -15,6 +18,7 @@ try {
     export * from './fixtures/storyboard/score';
     export const read = (score, map, format = 'wide', options = {}) => compileScore(scoreContext(format), score, map, options);
     export const layout = (film, board = 0) => withEngine(film.ctx, () => layoutBoard(film.boards[board]));
+    export const markup = (film, frame) => renderToStaticMarkup(<FilmFrame film={film} frame={frame} {...sizes[film.format]}/>);
     export const cam = (film, block, frame) => withEngine(film.ctx, () => camForBlock(film.boards[0], block, frame));
     export const glyphs = (film, word, frame, board = 0) => withEngine(film.ctx, () =>
       readingGlyphs(film.boards[board], layoutBoard(film.boards[board]).words.get(word), frame));
@@ -70,6 +74,23 @@ try {
   assert.deepEqual(clipped.readings.map(({line, onset}) => [line, onset]), [['h1.1.p1', 15]]);
   assert.deepEqual(Object.keys(clipped.lineIndex), ['h1.1.p1']);
   console.log('Parts preserve lyric order, part/reply landmarks, preset, camera keys, and one shared reading interval through reflow and edits.');
+
+  const night = f.read(f.inkScore('#0B1026'), f.inkMap);
+  const colours = [...f.layout(night).words.values()].map(({text, opts}) => [text, opts.colour]);
+  assert.deepEqual(colours, [['BITE', '#FF4058'], ['AND', '#F5B81C'], ['RUN', '#F5B81C'], ['AGAIN', '#F4EFE2'], ['OKAY', '#F5B81C']]);
+  assert.deepEqual(night.diagnostics.filter(({severity}) => severity === 'error'), [], JSON.stringify(night.diagnostics));
+  const markup = f.markup(night, 130);
+  const painted = [...markup.matchAll(/<text[^>]*fill="([^"]+)"[^>]*>([^<]+)<\/text>/g)].map(([, colour, glyph]) => [glyph, colour]);
+  assert.deepEqual(painted, colours.flatMap(([text, colour]) => [...text].map((glyph) => [glyph, colour])));
+  const court = f.read(f.inkScore('#0A3A82'), f.inkMap);
+  const lowContrast = court.diagnostics.filter(({code}) => code === 'contrast');
+  assert.deepEqual(lowContrast.map(({token}) => token), ['inks.token-1']);
+  assert.match(lowContrast[0].message, /below 4.5:1/);
+  assert.deepEqual(f.read(f.inkScore('#0A3A82', false), f.inkMap).diagnostics.filter(({severity}) => severity === 'error'), []);
+  const badPalette = f.inkScore('#0A3A82');
+  badPalette.look.ink.hit = 'red';
+  assert.throws(() => f.read(badPalette, f.inkMap), /ink "hit" needs a hex colour/);
+  console.log(`Ink rendered all three role colours. Red on court failed: ${lowContrast[0].message}`);
 } finally {
   stop();
 }

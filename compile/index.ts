@@ -8,7 +8,7 @@ import {checkSource, inspect, readBoard} from './read';
 import {editClock, mapVocal, type EditRange, type SongMap} from '../song';
 import {lowerUnit, scheduleUnit, unitCues} from '../effects';
 import type {Board} from '../engine/types';
-import type {Film, Format} from '../score';
+import type {Film, Format, Ink} from '../score';
 import type {CompiledFilm, LineIndex, TokenReading, Transition} from './types';
 
 export {defaultLook, formatFor, scoreContext} from './defaults';
@@ -50,6 +50,12 @@ export function compileScore(base: EngineContext, film: Film, song: SongMap, opt
     return time ? [{t: time.onset / base.fps}] : [];
   });
   const ctx = boundContext(base, {words, lines, beats, guard});
+  const ink: Record<Ink, string> = {call: ctx.look.palette.paper, reply: '#F5B81C', hit: '#FF4058', ...film.look?.ink};
+  for (const [role, colour] of Object.entries(ink)) {
+    if (typeof colour !== 'string' || !/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/iu.test(colour)) {
+      throw new Error(`ink "${role}" needs a hex colour`);
+    }
+  }
   if (ctx.look.shadow && !options.allowShadow) diagnostics.push({severity: 'error', code: 'shadow', message: 'The film must explicitly allow its look to enable shadows'});
 
   return withEngine(ctx, () => {
@@ -90,7 +96,7 @@ export function compileScore(base: EngineContext, film: Film, song: SongMap, opt
           if (source.origin?.board === board && work.blocks.length === 0) throw new Error(`${item.id}: opener cannot reference its own scene`);
           if (item.card.from.kind === 'free') diagnostics.push({severity: 'warn', code: 'free-placement', line: item.id, message: item.card.from.reason});
           const index = board.blocks.length;
-          board.blocks.push(placeBlock(ctx, board, item, source));
+          board.blocks.push(placeBlock(ctx, board, item, source, ink));
           const block: BlockWork = {board, index, item, source, scene: work, authored, start: 0, landing: 0, release: 0,
             targets: [], landingByWord: new Map()};
           work.blocks.push(block);

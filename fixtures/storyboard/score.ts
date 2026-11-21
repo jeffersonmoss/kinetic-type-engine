@@ -51,3 +51,17 @@ export const editPartsScore = film({scenes: [scene('hook', {lines: [
   line('h1.1', {rows: ['ONE'], enter: typeWords, omit: ['h1.1.token-3'],
     parts: [{rows: ['FORTY-', 'ONE'], from: {kind: 'edge', side: 'L'}, enter: typeWords}]}),
 ]})]});
+
+export const inkMap = fixtureSong([['inks', [['Bite', 50, 59], ['and', 67, 76], ['Run', 84, 93],
+  ['Again', 102, 111], ['Okay', 122, 131, 'adlib']]]]);
+
+export const inkScore = (ground: string, markHit = true) => film({
+  look: {ink: {call: '#F4EFE2'}},
+  scenes: [scene('colours', {ground, lines: [
+    line('inks', {rows: [{text: 'Bite and', ink: 'reply'}], enter: typeWords, words: {
+      BITE: {ink: 'call'},
+      'inks.token-1': {ink: markHit ? 'hit' : 'call'},
+    }, parts: [{rows: ['Run', {text: 'Again', ink: 'call'}], from: row('inks', 1), enter: typeWords, ink: 'reply'}],
+    reply: {from: row('inks.p1', 2), enter: typeWords, size: 'body'}}),
+  ]})],
+});

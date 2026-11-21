@@ -31,9 +31,11 @@ export const dock = (to: 'margin' | 'spine'): Fate => ({kind: 'dock', to});
 export const clear = (effect: Exit): Fate => ({kind: 'clear', effect});
 
 export interface Emphasis {font?: string; case?: 'mixed' | 'upper'; reason?: string}
+export type Ink = 'call' | 'reply' | 'hit';
+export interface WordStyle extends Emphasis {ink?: Ink}
 export interface Echo {kind: 'echo'; text: string}
 export const echo = (text: string): Echo => ({kind: 'echo', text});
-export interface RowCard {text: string | readonly (string | Echo)[]; size?: Size}
+export interface RowCard {text: string | readonly (string | Echo)[]; size?: Size; ink?: Ink}
 export type Rows = 'auto' | readonly (string | Echo | RowCard)[];
 export interface ReplyCard extends Emphasis {
   rows?: Rows;
@@ -41,10 +43,11 @@ export interface ReplyCard extends Emphasis {
   enter?: Entrance;
   place?: Placement;
   size?: Size;
+  ink?: Ink;
   preset?: boolean | readonly string[];
   omit?: readonly string[];
   /** Keys are display text or stable sung token IDs. A token ID takes precedence. */
-  words?: Readonly<Record<string, Emphasis>>;
+  words?: Readonly<Record<string, WordStyle>>;
   /** Explicit glyph groups with no inferred syllable timing. Keys are sung token IDs. */
   syllables?: Readonly<Record<string, readonly {text: string; offsetFrames?: number}[]>>;
 }
@@ -76,7 +79,7 @@ export type Format = 'wide' | 'portrait';
 export interface Edit {start: number; end: number}
 export interface Film {
   song?: string;
-  look?: {palette?: Partial<EngineContext['look']['palette']>; shadow?: boolean};
+  look?: {palette?: Partial<EngineContext['look']['palette']>; shadow?: boolean; ink?: Partial<Record<Ink, string>>};
   formats?: readonly Format[];
   scenes: readonly (Scene | Raw)[];
 }

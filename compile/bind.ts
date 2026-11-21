@@ -1,6 +1,6 @@
 import {cascade, fade, rise, type as typeOn} from '../effects';
 import {CONNECTIVES, type SongLine as EngineLine, type SongWord} from '../engine/config';
-import {clear, opening, portraitCard, row, type Entrance, type Film, type Format, type LineCard,
+import {clear, opening, portraitCard, row, type Entrance, type Film, type Format, type Ink, type LineCard,
   type ReplyCard, type RowCard, type Scene, type Size} from '../score';
 import {mapVocal, type OutputRange, type SongMap, type SongToken} from '../song';
 
@@ -9,7 +9,7 @@ export interface Diagnostic {
   line?: string; token?: string; frame?: number;
 }
 export interface Vocal {token: SongToken; onset: number; end: number; preset: boolean}
-export interface Run {i: number; text: string; vocal?: Vocal; font: string; emphasis: boolean; mixed: boolean; reason?: string}
+export interface Run {i: number; text: string; vocal?: Vocal; font: string; ink: Ink; emphasis: boolean; mixed: boolean; reason?: string}
 export interface BoundRow {runs: Run[]; size: Size}
 export interface BoundBlock {
   id: string; card: ReplyCard & {from: NonNullable<ReplyCard['from']>; enter: Entrance};
@@ -89,7 +89,7 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly 
     // Bind the full lyric before dropping runs outside an edit. This keeps authored part IDs stable.
     const matched = rows.map((entry) => {
       const items = typeof entry.text === 'string' ? entry.text.trim().split(/\s+/u).filter(Boolean) : entry.text;
-      return {size: entry.size ?? size, items: items.map((item) => {
+      return {size: entry.size ?? size, ink: entry.ink, items: items.map((item) => {
         const source = typeof item === 'string' ? item : item.text;
         if (!source.trim() || /[()]/u.test(source)) fail(id, `invalid displayed text "${source}"`);
         let vocal: Vocal | undefined;
@@ -115,18 +115,21 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly 
       if (!candidates.slice(start, cursor).some(({id}) => mapped.has(id))) return undefined;
     }
     const runs: Run[] = [];
-    const boundRows = matched.map(({size, items}): BoundRow => ({
+    const wordStyles = new Map(Object.entries(card.words ?? {}).map(([name, style]) => [key(name), style]));
+    const boundRows = matched.map(({size, ink: rowInk, items}): BoundRow => ({
       size, runs: items.flatMap(({source, vocal, skipped}) => {
         if (skipped) return [];
-        const wordStyle = (vocal && (card.words?.[vocal.token.id] ?? card.words?.[vocal.token.text])) ?? card.words?.[source];
+        const wordStyle = (vocal && (card.words?.[vocal.token.id] ?? wordStyles.get(key(vocal.token.text)))) ?? wordStyles.get(key(source));
         const style = {...card, ...wordStyle};
+        const ink = wordStyle?.ink ?? rowInk ?? card.ink ?? (reply ? 'reply' : 'call');
+        if (!['call', 'reply', 'hit'].includes(ink)) fail(id, `unknown ink role "${ink}" on "${source}"`);
         const font = style.font ?? (connectives.has(key(source)) ? 'barlow' : 'anton');
         const text = style.case === 'mixed' ? source : source.toUpperCase();
         if (vocal && (font !== 'barlow' && font !== 'anton' || text !== text.toUpperCase()) && !style.reason?.trim()) {
           diagnostics.push({severity: 'warn', code: 'emphasis-reason', line: id, token: vocal.token.id,
             message: `"${text}" uses emphasis font or mixed case without a reason`});
         }
-        const run = {i: words.length, text, vocal, font, emphasis: font !== 'anton' && font !== 'barlow',
+        const run = {i: words.length, text, vocal, font, ink, emphasis: font !== 'anton' && font !== 'barlow',
           mixed: style.case === 'mixed', reason: style.reason};
         const timing = vocal ?? active[0] ?? tokens[0];
         if (!timing) fail(id, 'visual echoes require a sung line');
@@ -197,7 +200,7 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly 
           if (from.kind === 'opening') fail(partId, 'a part cannot use opening()');
           const enter = part.enter ?? fallback(partId, 'enter', draftRise());
           phrase.last = i === parts.length - 1;
-          add(block(partId, {...part, from, enter, omit: undefined}, calls.map((vocal) =>
+          add(block(partId, {...part, ink: part.ink ?? card.ink, from, enter, omit: undefined}, calls.map((vocal) =>
             ({...vocal, preset: vocal.preset || presetFor(part, vocal.token)})), false, phrase), part.camera);
         });
       } else {

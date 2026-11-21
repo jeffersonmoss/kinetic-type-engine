@@ -90,7 +90,7 @@ export function readingSampler(board: Board, minCap: number) {
     const state = wordStateAt(board, word, frame);
     const ground = groundAt(board, frame / FPS);
     const bg = ground.full;
-    const colour = state.tint ?? state.colour ?? board.colour ??
+    const colour = state.tint ?? state.colour ?? g.opts.colour ?? board.colour ??
       (PALETTE.light?.some((light) => light.toUpperCase() === bg.toUpperCase()) ? PALETTE.ground : PALETTE.paper);
     const ratio = contrast(colour, bg, opacity);
     if (ratio === undefined || ratio < 4.5) return {rule: 'contrast', detail: ratio === undefined

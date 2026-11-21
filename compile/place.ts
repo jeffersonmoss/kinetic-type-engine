@@ -5,7 +5,7 @@ import {blockToWorld, layoutBlock, layoutBoard} from '../engine/layout';
 import {resolveAnchor} from '../engine/letters';
 import {textWidth} from '../engine/metrics';
 import type {Block, Board, FrameEdge, Pt, SlideSource} from '../engine/types';
-import type {Landmark} from '../score';
+import type {Ink, Landmark} from '../score';
 import {isPair, key, type BoundBlock, type BoundRow, type Run} from './bind';
 
 export interface Located {board: Board; index: number; item: BoundBlock}
@@ -34,7 +34,8 @@ function wrap(row: BoundRow, cap: number, max: number): BoundRow[] {
   return lines;
 }
 
-export function measureBlock(ctx: EngineContext, board: Board, item: BoundBlock, counter?: Source['counter']): Block {
+function measureBlock(ctx: EngineContext, board: Board, item: BoundBlock,
+  ink: Readonly<Record<Ink, string>>, counter?: Source['counter']): Block {
   const floor = ctx.limits.sungMinCap;
   const max = counter ? counter.width * 0.8 : ctx.safeBox.width;
   for (const run of item.runs) {
@@ -55,7 +56,7 @@ export function measureBlock(ctx: EngineContext, board: Board, item: BoundBlock,
     }
     const cap = Math.min(tier, floor * max / required);
     for (const run of row.runs) {
-      def.style![run.i] = {text: run.text, preserveCase: true, font: run.font, scale: cap / floor,
+      def.style![run.i] = {text: run.text, preserveCase: true, font: run.font, colour: ink[run.ink], scale: cap / floor,
         tier: row.size === 'hero' ? 3 : row.size === 'body' ? 1 : 2};
     }
   }
@@ -134,7 +135,7 @@ export function sourceOf(board: Board, from: Landmark, byId: ReadonlyMap<string,
     angle: block.angle, counter};
 }
 
-export function placeBlock(ctx: EngineContext, board: Board, item: BoundBlock, source: Source): Block {
+export function placeBlock(ctx: EngineContext, board: Board, item: BoundBlock, source: Source, ink: Readonly<Record<Ink, string>>): Block {
   const entrance = item.card.enter;
   const transformOverlay = isPair(entrance) && ['matchCut', 'slotRoll'].includes(entrance.name);
   const place = item.card.place ?? (transformOverlay ? 'overlay' : 'below');
@@ -142,7 +143,7 @@ export function placeBlock(ctx: EngineContext, board: Board, item: BoundBlock, s
   if (!['below', 'above', 'right', 'left', 'inside', 'overlay', 'turnCW', 'turnCCW'].includes(place)) {
     throw new Error(`${item.id}: unknown placement "${place}"`);
   }
-  const block = measureBlock(ctx, board, item, place === 'inside' ? source.counter : undefined);
+  const block = measureBlock(ctx, board, item, ink, place === 'inside' ? source.counter : undefined);
   const shape = layoutBlock(block, board.blocks.length, board);
   const b = source.box;
   const gap = ctx.limits.sungMinCap * 0.16;
