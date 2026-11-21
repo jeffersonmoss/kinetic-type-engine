@@ -25,9 +25,10 @@
 //   behind           a BEHIND plate still over a hidden word on its sung frame
 //   carry            a chunk carry whose board camera moves, whose type is not clear of the edge at B, or whose outgoing
 //                    type is still in frame when the chunk unmounts
-import {FPS, FORMAT, HANDOFFS, HEIGHT, LINES, WIDTH, WORDS} from './config';
+import {FPS, FORMAT, HEIGHT, LINES, WIDTH, WORDS} from './config';
 import {camForBlock, cameraAt, toScreen} from './camera';
 import {blockToWorld} from './layout';
+import {handoffById} from './handoffWords';
 import {countersMeasured, resolveAnchor} from './letters';
 import {FONT_INFO} from './metrics';
 import {panelQuad} from './panel';
@@ -520,7 +521,7 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
   for (const side of ['start', 'end'] as const) {
     const id = board.handoff?.[side];
     if (!id || id === 'open') continue;
-    const h = HANDOFFS[id];
+    const h = handoffById(id);
     if (!h) continue;
     const f = side === 'start' ? Math.round(board.start * FPS) : Math.round(board.end * FPS) - 1;
     const allowed = new Set(h.elements.flatMap((e) => (e.kind === 'word' ? [e.text.toUpperCase().replace(/[^A-Z0-9]/g, '')] : [])));

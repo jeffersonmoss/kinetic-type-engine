@@ -392,7 +392,7 @@ export interface GroundWipe {
   clip?: Pt[];
 }
 
-/** Handoff frame ids: keys of configureEngine({handoffs}). An id with no handoff (such as 'FILM_START') matches nothing. */
+/** Handoff frame ids: keys of configureEngine({handoffs}). A declared id must be configured; omit it when there is no handoff. */
 export type HandoffId = string;
 /** A word at a fixed screen place on a handoff frame: displayed text, its cap box (screen px). */
 export interface HandoffWord {kind: 'word'; text: string; x: number; baseline: number; cap: number; w: number}

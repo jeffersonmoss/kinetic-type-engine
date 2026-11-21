@@ -16,7 +16,8 @@ export const HANDOFF_CLEAR_FRAMES = 6;
 export const HANDOFF_SUNG_WINDOW = 9;
 export const HANDOFF_GRACE = 10;
 
-const hof = (id: HandoffId | 'open' | undefined) => (id === undefined || id === 'open' ? undefined : HANDOFFS[id]);
+export const handoffById = (id: HandoffId | undefined) =>
+  id !== undefined && id !== 'open' && Object.hasOwn(HANDOFFS, id) ? HANDOFFS[id] : undefined;
 const norm = (s: string) => s.toUpperCase().replace(/[^\p{L}\p{N}]/gu, '');
 const memo = new WeakMap<Board, Map<string, Set<number>>>();
 
@@ -27,7 +28,7 @@ export const handoffWordSet = (board: Board, L: BoardLayout, side: 'start' | 'en
   if (!m) { m = new Map(); memo.set(board, m); }
   const hit = m.get(side);
   if (hit) return hit;
-  const h = hof(board.handoff?.[side]);
+  const h = handoffById(board.handoff?.[side]);
   const out = new Set<number>();
   if (h) {
     const texts = new Set(h.elements.flatMap((e) => (e.kind === 'word' ? [norm(e.text)] : [])));
@@ -43,7 +44,7 @@ const elBox = (e: HandoffElement) => (e.kind === 'word' ? {x: e.x, y: e.baseline
 export const handoffPairsNested = (board: Board, L: BoardLayout): [number, number][] => {
   const out: [number, number][] = [];
   for (const side of ['start', 'end'] as const) {
-    const h = hof(board.handoff?.[side]);
+    const h = handoffById(board.handoff?.[side]);
     if (!h) continue;
     const boxes = h.elements.map(elBox).filter((b): b is NonNullable<ReturnType<typeof elBox>> => !!b);
     const ws = [...handoffWordSet(board, L, side)];
@@ -60,7 +61,7 @@ export const handoffPairsNested = (board: Board, L: BoardLayout): [number, numbe
 /** Frame from which word i fades out for the end handoff (Infinity: it stays, or the board has no end handoff). The
  *  fade ends on the board's last frame (the handoff time minus one frame), where the word is at opacity 0. */
 export const handoffClearFrame = (board: Board, i: number): number => {
-  const h = hof(board.handoff?.end);
+  const h = handoffById(board.handoff?.end);
   if (!h) return Infinity;
   const L = layoutBoard(board);
   if (!L.words.has(i) || handoffWordSet(board, L, 'end').has(i)) return Infinity;
@@ -71,7 +72,7 @@ export const handoffClearFrame = (board: Board, i: number): number => {
  *  within HANDOFF_SUNG_WINDOW frames after it (-Infinity otherwise). The rule asks it to be readable when its emergence
  *  ends, no later than HANDOFF_GRACE frames after the boundary; the validator checks it from that latest frame. */
 export const handoffGraceEnd = (board: Board, i: number): number => {
-  const h = hof(board.handoff?.start);
+  const h = handoffById(board.handoff?.start);
   if (!h) return -Infinity;
   const L = layoutBoard(board);
   const w = L.words.get(i);

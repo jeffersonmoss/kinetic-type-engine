@@ -1,4 +1,5 @@
 import {configureEngine, FPS} from '../../engine/config';
+import {validateBoard} from '../../engine/validate';
 import {extendVerb, getVerb, registerVerb} from '../../engine/verbRegistry';
 import {wordStateAt} from '../../engine/wordState';
 import type {Board} from '../../engine/types';
@@ -35,4 +36,15 @@ export function checkFrameCore() {
   const extended = getVerb('frame-core-test');
   if (!extended?.early || !extended.gradual) throw new Error('extendVerb did not merge existing and new hooks');
   console.log('126.2 duplicate seam rejected; extendVerb retained existing hooks.');
+
+  const badHandoff = validateBoard({...pureTypeBoard, handoff: {start: 'constructor', end: 'missing'},
+    waive: [{rule: 'handoff-unknown', why: 'test whether unknown IDs fail'}]});
+  const unknown = badHandoff.violations.filter((v) => v.rule === 'handoff-unknown' && v.severity === 'error');
+  if (unknown.length !== 2 || !unknown.some((v) => v.detail.includes('constructor')) || !unknown.some((v) => v.detail.includes('missing'))) {
+    throw new Error('unknown start and end handoff IDs must fail validation');
+  }
+  if (validateBoard({...pureTypeBoard, handoff: {end: 'open'}}).violations.some((v) => v.rule === 'handoff-unknown')) {
+    throw new Error('the reserved open end handoff should pass');
+  }
+  console.log('126.4 unknown start and end handoffs rejected; open end accepted.');
 }

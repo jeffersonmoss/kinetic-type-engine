@@ -11,11 +11,11 @@ import {describeAnchor, resolveAnchor} from './letters';
 import {MIN_TRANSITION_FRAMES, rectQuad} from './motion';
 import {clipConvex, polyArea} from './validateRules';
 import {RIG_FRAME_RANGE, SLOW_SOAR_MAX, SLOW_SOAR_MIN, isSlowSoar, rigMoves, rigTransits} from './rig';
-import {handoffGraceEnd, handoffPairsNested, handoffWordSet} from './handoffWords';
+import {handoffById, handoffGraceEnd, handoffPairsNested, handoffWordSet} from './handoffWords';
 import {MIN_VISIBLE_FRAMES} from './motion';
 import {carryReadEnd} from './carry';
 import {ruleTracks} from './rules';
-import type {Board, CameraState, Handoff, HandoffId, Pt, Waiver, WordGeom} from './types';
+import type {Board, CameraState, HandoffId, Pt, Waiver, WordGeom} from './types';
 import {normDeg, polysOverlap, rot} from './util';
 import {getVerb, type WordMod} from './verbRegistry';
 import {checkTrack, type TrackedElement} from './motionCheck';
@@ -545,8 +545,8 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
     for (const v of viol) out.push({board: name, rule: v.rule, severity: 'error', detail: `${el.id}: ${v.detail}`, from: v.from, to: v.to, frames: v.frames});
   }
   // Handoff frames (rule 81, rule 181.5)
-  if (board.handoff?.start) out.push(...checkHandoff(board, name, board.handoff.start, 'start'));
-  if (board.handoff?.end && board.handoff.end !== 'open') out.push(...checkHandoff(board, name, board.handoff.end, 'end'));
+  if (board.handoff?.start !== undefined) out.push(...checkHandoff(board, name, board.handoff.start, 'start'));
+  if (board.handoff?.end !== undefined && board.handoff.end !== 'open') out.push(...checkHandoff(board, name, board.handoff.end, 'end'));
   out.push(...boardRuleChecks(board, {name, L, intervals, step, addPlan}));
   out.push(...motionRuleChecks(board, name, L));
   for (const [l, p] of plan) { const st = lineStats.get(l) ?? {line: l, transits: 0, peakBright: 0, peakVisible: 0}; st.plan = p; lineStats.set(l, st); }
@@ -570,7 +570,7 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
   };
   for (const v of out) {
     const wv = (board.waive as (Waiver | string)[] | undefined)?.find((x) => waiverMatches(x, v));
-    if (wv && v.severity === 'error') { v.severity = 'warn'; v.detail = `${v.detail} [waived: ${typeof wv === 'string' ? 'no reason given' : wv.why}]`; }
+    if (wv && v.severity === 'error' && v.rule !== 'handoff-unknown') { v.severity = 'warn'; v.detail = `${v.detail} [waived: ${typeof wv === 'string' ? 'no reason given' : wv.why}]`; }
   }
   return {board: name, violations: out, lines};
 };
@@ -580,8 +580,10 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
  *  measured; a mark that names a board path needs that path on the board. */
 export const checkHandoff = (board: Board, name: string, id: HandoffId, side: 'start' | 'end'): Violation[] => {
   const out: Violation[] = [];
-  const H: Handoff | undefined = HANDOFFS[id];
-  if (!H) return out; // a handoff the song does not define (the film's own start and end)
+  if (side === 'end' && id === 'open') return out;
+  const H = handoffById(id);
+  if (!H) return [{board: name, rule: 'handoff-unknown', severity: 'error',
+    detail: `unknown ${side} handoff id ${JSON.stringify(id)}`}];
   const err = (detail: string, severity: Severity = 'error') => out.push({board: name, rule: 'handoff', severity, detail: `${id} (${side}): ${detail}`});
   const hf = Math.round(H.t * FPS);
   const f = side === 'start' ? hf : hf - 1;
