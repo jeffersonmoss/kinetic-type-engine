@@ -2,17 +2,18 @@
 // rise. Both use the Huang slide profile (cruise at constant speed, then ease out over the last 40 percent; 30 px per
 // frame of own motion, just under the 32 px cap) and end each word on its own sung frame. The direction and distance
 // are measured on screen with the camera of the word's sung frame, then held in the block's frame.
-// slideFrom: each word slides in from a frame edge, starting just off frame. Validator `slide-early` (error): a
+// slideFrom: each word slides in from a frame edge or a board anchor. Edge slides start just off frame. Validator `slide-early` (error): a
 // slideFrom word more than half in frame earlier than `earlyOk` (8) frames before it is sung (Huang amendment A4).
 // rise: each word rises out from behind a line just under its own landed box (`gap` 4 px), clipped there; `dir` turns
 // it into a drawer from its own trailing side ('up' default, 'down', 'left', 'right').
 // params (both): frames (minimum; slideFrom 8, rise 6), linear ({speed, settle}: constant speed, sine settle over the
 // last `settle` frames), drop (px, slideFrom only: an extra fall over the last dropFrames (4) frames).
-// slideFrom: edge 'left' | 'right' | 'top' | 'bottom' (the frame edge it enters from; authoring's slideFrom({from}) sets it), earlyOk (8). rise: dir, gap (4).
+// slideFrom: from (anchor), earlyOk (8). rise: dir, gap (4).
 import {FPS, HEIGHT, WIDTH} from '../config';
 import {camForBlock, toScreen, toWorld} from '../camera';
 import {blockToWorld, worldToBlock} from '../layout';
-import type {BoardLayout, Pt, VerbCue} from '../types';
+import {resolveAnchor} from '../letters';
+import type {BoardLayout, FrameEdge, Pt, SlideSource, VerbCue} from '../types';
 import {clamp, easeInOutSine} from '../util';
 import {registerVerb} from '../verbRegistry';
 import {PC, wordsOfCue} from './common';
@@ -21,6 +22,25 @@ const SLIDE_EASE = 0.4;
 const SLIDE_FACTOR = 1 - SLIDE_EASE + (SLIDE_EASE * 2) / Math.PI;
 export const ENTRANCE_SPEED = 30;
 export const SLIDE_EARLY_OK = 8;
+const EDGES: readonly FrameEdge[] = ['left', 'right', 'top', 'bottom'];
+
+export function slideSource(cue: VerbCue, L: BoardLayout, t: number): {edge: FrameEdge} | {p: Pt} {
+  const supplied = cue.params?.from as SlideSource | undefined;
+  const legacyEdge = cue.params?.edge as FrameEdge | undefined;
+  const source = supplied ?? (legacyEdge === undefined ? undefined : {edge: legacyEdge});
+  if (!source || typeof source !== 'object') throw new Error('slideFrom requires a named anchor or frame edge');
+  if ('edge' in source) {
+    if (!EDGES.includes(source.edge)) throw new Error(`unknown slideFrom frame edge "${source.edge}"`);
+    return {edge: source.edge};
+  }
+  if ('point' in source) {
+    if (typeof source.reason !== 'string' || !source.reason.trim()) throw new Error('a slideFrom point needs a reason');
+    if (!Number.isFinite(source.point?.x) || !Number.isFinite(source.point?.y)) throw new Error('a slideFrom point needs finite coordinates');
+  } else if (!('word' in source || 'block' in source || 'rule' in source || 'path' in source)) {
+    throw new Error('slideFrom requires a named anchor or frame edge');
+  }
+  return {p: resolveAnchor(L, source, t).p};
+}
 const slideRemaining = (D: number, N: number, d: number) => {
   const u = clamp((d + N) / N);
   const v = D / (N * SLIDE_FACTOR);
@@ -57,10 +77,19 @@ export const edgeEntrancePlan = (cue: VerbCue, L: BoardLayout, i: number): Plan 
   const frames = (D: number, min: number) => (linear ? linearFrames(D, linear.speed, linear.settle) : Math.max(min, 6, Math.ceil(D / (ENTRANCE_SPEED * SLIDE_FACTOR))));
   let plan: Plan;
   if (cue.name === 'slideFrom') {
-    const from = PC(cue, 'edge', 'right') as string;
-    const D = Math.max(0, from === 'right' ? WIDTH - Math.min(...xs) + 2 : from === 'left' ? Math.max(...xs) + 2 : from === 'top' ? Math.max(...ys) + 2 : HEIGHT - Math.min(...ys) + 2);
-    const dir = from === 'right' ? DIRS.left : from === 'left' ? DIRS.right : from === 'top' ? DIRS.down : DIRS.up;
-    plan = {N: frames(D, PC(cue, 'frames', 8)), D, dir};
+    const source = slideSource(cue, L, cue.at ?? L.words.get(i)!.start);
+    const minFrames = PC(cue, 'frames', 8);
+    if ('edge' in source) {
+      const from = source.edge;
+      const D = Math.max(0, from === 'right' ? WIDTH - Math.min(...xs) + 2 : from === 'left' ? Math.max(...xs) + 2 : from === 'top' ? Math.max(...ys) + 2 : HEIGHT - Math.min(...ys) + 2);
+      const dir = from === 'right' ? DIRS.left : from === 'left' ? DIRS.right : from === 'top' ? DIRS.down : DIRS.up;
+      plan = {N: frames(D, minFrames), D, dir};
+    } else {
+      const from = toScreen(cam, source.p);
+      const dx = (q[0].x + q[2].x) / 2 - from.x, dy = (q[0].y + q[2].y) / 2 - from.y;
+      const D = Math.hypot(dx, dy);
+      plan = {N: frames(D, minFrames), D, dir: {x: dx / (D || 1), y: dy / (D || 1)}};
+    }
   } else {
     const dir = DIRS[PC(cue, 'dir', 'up') as string] ?? DIRS.up;
     const proj = q.map((p) => p.x * dir.x + p.y * dir.y);

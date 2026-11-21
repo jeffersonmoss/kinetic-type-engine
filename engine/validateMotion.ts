@@ -103,7 +103,7 @@ export const motionRuleChecks = (board: Board, name: string, L: BoardLayout): Vi
       if (mv) out.push({board: name, rule: 'camera-rest', severity: 'warn', word: i, text: w.text, from: w.sf, detail: `sung during the fast move at frames ${mv.start.toFixed(0)} to ${(mv.start + mv.dur).toFixed(0)}`});
     }
     // slide-early
-    if (cue?.name === 'slideFrom') {
+    if (cue?.name === 'slideFrom' && cue.params?.from && 'edge' in (cue.params.from as object)) {
       const ok0 = (cue.params?.earlyOk as number | undefined) ?? SLIDE_EARLY_OK;
       // KIT 90 (Fable amendment): under transitRules 'energy' a flying word lands on its sung frame or at most 6 before
       const ok = energyRules(board) ? Math.min(ok0, ENERGY_SLIDE_EARLY) : ok0;

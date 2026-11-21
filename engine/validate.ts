@@ -6,6 +6,7 @@
 import {FPS, FORMAT, HANDOFFS, HEIGHT, LINES, WIDTH, WORDS, bannedIn} from './config';
 import {camForBlock, cameraAt, toScreen} from './camera';
 import {groundAt} from './ground';
+import {slideSource} from './emergence/slide';
 import {blockToWorld, layoutBoard} from './layout';
 import {describeAnchor, resolveAnchor} from './letters';
 import {MIN_TRANSITION_FRAMES, rectQuad} from './motion';
@@ -102,6 +103,17 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
   const name = board.id ?? `board@${board.start.toFixed(2)}`;
   const L = layoutBoard(board);
   const out: Violation[] = [];
+  // Check slide sources before the validator evaluates cues or their word states.
+  for (const cue of boardCues(board)) {
+    if (cue.name !== 'slideFrom') continue;
+    try {
+      slideSource(cue, L, cue.at ?? L.words.get(cue.word)?.start ?? board.start);
+    } catch (error) {
+      out.push({board: name, rule: 'emerge-anchor', severity: 'error', word: cue.word,
+        detail: (error as Error).message});
+    }
+  }
+  if (out.length) return {board: name, violations: out, lines: []};
   const agg = new Map<string, Agg>();
   // KIT 90: opt-in transit rules (transitRules.ts); restFrames counts each word's frames read at rest
   const energy = energyRules(board);
@@ -199,6 +211,10 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
       const first = b.words[0]?.i;
       if (!e) { out.push({board: name, rule: 'emerge', severity: 'error', word: first, text: first !== undefined ? WORDS[first].text : undefined, detail: `block ${b.index} declares no emergence (every block comes out of text, a rule, a panel or a path)`}); continue; }
       let ok = true, desc = '';
+      if ('edge' in e.from) {
+        if (first !== undefined) addPlan(L.words.get(first)!.line, `block ${b.index} "${b.words.map((w) => w.text).join(' ')}": SLIDEFROM from frame ${e.from.edge} edge`);
+        continue;
+      }
       try { const r = resolveAnchor(L, e.from, (e.at ?? (first !== undefined ? L.words.get(first)!.sf / FPS : board.start))); desc = describeAnchor(L, e.from); if (r.estimated) out.push({board: name, rule: 'anchor-estimated', severity: 'warn', word: first, detail: `block ${b.index}: ${desc} has no counter in the font table; a central box was guessed`});
         if (e.move === 'nest' && r.w !== undefined && b.w > 0.8 * r.w + 0.5) out.push({board: name, rule: 'nest-width', severity: 'error', word: first, detail: `block ${b.index} is ${b.w.toFixed(0)} px wide, more than 80 percent of the counter it nests in (${r.w.toFixed(0)} px)`});
       } catch (err) { ok = false; out.push({board: name, rule: 'emerge-anchor', severity: 'error', word: first, detail: `block ${b.index} (${e.move}): ${(err as Error).message}`}); }
@@ -654,8 +670,9 @@ export const checkHandoff = (board: Board, name: string, id: HandoffId, side: 's
 export const validateBoards = (boards: Board[], opts?: {step?: number}) => {
   const reports = boards.map((b) => validateBoard(b, opts));
   // the timeline `empty` warning, reported on the board where the empty run starts
-  const layouts = boards.map((b) => layoutBoard(b));
-  for (const e of emptyTimeline(boards, layouts)) {
+  const usable = boards.filter((_, k) =>
+    !reports[k].violations.some((v) => v.rule === 'emerge-anchor' && v.severity === 'error'));
+  for (const e of emptyTimeline(usable, usable.map((b) => layoutBoard(b)))) {
     const k = Math.max(0, boards.findIndex((b) => e.from >= b.start * FPS && e.from < b.end * FPS));
     reports[k]?.violations.push({board: reports[k].board, rule: 'empty', severity: 'warn', from: e.from, to: e.to, frames: e.to - e.from + 1, detail: `${e.to - e.from + 1} frames with no unretired lyric word in frame (more than 12)`});
   }

@@ -245,10 +245,13 @@ export type AnchorRef =
 export type BlockAlign = 'tl' | 'tr' | 'bl' | 'br' | 'ml' | 'mr' | 'tc' | 'bc' | 'centre' | 'baselineL' | 'baselineR';
 /** The fifteen emergence moves of the style bible (rules 54 to 68). */
 export type EmergeMove = 'seam' | 'sprout' | 'nest' | 'door' | 'morph' | 'shove' | 'hinge' | 'fold' | 'stack' | 'shelf' | 'tip' | 'swell' | 'extrude' | 'type' | 'portal' | 'drawer' | 'behind' | 'slideFrom' | 'rise' | 'turn';
-export interface Emergence {
-  move: EmergeMove;
-  /** The text (or rule, or Line) it comes out of. Required (rule 181.5). */
-  from: AnchorRef;
+export type FrameEdge = 'left' | 'right' | 'top' | 'bottom';
+export type SlideSource = Exclude<AnchorRef, {point: Pt}> | {edge: FrameEdge} | {point: Pt; angle?: number; reason: string};
+export type Emergence = EmergenceOptions & (
+  | {move: 'slideFrom'; from: SlideSource}
+  | {move: Exclude<EmergeMove, 'slideFrom'>; from: AnchorRef}
+);
+interface EmergenceOptions {
   /** Song seconds when the move starts; default: so that it ends on the block's first sung frame (or at `showFrom`). */
   at?: number;
   /** Move parameters; see KIT.md. */

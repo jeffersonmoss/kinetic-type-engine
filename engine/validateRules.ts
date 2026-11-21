@@ -326,6 +326,7 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
     const first = b.words[0];
     const base = {board: name, rule: 'anchor-hidden', severity: 'error' as const, word: first?.i, text: first?.text, line: first?.line};
     let p: Pt | null = null;
+    if ('edge' in e.from) return;
     try { p = resolveAnchor(L, e.from, at / FPS).p; } catch { return; }
     const cam = camForBlock(board, k, at);
     const s = toScreen(cam, p);

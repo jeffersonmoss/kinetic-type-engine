@@ -1,8 +1,9 @@
+import {slideFrom} from '../../engine/authoring';
 import {configureEngine, FPS} from '../../engine/config';
 import {validateBoard} from '../../engine/validate';
 import {extendVerb, getVerb, registerVerb} from '../../engine/verbRegistry';
 import {wordStateAt} from '../../engine/wordState';
-import type {Board} from '../../engine/types';
+import type {Board, Emergence} from '../../engine/types';
 import {pureTypeBoard, pureTypeConfig} from './pure-type';
 
 export function checkFrameCore() {
@@ -69,4 +70,23 @@ export function checkFrameCore() {
     }
   }
   console.log(`126.5 0.5 accepted on frames ${start}–${end}; 0.45 rejected at ${start}, ${end - 1}, and ${end}, accepted outside.`);
+
+  const withSlide = (emerge: Emergence): Board => ({
+    ...pureTypeBoard, blocks: [{...pureTypeBoard.blocks[0], emerge}],
+  });
+  const invalidSlide = (from: unknown) => validateBoard(withSlide({move: 'slideFrom', from} as Emergence))
+    .violations.find((v) => v.rule === 'emerge-anchor' && v.severity === 'error');
+  if (!invalidSlide(undefined) || !invalidSlide({point: {x: 12, y: 34}})?.detail.includes('reason')
+    || !invalidSlide({point: {x: 12, y: 34}, reason: ' '}) || !invalidSlide({rule: 'missing'})) {
+    throw new Error('slideFrom accepted a missing anchor, an unexplained point, or an unknown rule');
+  }
+  const edge = slideFrom({from: 'bottom'});
+  const anchored = slideFrom({from: {point: {x: 60, y: 200}, reason: 'exercise a point launch'}});
+  const fromEdge = wordStateAt(withSlide(edge), 0, 4);
+  const fromPoint = wordStateAt(withSlide(anchored), 0, 4);
+  if (!(fromEdge.dy > 0 && fromPoint.dx < 0 && fromPoint.dy < 0)
+    || validateBoard(withSlide(anchored)).violations.some((v) => v.rule === 'emerge-anchor')) {
+    throw new Error('slideFrom did not travel from its declared edge or documented point');
+  }
+  console.log('126.6 slideFrom used its edge and documented point; missing, unknown, and unexplained sources rejected.');
 }
