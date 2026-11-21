@@ -3,11 +3,11 @@ import {mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, s
 import {homedir, tmpdir} from 'node:os';
 import {dirname, join, relative, resolve} from 'node:path';
 import {parseArgs} from 'node:util';
-import {formatEarCheckList, importSong, parseCmuDictionary} from '../song/index';
+import {formatEarCheckList, importSong, parseCmuDictionary, seedScansion, timeScansion} from '../song/index';
 import type {BeatAnalysis, EarCheck} from '../song/index';
-import {readAlignment, readConfig, readEarChecks} from './inputs';
+import {readAlignment, readConfig, readEarChecks, readScansion, readScansionTemplate} from './inputs';
 
-export const ingestUsage = 'Usage: kte ingest [film-folder] [--song path] [--alignment path] [--audio path] [--out analysis-folder]';
+export const ingestUsage = 'Usage: kte ingest [film-folder] [--song path] [--alignment path] [--audio path] [--scansion file] [--out analysis-folder]';
 
 function readInput<T>(path: string, parse: (value: unknown) => T) {
   try {
@@ -100,7 +100,7 @@ export function ingest(args: string[], beatWorker: string) {
     args, allowPositionals: true,
     options: {
       song: {type: 'string'}, alignment: {type: 'string'}, audio: {type: 'string'},
-      out: {type: 'string'}, help: {type: 'boolean', short: 'h'},
+      out: {type: 'string'}, scansion: {type: 'string'}, help: {type: 'boolean', short: 'h'},
     },
   });
   if (values.help) {
@@ -124,8 +124,10 @@ export function ingest(args: string[], beatWorker: string) {
       `owner: kte ingest\nshared: no\npurpose: stage song map and cache beat analysis\ncreated by: kte ingest on ${process.platform}\ndate: ${new Date().toISOString()}\nneeded until: this ingest exits\nexpensive to recreate: no\n`);
     const {analysis, dictionary} = audioAnalysis(beatWorker, audio, config.start_bpm ?? 100, scratch);
     const earPath = join(out, 'ear-check.json');
+    const scansionPath = join(out, 'scansion.json');
     // Read the author-owned file after the slow analysis, immediately before publishing.
     const current = optionalFile(earPath);
+    const currentScansion = optionalFile(scansionPath);
     let saved: EarCheck[] = [];
     if (current !== undefined) {
       try {
@@ -134,12 +136,28 @@ export function ingest(args: string[], beatWorker: string) {
         throw new Error(`${earPath}: ${error instanceof Error ? error.message : error}`);
       }
     }
-    const {map, earChecks} = importSong({alignment, config, audio: relative(film, audio), analysis, earChecks: saved,
+    const {map, earChecks, scansion} = importSong({alignment, config, audio: relative(film, audio), analysis, earChecks: saved,
       pronunciations: pronunciations(beatWorker, dictionary)});
+    const template = currentScansion === undefined && values.scansion
+      ? readInput(resolve(values.scansion), readScansionTemplate) : undefined;
+    const parseSaved = (source: string) => {
+      try {return readScansion(JSON.parse(source));}
+      catch (error) {throw new Error(`${scansionPath}: ${(error as Error).message}`);}
+    };
+    const author = currentScansion === undefined
+      ? Array.isArray(template) ? seedScansion(map, scansion, template) : template ?? {}
+      : parseSaved(currentScansion);
+    const combined = {...scansion, ...author};
+    const timed = timeScansion(map, combined);
     const writes = [
-      {name: 'song-map.json', contents: json(map)},
-      {name: 'Ear check list.md', contents: formatEarCheckList(map, earChecks)},
+      {name: 'song-map.json', contents: json(timed)},
+      {name: 'Ear check list.md', contents: formatEarCheckList(timed, earChecks)},
     ];
+    if (currentScansion === undefined || Object.keys(combined).length !== Object.keys(author).length) {
+      writes.unshift({name: 'scansion.json', contents: json(combined)});
+    } else if (values.scansion) {
+      console.log('Using the existing scansion.json. --scansion seeds new author files.');
+    }
     if (current === undefined || earChecks.length !== saved.length) {
       writes.unshift({name: 'ear-check.json', contents: json(earChecks)});
     }
@@ -150,6 +168,7 @@ export function ingest(args: string[], beatWorker: string) {
       throw new Error('Use --out on the same filesystem as the system temporary directory for atomic writes.');
     }
     if (optionalFile(earPath) !== current) throw new Error('ear-check.json changed during ingest. Re-run to use the latest edits.');
+    if (optionalFile(scansionPath) !== currentScansion) throw new Error('scansion.json changed during ingest. Re-run to use the latest edits.');
     for (const {name} of writes) renameSync(join(scratch, name), join(out, name));
     const open = earChecks.filter(entry => entry.status === 'open').length;
     console.log(`${map.lines.length} lines, ${map.tokens.length} tokens, ${analysis.beats.length} beats, ${open} open ear checks`);

@@ -7,7 +7,7 @@ const beatTolerance = 0.04; // seconds, measured against the estimated onset
 export function parseCmuDictionary(source: string): Pronunciations {
   const entries = new Map<string, Stress[]>();
   for (const line of source.split(/\r?\n/u)) {
-    const [word, ...phones] = line.trim().split(/\s+/u);
+    const [word, ...phones] = line.split('#', 1)[0].trim().split(/\s+/u);
     if (!/^[a-z']/iu.test(word) || /\(\d+\)$/u.test(word)) continue;
     const stress = phones.flatMap(phone => /^[A-Z]+[012]$/u.test(phone) ? [Number(phone.at(-1)) as Stress] : []);
     if (stress.length && !entries.has(word.toLowerCase())) entries.set(word.toLowerCase(), stress);
@@ -98,11 +98,29 @@ export function estimateScansion(map: SongMap, dictionary: Pronunciations = new 
   return Object.fromEntries(map.tokens.map(token => [token.id, estimate(token, dictionary)]));
 }
 
+export function seedScansion(map: SongMap, estimates: Scansion, lines: readonly (readonly Stress[])[]): Scansion {
+  if (lines.length !== map.lines.length) throw new Error(`Scansion template needs ${map.lines.length} lines; got ${lines.length}`);
+  return Object.fromEntries(map.lines.flatMap((line, i) => {
+    const pattern = lines[i];
+    const count = line.tokenIds.reduce((sum, id) => sum + estimates[id].syllables.length, 0);
+    if (pattern.length !== count) {
+      throw new Error(`Scansion template ${line.id}: needs ${count} syllables; got ${pattern.length}`);
+    }
+    let j = 0;
+    return line.tokenIds.map(id => [id, {source: 'template', verified: false,
+      syllables: estimates[id].syllables.map(syllable => ({...syllable, sungStress: pattern[j++]}))}]);
+  }));
+}
+
 export function timeScansion(map: SongMap, scansion: Scansion): SongMap {
   const uncertain = new Set<string>();
   const tokens = map.tokens.map(token => {
     const entry = Object.hasOwn(scansion, token.id) ? scansion[token.id] : undefined;
     if (!entry) return token;
+    const letters = (s: string) => s.normalize('NFKC').toUpperCase().replace(/[^\p{L}\p{N}]/gu, '');
+    if (letters(entry.syllables.map(s => s.text).join('')) !== letters(token.text)) {
+      throw new Error(`scansion.json: syllables for ${token.id} must spell "${token.text}"`);
+    }
     const {start_s: start, end_s: end} = token;
     const boundary = (i: number) => i === 0 ? start : i === entry.syllables.length ? end :
       start + (end - start) * (i / entry.syllables.length);
@@ -110,7 +128,7 @@ export function timeScansion(map: SongMap, scansion: Scansion): SongMap {
       const start_s = boundary(i);
       const nearby = map.analysis.beats.filter(({t}) => Math.abs(t - start_s) <= beatTolerance + 1e-9);
       const beat = nearby.length > 0;
-      if (map.analysis.beats.length && beat !== (effectiveStress(syllable) !== 0)) uncertain.add(token.lineId);
+      if (map.analysis.beats.length && beat !== (syllable.stress !== 0)) uncertain.add(token.lineId);
       return {...syllable, start_s, end_s: boundary(i + 1), beat, downbeat: nearby.some(b => b.beat_in_bar === 1)};
     });
     return {...token, syllables};

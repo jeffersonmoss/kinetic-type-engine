@@ -3,8 +3,8 @@ import {join, resolve} from 'node:path';
 import type {CompiledFilm, CompileOptions} from '../compile';
 import type {checkFilm} from '../check';
 import type {Edit, Format} from '../score';
-import type {SongMap} from '../song';
-import {readConfig, readEarChecks} from './inputs';
+import {timeScansion, type SongMap} from '../song';
+import {readConfig, readEarChecks, readScansion} from './inputs';
 import {bundleSource, evaluate, type Runtime} from './runtime';
 
 export interface Manifest {
@@ -34,7 +34,9 @@ export function readFilm(folder: string, format?: string) {
   const score = join(path, 'score', 'index.ts');
   if (!statSync(score, {throwIfNoEntry: false})?.isFile()) throw new Error(`The score is missing: ${score}`);
   const mapPath = join(path, 'analysis', 'song-map.json');
-  const map = readJson<SongMap>(mapPath);
+  const scansionPath = join(path, 'analysis', 'scansion.json');
+  const imported = readJson<SongMap>(mapPath);
+  const map = existsSync(scansionPath) ? timeScansion(imported, readScansion(readJson(scansionPath))) : imported;
   const earPath = join(path, 'analysis', 'ear-check.json');
   const earChecks = existsSync(earPath) ? readEarChecks(readJson(earPath)) : [];
   const config = readConfig(readJson(join(path, 'song.json')));

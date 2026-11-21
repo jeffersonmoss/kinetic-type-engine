@@ -8,7 +8,7 @@ import {ingest} from './ingest';
 import {readAlignment, readConfig} from './inputs';
 import {withScratch, type Runtime} from './runtime';
 
-export const newUsage = 'Usage: kte new "Title" --audio file --alignment file [--song file] [--suno-clip id] [--here folder] [--pointer project-folder]';
+export const newUsage = 'Usage: kte new "Title" --audio file --alignment file [--song file] [--scansion file] [--suno-clip id] [--here folder] [--pointer project-folder]';
 
 function sectionCards(map: SongMap) {
   const first = map.sections.map((section) => map.lines.find(({id}) => id === section.lineIds[0])!.text.toLowerCase());
@@ -31,7 +31,7 @@ function writeNew(path: string, data: string) {
 export async function createFilm(args: string[], runtime: Runtime) {
   const {values, positionals} = parseArgs({args, allowPositionals: true, options: {
     audio: {type: 'string'}, alignment: {type: 'string'}, song: {type: 'string'}, 'suno-clip': {type: 'string'},
-    here: {type: 'string'}, pointer: {type: 'string'}, help: {type: 'boolean', short: 'h'},
+    here: {type: 'string'}, pointer: {type: 'string'}, scansion: {type: 'string'}, help: {type: 'boolean', short: 'h'},
   }});
   if (values.help) {console.log(newUsage); return;}
   const title = positionals[0]?.trim();
@@ -49,16 +49,19 @@ export async function createFilm(args: string[], runtime: Runtime) {
     throw new Error('--suno-clip does not match the alignment audio_id');
   }
   const audioName = `audio/${title}${extname(audio) || '.mp3'}`;
-  const analyses = ['song-map.json', 'ear-check.json', 'Ear check list.md'];
+  const analyses = ['song-map.json', 'ear-check.json', 'scansion.json', 'Ear check list.md'];
   const mapping = join(folder, 'analysis', 'song-map.json');
 
   await withScratch('new', (scratch) => {
     if (!analyses.every((name) => existsSync(join(folder, 'analysis', name)))) {
-      const prior = join(folder, 'analysis', 'ear-check.json');
-      if (existsSync(prior)) copyNew(prior, join(scratch, 'ear-check.json'));
+      for (const name of ['ear-check.json', 'scansion.json']) {
+        const prior = join(folder, 'analysis', name);
+        if (existsSync(prior)) copyNew(prior, join(scratch, name));
+      }
       const stagedSong = join(scratch, 'song.json');
       writeFileSync(stagedSong, json({...config, audio: audioName}));
-      ingest([folder, '--song', stagedSong, '--audio', audio, '--alignment', alignment, '--out', scratch], runtime.beatWorker);
+      const template = values.scansion ? ['--scansion', values.scansion] : [];
+      ingest([folder, '--song', stagedSong, '--audio', audio, '--alignment', alignment, '--out', scratch, ...template], runtime.beatWorker);
     }
     const map = readJson<SongMap>(existsSync(mapping) ? mapping : join(scratch, 'song-map.json'));
     const cards = sectionCards(map);
