@@ -10,8 +10,8 @@ import * as esbuild from 'esbuild';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const baseline = new URL('../fixtures/golden/sha256.json', import.meta.url);
 const args = process.argv.slice(2);
-assert(args.length <= 1 && args.every((arg) => ['--update', '--self-test', '--print'].includes(arg)),
-  'usage: node check/golden.mjs [--update | --self-test | --print]');
+assert(args.length <= 1 && args.every((arg) => ['--update', '--self-test', '--print', '--frame-core'].includes(arg)),
+  'usage: node check/golden.mjs [--update | --self-test | --print | --frame-core]');
 
 const tmp = mkdtempSync(join(tmpdir(), 'kte-build-golden-'));
 const cleanup = () => rmSync(tmp, {recursive: true, force: true});
@@ -36,6 +36,7 @@ try {
         import {BOARDS} from './example/boards';
         import {configureEngine, FPS} from './engine/config';
         import {TypeStage} from './engine/TypeStage';
+        export {checkFrameCore} from './fixtures/golden/frame-core';
         import {pureTypeBoard, pureTypeConfig} from './fixtures/golden/pure-type';
 
         const sample = (board, boards, fixture) => {
@@ -61,8 +62,17 @@ try {
     },
     bundle: true, platform: 'node', format: 'cjs', jsx: 'automatic', outfile: bundle,
   });
-  const {renderSamples} = createRequire(import.meta.url)(bundle);
-  const samples = renderSamples();
+  const {renderSamples, checkFrameCore} = createRequire(import.meta.url)(bundle);
+  if (args.includes('--frame-core')) checkFrameCore();
+  else checkGoldens(renderSamples());
+} finally {
+  cleanup();
+  esbuild.stop();
+  process.off('SIGINT', interrupt);
+  process.off('SIGTERM', interrupt);
+}
+
+function checkGoldens(samples) {
   const sha256 = (markup) => createHash('sha256').update(markup).digest('hex');
   const frames = samples.map(({fixture, board, frame, markup}) => {
     assert(markup.startsWith('<svg'), `${fixture}/${board} frame ${frame} did not render SVG`);
@@ -89,9 +99,4 @@ try {
       console.log(`One colour change altered ${changed[0].board} frame ${changed[0].frame}.`);
     }
   }
-} finally {
-  cleanup();
-  esbuild.stop();
-  process.off('SIGINT', interrupt);
-  process.off('SIGTERM', interrupt);
 }

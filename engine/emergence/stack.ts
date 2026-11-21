@@ -2,8 +2,8 @@
 // block's `stack` layout), leading 8 percent of the cap height. A word lands by a drop of at most 40 px on screen over
 // 6 frames, ending on its sung frame, at full opacity from its first frame (Fable round 2 item 30), with a squash of 6 percent on landing
 // (ruling 194.6). The rig STEPs one row per word (stackSteps in authoring.ts).
-// params: drop (screen px, max 40), from 'above' | 'below' | 'left' | 'right' (block frame; default toward the stack:
-// 'above' when it builds upward, 'below' when downward), frames (6).
+// params: drop (screen px, max 40), dir 'up' | 'down' | 'left' | 'right' (travel in the block frame), frames (6).
+// Without dir, drop from above for an upward stack and from below for a downward stack.
 import {FPS} from '../config';
 import type {BoardLayout, VerbCue} from '../types';
 import {easeInQuad} from '../util';
@@ -12,8 +12,16 @@ import {P, PC, wordsOfCue, zoomOf} from './common';
 
 const dirOf = (cue: VerbCue, L: BoardLayout) => {
   const b = L.blocks[(cue.params?.block as number | undefined) ?? L.words.get(cue.word)!.block];
-  const dflt = b.def.stack?.dir === 'down' ? 'below' : 'above';
-  return PC(cue, 'from', dflt) as 'above' | 'below' | 'left' | 'right';
+  switch (cue.params?.dir) {
+    case 'up': return 'below';
+    case 'down': return 'above';
+    case 'left': return 'right';
+    case 'right': return 'left';
+  }
+  // A direct legacy cue could name its source side in params.from. An emergence puts an anchor there instead.
+  const from = cue.params?.from;
+  if (from === 'above' || from === 'below' || from === 'left' || from === 'right') return from;
+  return b.def.stack?.dir === 'down' ? 'below' : 'above';
 };
 /** params.run (screen px, ruling 198 / Fable item 42b): instead of the 40 px drop, each word drives `run` px into its
  *  row and brakes: it travels at full opacity on a decelerating ease (easeOutQuad, so the peak speed, at the start, is

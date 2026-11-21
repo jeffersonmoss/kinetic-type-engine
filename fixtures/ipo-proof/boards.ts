@@ -431,7 +431,8 @@ const sway: VerbCue = {name: 'custom', word: DRIVE, at: 47.11, allowEarly: true,
 }}};
 add({words: range(10, 12, 12), attach: 'FREE', font: 'anton', cap: 160, width: 466, colour: {[DRIVE]: VERMILION},
   anchor: {to: {block: bCause, corner: 'bl'}, align: 'tl', angle: -90, offset: {x: 0, y: 24}},
-  emerge: {move: 'stack', from: {word: w(10, 11), letter: 0, part: 'foot'}},
+  // Keep DRIVE's entrance from the right clear of the preceding tilted row.
+  emerge: {move: 'stack', from: {word: w(10, 11), letter: 0, part: 'foot'}, params: {dir: 'left'}},
   verb: [sway]});
 // the roll starts on L10's first sung frame (accepted, Fable item 34) and takes 11 frames, landing as HUG retires
 rig.push({t: F(1343), kind: 'roll', frames: 11, to: {rot: 90, zoom: 1, x: C10.x, y: C10.y}, label: 'ROLL to R = 90 (the tape is a road)'});
