@@ -237,10 +237,9 @@ test('Room for One and a re-ingest with author decisions', {skip: !room}, async 
     assert.match(list, /\*\*verified\*\*.*line-4.token-6/);
     console.log('Correction applied; line and token IDs, raw time, and author file bytes persisted.');
 
-    const missing = await run(path.join(scratch, 'missing-python'));
-    assert.equal(missing.analysis.status, 'unavailable');
-    assert.deepEqual(missing.analysis.beats, []);
-    assert.equal(missing.lines[0].start_beat, null);
+    const fallback = await run(path.join(scratch, 'missing-python'));
+    assert.equal(fallback.analysis.status, 'measured');
+    assert.deepEqual(fallback.analysis.beats, map.analysis.beats);
   } finally {
     process.off('SIGINT', interrupt);
     process.off('SIGTERM', terminate);
