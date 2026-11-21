@@ -35,20 +35,24 @@ function wrap(row: BoundRow, cap: number, max: number): BoundRow[] {
 }
 
 function measureBlock(ctx: EngineContext, board: Board, item: BoundBlock,
-  ink: Readonly<Record<Ink, string>>, counter?: Source['counter']): Block {
+  ink: Readonly<Record<Ink, string>>, counter?: Source['counter'], rowWidthLimit?: number): Block {
   const floor = ctx.limits.sungMinCap;
-  const max = counter ? counter.width * 0.8 : ctx.safeBox.width;
+  if (rowWidthLimit !== undefined && (!Number.isFinite(rowWidthLimit) || rowWidthLimit <= 0)) {
+    throw new Error(`${item.id}: rowWidth must be a positive finite width`);
+  }
+  const max = Math.min(counter ? counter.width * 0.8 : ctx.safeBox.width, rowWidthLimit ?? Infinity);
   for (const run of item.runs) {
     if (!FONT_INFO[run.font]) throw new Error(`${item.id}: unknown font "${run.font}"`);
     const missing = [...run.text].find((ch) => !/\s/u.test(ch) && !Object.hasOwn(FONT_INFO[run.font].table, ch));
     if (missing) throw new Error(`${item.id}: font ${run.font} has no measured glyph "${missing}" in "${run.text}"`);
   }
-  const rows = item.auto && !counter ? item.rows.flatMap((row) => wrap(row, ctx.limits.capTiers[row.size], max)) : item.rows;
+  const capFor = (size: BoundRow['size']) => typeof size === 'number' ? size : ctx.limits.capTiers[size];
+  const rows = item.auto && !counter ? item.rows.flatMap((row) => wrap(row, capFor(row.size), max)) : item.rows;
   const def: Block = {words: [item.runs[0].i, item.runs.at(-1)!.i], attach: 'FREE', cap: floor,
     rowGap: 0.04, align: 'left', rows: rows.map(({runs}) => runs.length), style: {}};
   for (const row of rows) {
-    const tier = ctx.limits.capTiers[row.size];
-    if (!tier) throw new Error(`${item.id}: unknown size tier "${row.size}"`);
+    const tier = capFor(row.size);
+    if (!Number.isFinite(tier) || tier < floor) throw new Error(`${item.id}: unknown size tier "${row.size}"`);
     const required = rowWidth(row.runs, floor);
     if (required > max + 0.001) {
       const label = counter ? '80% of the measured counter' : `${ctx.format.id} safe width`;
@@ -135,7 +139,7 @@ export function sourceOf(board: Board, from: Landmark, byId: ReadonlyMap<string,
     angle: block.angle, counter};
 }
 
-export function placeBlock(ctx: EngineContext, board: Board, item: BoundBlock, source: Source, ink: Readonly<Record<Ink, string>>): Block {
+export function placeBlock(ctx: EngineContext, board: Board, item: BoundBlock, source: Source, ink: Readonly<Record<Ink, string>>, rowWidthLimit?: number): Block {
   const entrance = item.card.enter;
   const transformOverlay = isPair(entrance) && ['matchCut', 'slotRoll'].includes(entrance.name);
   const place = item.card.place ?? (transformOverlay ? 'overlay' : 'below');
@@ -143,7 +147,7 @@ export function placeBlock(ctx: EngineContext, board: Board, item: BoundBlock, s
   if (!['below', 'above', 'right', 'left', 'inside', 'overlay', 'turnCW', 'turnCCW'].includes(place)) {
     throw new Error(`${item.id}: unknown placement "${place}"`);
   }
-  const block = measureBlock(ctx, board, item, ink, place === 'inside' ? source.counter : undefined);
+  const block = measureBlock(ctx, board, item, ink, place === 'inside' ? source.counter : undefined, rowWidthLimit);
   const shape = layoutBlock(block, board.blocks.length, board);
   const b = source.box;
   const gap = ctx.limits.sungMinCap * 0.16;

@@ -182,7 +182,7 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly 
     seenScenes.add(entry.id);
     if (entry.kind === 'raw') continue;
     if (entry.kind !== 'scene' || !entry.lines?.length) fail(entry.id, 'scene needs at least one line');
-    const resolved = {...entry, exit: entry.exit ?? (index < film.scenes.length - 1 ? fallback(entry.id, 'exit', fade()) : undefined)};
+    const resolved = {...entry, exit: entry.exit ?? (index < film.scenes.length - 1 && !entry.stage ? fallback(entry.id, 'exit', fade()) : undefined)};
     const bound: BoundLine[] = [];
     for (const [n, item] of entry.lines.entries()) {
       const id = item.id;
@@ -207,7 +207,7 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly 
         if (previous?.lead.start !== undefined && start <= previous.lead.start) fail(id, 'interlude starts must advance in scene order');
         if (!previous && card.old) fail(id, 'a scene opener cannot declare old');
         if (previous && from.kind === 'opening') fail(id, 'opening() requires a scene opener');
-        if (previous && !card.old && !(isPair(enter) && enter.def.dismissesOld)) card.old = fallback(id, 'old', clear(fade()));
+        if (previous && !entry.stage && !card.old && !(isPair(enter) && enter.def.dismissesOld)) card.old = fallback(id, 'old', clear(fade()));
         const lead = block(id, {...card, from, enter}, [], false, undefined, start)!;
         lead.camera = card.camera;
         bound.push({id, card, lead, blocks: [lead]});
@@ -237,7 +237,7 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly 
         sceneOpener ? opening() : row(previous!.lead.id, -1)));
       const enter = card.enter ?? fallback(id, 'enter', sceneOpener ? cascade(typeOn(), {by: 'word', clock: 'sung'}) : draftRise());
       if (sceneOpener && card.old) fail(id, 'a scene opener cannot declare old');
-      if (!sceneOpener && !card.old && !(isPair(enter) && enter.def.dismissesOld)) card.old = fallback(id, 'old', clear(fade()));
+      if (!sceneOpener && !entry.stage && !card.old && !(isPair(enter) && enter.def.dismissesOld)) card.old = fallback(id, 'old', clear(fade()));
       if (!sceneOpener && from.kind === 'opening') fail(id, 'opening() requires a scene opener');
       const parts = card.parts ?? [];
       if (!Array.isArray(parts) || parts.length > 2 || [...parts].some((part) => !part)) fail(id, 'expected at most two ordered lead parts');

@@ -8,7 +8,7 @@ import {FPS, HEIGHT, PALETTE, WIDTH} from './config';
 import {cameraAt, cameraTransform} from './camera';
 import {SPEED_CAP} from './motion';
 import type {Board, GroundWipe, Pt} from './types';
-import {clamp, easeInOutSine} from './util';
+import {clamp, easeInOutSine, mixHex} from './util';
 
 /** Height of the flame tongues (screen px). */
 export const FLAME_TONGUE = 90;
@@ -41,6 +41,8 @@ export const groundAt = (board: Board, t: number): GroundState => {
     if (t >= wipeFullAt(board, w)) { full = w.colour; partial = []; continue; }
     partial.push({w, p: easeInOutSine(((t - w.t0) * FPS) / wipeFrames(board, w))});
   }
+  const fade = board.fadeToBlack;
+  if (fade && t >= fade.from) full = mixHex(full, '#000000', clamp((t - fade.from) / (fade.to - fade.from)));
   return {full, partial};
 };
 

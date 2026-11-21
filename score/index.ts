@@ -1,8 +1,8 @@
 import type {CameraCall, LegacyCall, PairCall, UnitCall} from '../effects';
 import type {EngineContext} from '../context';
-import type {Board, LetterPart, RuleDef} from '../engine/types';
+import type {Board, BoardLayout, LetterPart, RuleDef} from '../engine/types';
 
-export type Size = 'hero' | 'body' | 'second';
+export type Size = 'hero' | 'body' | 'second' | number;
 export type Placement = 'below' | 'above' | 'right' | 'left' | 'inside' | 'overlay' | 'turnCW' | 'turnCCW';
 export type Landmark =
   | {kind: 'word'; line: string; text: string; nth?: number}
@@ -76,9 +76,25 @@ export interface Interlude {kind: 'interlude'; id: string; start: InterludeStart
 /** Start the echo entrance on a song-clock second or a zero-based beat index from the song map. */
 export const interlude = (id: string, timing: {start: InterludeStart}, card: InterludeCard): Interlude =>
   ({kind: 'interlude', id, start: timing.start, card});
+export interface StageBlock {
+  readonly id: string;
+  readonly index: number;
+  readonly start?: number;
+  readonly words: readonly {index: number; onset: number; end: number; sung: boolean}[];
+}
+export interface StagePlan {
+  /** First frame of a staged retirement. Omit a word to leave it under its entrance or transform. */
+  retire?: ReadonlyMap<number, {start: number; frames: number}>;
+}
+export type Stage = (board: Board, layout: BoardLayout, blocks: readonly StageBlock[], context: EngineContext) => StagePlan | void;
+
 export interface Scene {
   kind: 'scene'; id: string; ground?: string; lines: readonly (Line | Interlude)[];
   exit?: Exit; rules?: readonly RuleDef[];
+  /** Upper bound on a row's measured width in logical pixels. */
+  rowWidth?: number;
+  /** Explicit layout, rig and retirement for choreography beyond the automatic scene staging. */
+  stage?: Stage;
 }
 export const scene = (id: string, card: Omit<Scene, 'kind' | 'id'>): Scene => ({kind: 'scene', id, ...card});
 export interface Raw {kind: 'raw'; id: string; build: (ctx: EngineContext) => Board[]}

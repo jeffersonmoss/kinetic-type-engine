@@ -7,6 +7,8 @@ import {lowerFates} from './fates';
 import {placeBlock, sourceOf, type Located} from './place';
 import {checkSource, inspect, readBoard} from './read';
 import {editClock, mapVocal, type EditRange, type SongMap} from '../song';
+import {layoutBoard} from '../engine/layout';
+import {fade, lowerUnit} from '../effects';
 import type {Board} from '../engine/types';
 import type {Film, Format, Ink} from '../score';
 import type {CompiledFilm, LineIndex, TokenReading, Transition} from './types';
@@ -98,14 +100,27 @@ export function compileScore(base: EngineContext, film: Film, song: SongMap, opt
           if (source.origin?.board === board && work.blocks.length === 0) throw new Error(`${item.id}: opener cannot reference its own scene`);
           if (item.card.from.kind === 'free') diagnostics.push({severity: 'warn', code: 'free-placement', line: item.id, message: item.card.from.reason});
           const index = board.blocks.length;
-          board.blocks.push(placeBlock(ctx, board, item, source, ink));
+          board.blocks.push(placeBlock(ctx, board, item, source, ink, scene.rowWidth));
           const block: BlockWork = {board, index, item, source, scene: work, authored, start: 0, landing: 0, release: 0,
             targets: [], landingByWord: new Map()};
           work.blocks.push(block);
           byId.set(item.id, block);
         }
       }
-      setCamera(ctx, work, draft);
+      const stage = scenes[i].scene.stage;
+      const stagePlan = stage?.(board, layoutBoard({...board}), work.blocks.map(({item, index}) => ({
+        id: item.id, index, start: item.start,
+        words: item.runs.map(({i, vocal}) => ({index: i, onset: vocal?.onset ?? item.start!,
+          end: vocal?.end ?? item.start!, sung: !!vocal})),
+      })), ctx);
+      if (!stage) setCamera(ctx, work, draft);
+      if (board.scaleStyle === 'lockup') {
+        const firstOnset = new Map(work.lines.filter(({lead}) => lead.start === undefined).map((line) => [
+          line.id, Math.min(...line.lead.runs.flatMap(({vocal}) => vocal ? [vocal.onset] : [])),
+        ]));
+        board.scoreStyleGroups = Object.fromEntries(work.blocks.filter(({item}) => item.start === undefined)
+          .map(({index, authored}) => [index, firstOnset.get(authored.id)!]));
+      }
       for (const block of work.blocks) {
         if (block.item.start !== undefined && block.item.start >= end) {
           throw new Error(`${block.item.id}: interlude start frame ${block.item.start} is outside scene ${scene.id}`);
@@ -116,6 +131,17 @@ export function compileScore(base: EngineContext, film: Film, song: SongMap, opt
           edge: item.card.from.kind === 'edge', handoff: isPair(item.card.enter), interlude: item.start !== undefined});
       }
       for (const authored of lines) lowerAccents(ctx, work, authored, diagnostics, accents);
+      for (const [word, {start, frames}] of stagePlan?.retire ?? []) {
+        const block = board.blocks.find(({words: [lo, hi]}) => word >= lo && word <= hi);
+        if (!block || !Number.isInteger(start) || !Number.isInteger(frames) || frames < 0) {
+          throw new Error(`${board.id}: invalid staged retirement for word ${word}`);
+        }
+        const name = `staged retirement · ${word}`;
+        const at = start / ctx.fps;
+        (block.verb ??= []).push({name, word, at});
+        work.entries.push([name, frames === 0 ? {removesAt: () => at, modify: () => ({hidden: true})}
+          : lowerUnit(fade(), ctx, {schedule: [{word, span: {start, end: start + frames}}]})]);
+      }
       finalizeEffects(work);
       if (i) transitions.push({line: work.blocks[0].item.id, board: scene.id, start, landing: start, release: start,
         cut: true, handoff: works[i - 1].board.screenHandoffOut?.frame === start});

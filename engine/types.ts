@@ -491,6 +491,12 @@ export interface Board {
   /** Absolute song seconds when the board's exit begins. */
   end: number;
   bg: string;
+  /** Ground-only fade. Score staging times the type's retirement independently. */
+  fadeToBlack?: {from: number; to: number};
+  /** Alternative measured giant rest for frame-filling score lockups. */
+  scaleStyle?: 'lockup';
+  /** Blocks belonging to the same sung line share a style group. Echoes have no group. */
+  scoreStyleGroups?: Readonly<Partial<Record<number, number>>>;
   blocks: Block[];
   /** Protected reading bounds by word index. Split runs use the same bounds for their sung token. */
   readingIntervals?: Readonly<Partial<Record<number, ReadingInterval>>>;

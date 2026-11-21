@@ -199,7 +199,16 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
   };
   const inMove = (f: number) => moves.some((m) => f >= m.start && f < m.start + m.dur);
   const giantAt = new Map<number, number>(); // line -> frames at rest with a giant word in frame
-  const lineOfFrame = (f: number) => { let l = -1; for (const i of L.order) if (L.words.get(i)!.sf <= f) l = L.words.get(i)!.line; return l; };
+  const group = (w: WordGeom) => board.scoreStyleGroups ? board.scoreStyleGroups[w.block] ?? -1 : w.line;
+  const styleWords = new Map<number, number[]>();
+  for (const i of L.order) {
+    const l = group(L.words.get(i)!);
+    if (l < 0) continue;
+    const words = styleWords.get(l) ?? [];
+    words.push(i);
+    styleWords.set(l, words);
+  }
+  const lineOfFrame = (f: number) => { let l = -1; for (const i of L.order) if (L.words.get(i)!.sf <= f) l = group(L.words.get(i)!); return l; };
   for (let f = startF; f <= endF; f += step) {
     const shown = L.order.map((i) => ({i, w: L.words.get(i)!, m: st(i, f)})).filter((x) => inkVis(x.m));
     const inks = new Map<number, Pt[]>();
@@ -246,7 +255,21 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
     if (inMove(f) && !shown.some((x) => x.m.opacity > 0.3 && onScreen(inks.get(x.i)!)) && !typeGraphicInFrame(f))
       note('empty', {board: name, rule: 'empty-frame', severity: 'error', detail: 'a frame of a rig move has no type in it (bare ground)'}, f, 1);
     // giant-level rests (rule 49): at rest (not in a transit), a word in frame at the format's giant cap and span (with a vertical span for quarter stances)
-    if (!inTransit(f)) {
+    if (!inTransit(f) && board.scaleStyle === 'lockup') {
+      const bright = shown.filter(({i, w, m}) => m.opacity >= 0.8 && group(w) >= 0 && onScreen(inks.get(i)!));
+      for (const l of new Set(bright.map(({w}) => group(w)))) {
+        const own = bright.filter(({w}) => group(w) === l);
+        const wide = own.flatMap(({i}) => inks.get(i)!);
+        const width = Math.max(...wide.map(({x}) => x)) - Math.min(...wide.map(({x}) => x));
+        const height = Math.max(...wide.map(({y}) => y)) - Math.min(...wide.map(({y}) => y));
+        const hero = own.some(({w, m}) => {
+          const row = L.blocks[w.block].rows[w.row];
+          const cap = w.h * Math.abs(m.sy) * camForBlock(board, w.block, f).zoom;
+          return cap >= HEIGHT * (row.words.length === 1 ? 0.30 : 0.22) - 0.5;
+        });
+        if (hero || width >= WIDTH * 0.75 || height >= HEIGHT * 0.65) giantAt.set(l, (giantAt.get(l) ?? 0) + step);
+      }
+    } else if (!inTransit(f)) {
       const l = lineOfFrame(f);
       if (l >= 0) for (const x of shown) {
         if (x.m.opacity < 0.3) continue;
@@ -259,11 +282,11 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
       }
     }
   }
-  const lines = [...new Set(L.order.map((i) => L.words.get(i)!.line))].sort((a, b) => a - b);
+  const lines = [...styleWords.keys()].sort((a, b) => a - b);
   for (const l of lines) c.addPlan(l, (giantAt.get(l) ?? 0) >= 10 ? `scale: rests at the giant level for ${giantAt.get(l)} frames` : 'scale: no rest at the giant level');
   for (let k = 1; k < lines.length; k++) {
     if ((giantAt.get(lines[k - 1]) ?? 0) < 10 && (giantAt.get(lines[k]) ?? 0) < 10)
-      out.push({board: name, rule: 'two-scales', severity: 'error', line: lines[k], detail: `lines L${lines[k - 1]} and L${lines[k]} both lack a rest of at least 10 frames with a word at the giant level (cap ${LIMITS.giantCap} px or more spanning ${LIMITS.giantSpan} px; rule 49)`});
+      out.push({board: name, rule: 'two-scales', severity: 'error', line: lines[k], detail: board.scaleStyle === 'lockup' ? 'adjacent sung lines both lack a ten-frame hero or frame-filling lockup' : `lines L${lines[k - 1]} and L${lines[k]} both lack a rest of at least 10 frames with a word at the giant level (cap ${LIMITS.giantCap} px or more spanning ${LIMITS.giantSpan} px; rule 49)`});
   }
 
   // ---------------------------------------------------------------- arrivals (Fable item 39: no word arrives by opacity)
@@ -364,7 +387,7 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
   });
 
   // ---------------------------------------------------------------- variety (rule 48)
-  const lineFirst = (l: number) => Math.min(...L.order.filter((i) => L.words.get(i)!.line === l).map((i) => L.words.get(i)!.sf));
+  const lineFirst = (l: number) => Math.min(...styleWords.get(l)!.map((i) => L.words.get(i)!.sf));
   const restR = (l: number) => {
     let f = lineFirst(l);
     for (const tr of transits) if (f >= tr.start && f < tr.end) f = tr.end;
@@ -490,10 +513,11 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
     const angOf = (i: number, f: number) => { const w = L.words.get(i)!; return Math.abs(normDeg(L.blocks[w.block].angle + st(i, f).rot + camForBlock(board, w.block, f).rot)); };
     const flat = new Map<number, boolean>();
     for (const l of lines) {
-      const ws = L.order.filter((i) => L.words.get(i)!.line === l);
+      const ws = styleWords.get(l)!;
       const f0 = Math.min(...ws.map((i) => L.words.get(i)!.sf));
       const lw = LINES[l]?.words ?? [];
-      const f1 = Math.min(endF, lw.length ? Math.round(WORDS[lw[lw.length - 1]].end_s * FPS) : f0);
+      const f1 = Math.min(endF, board.scoreStyleGroups ? Math.round(Math.max(...ws.map((i) => L.words.get(i)!.end)) * FPS)
+        : lw.length ? Math.round(WORDS[lw[lw.length - 1]].end_s * FPS) : f0);
       let rest = 0, level = 0;
       for (let f = f0; f <= f1; f += step) {
         if (inTransit(f)) continue;
