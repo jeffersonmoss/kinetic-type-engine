@@ -1,0 +1,46 @@
+[
+  {
+    "id": "line-34.token-1.glued-chant",
+    "tokenId": "line-34.token-1",
+    "issue": "glued-chant",
+    "status": "open",
+    "start": 118.5,
+    "end": 118.8,
+    "by": null,
+    "date": null,
+    "evidence": "Legacy onset-peak estimate from Song map summary.md and the corrected alignment. Confirm against the audio."
+  },
+  {
+    "id": "line-34.token-2.glued-chant",
+    "tokenId": "line-34.token-2",
+    "issue": "glued-chant",
+    "status": "open",
+    "start": 118.82,
+    "end": 119.1,
+    "by": null,
+    "date": null,
+    "evidence": "Legacy onset-peak estimate from Song map summary.md and the corrected alignment. Confirm against the audio."
+  },
+  {
+    "id": "line-34.token-3.glued-chant",
+    "tokenId": "line-34.token-3",
+    "issue": "glued-chant",
+    "status": "open",
+    "start": 119.12,
+    "end": 119.45,
+    "by": null,
+    "date": null,
+    "evidence": "Legacy onset-peak estimate from Song map summary.md and the corrected alignment. Confirm against the audio."
+  },
+  {
+    "id": "line-39.token-1.legacy-onset-estimate",
+    "tokenId": "line-39.token-1",
+    "issue": "legacy-onset-estimate",
+    "status": "open",
+    "start": 154.865,
+    "end": 155.265,
+    "by": null,
+    "date": null,
+    "evidence": "Legacy proposal from song.json and Song map summary.md. The penultimate fragment starts at 154.865 s. Listen for a possible earlier shout before changing the onset."
+  }
+]

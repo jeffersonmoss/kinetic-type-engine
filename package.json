@@ -5,6 +5,8 @@
   "description": "Kinetic typography engine for Remotion lyric videos: camera rig, emergence moves, word life, panels, rules, smear and a frame-by-frame validator.",
   "scripts": {
     "check": "tsc --noEmit",
+    "check:song-import": "tsc --ignoreConfig --noEmit --strict --skipLibCheck --module esnext --moduleResolution bundler --target es2022 --types node cli/main.ts",
+    "test:song-import": "node --test fixtures/song-import/import.test.mjs",
     "validate": "node tools/validate-boards.mjs",
     "validate:example": "node tools/validate-boards.mjs example/boards.ts",
     "validate:fixture": "node tools/validate-boards.mjs fixtures/ipo-proof/boards.ts",
