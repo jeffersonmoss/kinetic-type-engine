@@ -53,7 +53,7 @@ function planRun(out: BlockView, inc: BlockView, keep: string, pin: Pin, release
   };
   const flap = (g: Glyph, u: number, sign: number): LetterMod => {
     const angle = Math.PI / 2 * (1 - easeSine(u));
-    return letter({sy: u === 0 ? 0 : Math.cos(angle), dy: sign * g.cap * Math.sin(angle) / 2});
+    return letter({sy: u === 0 ? 0 : Math.cos(angle), dy: sign * g.cap * Math.sin(angle) / 2, opacity: u === 0 ? 0 : 1});
   };
   const poseIn = (u: number, unit: Unit, frame = env.start ?? 0): Pose => {
     const after = release < 1 ? clamp((u - release) / (1 - release)) : Number(u >= release);
@@ -155,7 +155,7 @@ export function lowerPair<P extends object>(call: PairCall<P>, ctx: EngineContex
     replacesEnter: () => [...incoming],
     defaultAt: () => at / ctx.fps,
     holds: () => carryIn ? [] : [...new Set(plan.keptMask.map(({word}) => word))].map((word) => ({word, until: releaseFrame})),
-    inkTransfers: !carryIn && 'motion' in call.params && call.params.motion === 'turn'
+    inkTransfers: !carryIn
       ? plan.keptMask.map((from, index) => ({frame: releaseFrame, from, to: plan.keptTargets[index]})) : undefined,
     removesAt: ({i}) => oldGone.has(i) ? releaseFrame : null,
     modify(c) {

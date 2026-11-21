@@ -1,9 +1,9 @@
 import {spawnSync} from 'node:child_process';
 import {copyFileSync, mkdirSync, statSync, symlinkSync, writeFileSync} from 'node:fs';
-import {extname, join, resolve} from 'node:path';
+import {dirname, extname, join, resolve} from 'node:path';
 import type {CompiledFilm, InspectionFrame} from '../compile';
 import type {Format} from '../score';
-import {inspectionPath, updateVerdicts} from './check';
+import {inspectionPath, priorVerdicts, updateVerdicts} from './check';
 import {compileFolder, prelude, readFilm, readJson, type FilmFolder} from './film';
 import {bundleSource, withScratch, type Runtime} from './runtime';
 
@@ -17,21 +17,25 @@ accent('italic', {weights: ['400'], subsets: ['latin']});
 `;
 
 export function sectionFrames(film: CompiledFilm, section?: string): [number, number] {
-  if (!section) return [0, film.duration - 1];
+  if (!section) return [0, Math.max(0, film.duration - 1)];
   const board = film.boards.find(({id}) => id === section);
   if (!board) throw new Error(`No section "${section}"; choose ${film.boards.map(({id}) => id).join(', ')}`);
-  const start = Math.round(board.start * film.ctx.fps);
-  const end = Math.min(film.duration - 1, Math.max(Math.ceil(board.end * film.ctx.fps) - 1,
-    ...film.readings.filter((reading) => reading.board === section).map((reading) => reading.interval?.end ?? reading.landing)));
+  const start = Math.max(0, Math.min(film.duration - 1, Math.round(board.start * film.ctx.fps)));
+  const end = Math.max(start, Math.min(film.duration - 1, Math.max(Math.ceil(board.end * film.ctx.fps) - 1,
+    ...film.readings.filter((reading) => reading.board === section).map((reading) => reading.interval?.end ?? reading.landing))));
   return [start, end];
 }
 
-export async function prepareHost(runtime: Runtime, folder: FilmFolder, scratch: string) {
-  if (!statSync(folder.audio, {throwIfNoEntry: false})?.isFile()) throw new Error(`Audio is missing: ${folder.audio}`);
+export async function prepareHost(runtime: Runtime, folder: FilmFolder, scratch: string, requireAudio = true) {
+  const hasAudio = !!folder.audio && !!statSync(folder.audio, {throwIfNoEntry: false})?.isFile();
+  if (requireAudio && !hasAudio) throw new Error(`Audio is missing: ${folder.audio ?? '(not configured in film.json)'}`);
   const publicDir = join(scratch, 'public');
   mkdirSync(publicDir);
-  const audio = 'Film audio' + (extname(folder.audio) || '.mp3');
-  copyFileSync(folder.audio, join(publicDir, audio));
+  let audio: string | null = null;
+  if (hasAudio && folder.audio) {
+    audio = 'Film audio' + (extname(folder.audio) || '.mp3');
+    copyFileSync(folder.audio, join(publicDir, audio));
+  }
   symlinkSync(join(runtime.root, 'node_modules'), join(scratch, 'node_modules'), 'junction');
   const entry = join(scratch, 'Film host.mjs');
   await bundleSource(`${prelude(folder)}
@@ -46,9 +50,9 @@ async function withBrowser<T>(runtime: Runtime, folder: FilmFolder, action: (set
   browser: Awaited<ReturnType<typeof import('@remotion/renderer').openBrowser>>;
   scratch: string;
   cancelSignal: ReturnType<typeof import('@remotion/renderer').makeCancelSignal>['cancelSignal'];
-}) => Promise<T>) {
+}) => Promise<T>, requireAudio = true) {
   return withScratch('remotion', async (scratch, stop) => {
-    const {entry, publicDir} = await prepareHost(runtime, folder, scratch);
+    const {entry, publicDir} = await prepareHost(runtime, folder, scratch, requireAudio);
     const {bundle} = await import('@remotion/bundler');
     const renderer = await import('@remotion/renderer');
     const serveUrl = await bundle({entryPoint: entry, rootDir: runtime.root, publicDir, outDir: join(scratch, 'Remotion bundle'),
@@ -79,21 +83,33 @@ interface RenderOptions {
 
 export async function renderFilm(folder: string, {mode, format, section, output}: RenderOptions, runtime: Runtime) {
   const draft = mode === 'draft';
-  const input = readFilm(folder, format ?? 'wide');
+  const base = readFilm(folder, format ?? (draft ? undefined : 'wide'));
+  const chosen: Format = base.formats.includes('wide') ? 'wide' : base.formats[0];
+  const input = format ? base : {...base, formats: [chosen]};
   input.options.draft = draft;
-  const [{film}] = await compileFolder(runtime, input);
+  if (!input.audio || !statSync(input.audio, {throwIfNoEntry: false})?.isFile()) {
+    throw new Error(`Audio is missing: ${input.audio ?? '(not configured in film.json)'}`);
+  }
+  const [{film, result}] = await compileFolder(runtime, input, !draft);
   const path = output ? resolve(output) : join(input.path, 'renders', `${section ?? 'Film'} - ${film.format} ${mode}.mp4`);
-  const errors = film.diagnostics.filter(({severity}) => severity === 'error');
+  const diagnostics = [...(result ? result.diagnostics : film.diagnostics)];
+  if (!draft) {
+    for (const {frame, reason} of priorVerdicts(input.path).filter((row) => row.format === film.format && row.verdict === 'fail')) {
+      diagnostics.push({severity: 'error', code: 'inspection-fail', frame, message: reason});
+    }
+  }
+  const errors = diagnostics.filter(({severity}) => severity === 'error');
   if (errors.length) {
     if (!draft) {
       const first = errors[0];
       const where = [first.line, first.token, first.frame === undefined ? undefined : `frame ${first.frame}`].filter(Boolean).join(' / ');
-      throw new Error(`${film.format}: ${errors.length} compiler errors. First: [${first.code}] ${where ? where + ': ' : ''}${first.message}. Run kte check for details.`);
+      throw new Error(`${film.format}: ${errors.length} check errors. First: [${first.code}] ${where ? where + ': ' : ''}${first.message}. Run kte check for details.`);
     }
     console.warn(`${film.format}: ${errors.length} compiler errors across the film. This draft remains available for inspection. Run kte check for details.`);
   }
   const frameRange = draft ? sectionFrames(film, section) : undefined;
   const id = draft ? `${film.format}-draft` : film.format;
+  mkdirSync(dirname(path), {recursive: true});
   await withBrowser(runtime, input, async ({renderer, serveUrl, browser, cancelSignal}) => {
     const composition = await renderer.selectComposition({serveUrl, id, puppeteerInstance: browser, timeoutInMilliseconds: 120_000});
     await renderer.renderMedia({serveUrl, composition, codec: 'h264', audioCodec: 'aac', enforceAudioTrack: true,
@@ -150,5 +166,5 @@ export async function sheet(folder: string, format: string | undefined, runtime:
       updateVerdicts(input.path, film.format, samples);
       console.log(`${samples.length} stills and contact sheet: ${directory}`);
     }
-  });
+  }, false);
 }

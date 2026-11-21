@@ -47,7 +47,9 @@ export async function run([command, ...args]: string[], runtime: Runtime) {
       if (values.final && format !== undefined && format !== 'wide') throw new Error('--final requires the wide format');
       await renderFilm(folder, {mode: values.final ? 'final' : 'draft', format, section, output: str('output')}, runtime);
     } else {
-      const input = readFilm(folder, format ?? 'wide');
+      const base = readFilm(folder, format);
+      const chosen = base.formats.includes('wide') ? 'wide' : base.formats[0];
+      const input = format ? base : {...base, formats: [chosen]};
       const [{film}] = await compileFolder(runtime, input);
       const window = sectionFrames(film, str('section'));
       const frame = window[0] + Math.floor(seconds(positionals[0]) * film.ctx.fps);

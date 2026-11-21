@@ -85,9 +85,10 @@ function keptRefs(view: BlockView, keep: string, source?: Source): GlyphRef[] | 
 
 /** Previously drawn glyph poses must be sampled before outgoing ownership is removed. */
 function carrierView(out: BlockView, source: Located, frame: number, board: Board): BlockView {
-  const shape = layoutBoard(board).blocks[source.index];
+  const layout = layoutBoard(board);
+  const shape = layout.blocks[source.index];
   return {...out, units: out.units.map((unit) => {
-    const g = layoutBoard(board).words.get(unit.word)!;
+    const g = layout.words.get(unit.word)!;
     const state = wordStateAt(board, g.i, frame);
     return {...unit, glyphs: unit.glyphs.map((glyph): Glyph => {
       const l = state.letters?.[glyph.index];
@@ -178,10 +179,11 @@ export function lowerEntrance(ctx: EngineContext, work: BlockWork, previous?: Sc
   const overrides = work.targets.flatMap(({word}) => {
     const cue = staged?.get(word);
     if (!cue) return [];
-    if (!isUnit(enter) || cue.effect.def.kind !== 'enter' || cue.effect.def.source !== 'none' ||
-        !Number.isInteger(cue.start) || !Number.isInteger(cue.frames) || cue.frames < 1) {
-      throw new Error(`${item.id}: invalid staged entrance for word ${word}`);
-    }
+    if (!isUnit(enter)) throw new Error(`${item.id}: staged entrance override for word ${word} requires a unit block entrance (got "${enter.name}")`);
+    if (cue.effect?.def?.kind !== 'enter') throw new Error(`${item.id}: staged entrance for word ${word} requires an enter effect (got "${cue.effect?.name ?? String(cue.effect)}" with kind "${cue.effect?.def?.kind}")`);
+    if (cue.effect.def.source !== 'none') throw new Error(`${item.id}: staged entrance "${cue.effect.name}" for word ${word} requires source "none" (got "${cue.effect.def.source}"); use pushIn, diveIn, or quarterTurnIn`);
+    if (!Number.isSafeInteger(cue.start)) throw new Error(`${item.id}: staged entrance for word ${word} requires an integer start frame (got ${cue.start})`);
+    if (!Number.isSafeInteger(cue.frames) || cue.frames < 1) throw new Error(`${item.id}: staged entrance for word ${word} requires integer frames >= 1 (got ${cue.frames})`);
     return [{word, cue}];
   });
   const echoStart = item.start;

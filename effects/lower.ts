@@ -158,9 +158,12 @@ export function lowerUnit<P extends object>(call: UnitCall<P>, ctx: EngineContex
   const masks = new Map([...(binding.activeGlyphs ?? [])].map(([word, glyphs]) => [word, new Set(glyphs)]));
   const isEntry = call.def.kind === 'enter';
   const isExit = call.def.kind === 'exit';
-  const first = Math.min(...[...schedule.values()].flatMap((spans) => spans.map((span) => span.start)));
-  const end = Math.max(...[...schedule.values()].flatMap((spans) => spans.map((span) => span.end)));
-  if (!Number.isFinite(first) || !Number.isFinite(end)) throw new Error(`${call.name}: missing schedule`);
+  const allSpans = [...schedule.values()].flat();
+  if (!allSpans.length || allSpans.some((span) => !Number.isFinite(span.start) || !Number.isFinite(span.end) || span.end <= span.start)) {
+    throw new Error(`${call.name}: schedule spans must have finite positive length`);
+  }
+  const first = Math.min(...allSpans.map((span) => span.start));
+  const end = Math.max(...allSpans.map((span) => span.end));
   const anchorWord = anchor && 'word' in anchor ? anchor.word : undefined;
   const release = first + (end - first) * (call.def.release ?? 1);
 

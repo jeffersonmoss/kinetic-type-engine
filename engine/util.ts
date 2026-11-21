@@ -70,12 +70,19 @@ export const polysOverlap = (a: Pt[], b: Pt[], inset = 0) => {
   }
   return true;
 };
-/** Mixes two #rrggbb colours (k = 0: a, 1: b). */
+/** Mixes two #rgb or #rrggbb colours (k = 0: a, 1: b). */
 export const mixHex = (a: string, b: string, k: number) => {
-  const h = (c: string) => [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16));
+  if (!Number.isFinite(k)) return a;
+  const h = (c: string) => {
+    const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(c);
+    if (!m) return null;
+    const s = m[1].length === 3 ? m[1][0] + m[1][0] + m[1][1] + m[1][1] + m[1][2] + m[1][2] : m[1];
+    return [0, 2, 4].map((i) => parseInt(s.slice(i, i + 2), 16));
+  };
   const x = h(a), y = h(b);
-  if (x.some(Number.isNaN) || y.some(Number.isNaN)) return a;
-  return '#' + x.map((v, i) => Math.round(v + (y[i] - v) * clamp(k)).toString(16).padStart(2, '0')).join('');
+  if (!x || !y) return a;
+  const u = clamp(k);
+  return '#' + x.map((v, i) => Math.round(v + (y[i] - v) * u).toString(16).padStart(2, '0')).join('');
 };
 
 /** Sutherland-Hodgman: `subject` clipped to the convex polygon `clip` (either winding). */

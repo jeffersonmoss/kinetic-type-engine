@@ -8,7 +8,7 @@ import {readConfig, readEarChecks, readScansion} from './inputs';
 import {bundleSource, evaluate, type Runtime} from './runtime';
 
 export interface Manifest {
-  engine: 'dev'; title: string; sunoClip?: string | null; audio: string;
+  engine: 'dev'; title: string; sunoClip?: string | null; audio?: string | null;
   formats: Format[]; edits: Edit[]; allowShadow?: boolean;
   sections?: Record<string, {songSection: string; score: string}>;
 }
@@ -29,8 +29,10 @@ export function readFilm(folder: string, format?: string) {
   if (new Set(manifest.formats).size !== manifest.formats.length) throw new Error('film.json formats contain duplicates');
   if (format && !manifest.formats.includes(format as Format)) throw new Error(`Film does not enable format "${format}"`);
   if (!Array.isArray(manifest.edits) || !manifest.edits.length) throw new Error('film.json needs a nonempty edit list');
-  if (typeof manifest.audio !== 'string') throw new Error('film.json needs an audio path');
-  const audio = resolve(path, manifest.audio);
+  if (manifest.audio !== undefined && manifest.audio !== null && typeof manifest.audio !== 'string') {
+    throw new Error('film.json audio must be a string path');
+  }
+  const audio = typeof manifest.audio === 'string' && manifest.audio.trim() ? resolve(path, manifest.audio) : undefined;
   const score = join(path, 'score', 'index.ts');
   if (!statSync(score, {throwIfNoEntry: false})?.isFile()) throw new Error(`The score is missing: ${score}`);
   const mapPath = join(path, 'analysis', 'song-map.json');

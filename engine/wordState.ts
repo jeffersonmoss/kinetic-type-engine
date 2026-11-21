@@ -31,7 +31,7 @@ export const boardActive = (board: Board, f: number) => f >= board.start * FPS -
 
 /** The resolved start (seconds) of a verb cue. */
 export const cueAt = (cue: VerbCue, L: BoardLayout, def?: VerbDef) =>
-  cue.at ?? def?.defaultAt?.(cue, L) ?? WORDS[cue.word].start_s + 10 / FPS;
+  cue.at ?? def?.defaultAt?.(cue, L) ?? (WORDS[cue.word]?.start_s ?? L.board.start) + 10 / FPS;
 export const cueAffects = (cue: VerbCue, L: BoardLayout, def?: VerbDef) =>
   (def?.affects?.(cue, L) ?? cue.words ?? [cue.word]).filter((i) => L.words.has(i)).sort((a, b) => a - b);
 /** Does the cue replace word i's normal entrance (VerbDef.replacesEnter: true for all its words, or a list)? */
@@ -285,26 +285,65 @@ function sourceInBlock(L: BoardLayout, block: number, anchor: SlideSource, frame
   return worldToBlock(b, toWorld(cam, point));
 }
 
+interface WordCueEntry {cue: VerbCue; def: VerbDef; at: number; affected: number[]; k: number}
+interface WordCuePlan {replaced: boolean; hasHide: boolean; hideBefore: number; cues: WordCueEntry[]}
+const EMPTY_PLAN: WordCuePlan = {replaced: false, hasHide: false, hideBefore: -Infinity, cues: []};
+const cuePlanMemo = new WeakMap<Board, Map<number, WordCuePlan>>();
+const wordCuePlans = (board: Board, L: BoardLayout): Map<number, WordCuePlan> => {
+  const hit = cuePlanMemo.get(board);
+  if (hit) return hit;
+  const plans = new Map<number, WordCuePlan>();
+  const get = (word: number) => {
+    let p = plans.get(word);
+    if (!p) { p = {replaced: false, hasHide: false, hideBefore: -Infinity, cues: []}; plans.set(word, p); }
+    return p;
+  };
+  for (const cue of boardCues(board)) {
+    const def = verbFor(board, cue.name);
+    if (!def) continue;
+    const affected = def.modify || def.replacesEnter === true ? cueAffects(cue, L, def) : [];
+    let at: number | undefined;
+    const atOf = () => (at ??= cueAt(cue, L, def));
+    const lead = def.lead ?? 0;
+    const holds = def.replacesEnter && def.holds ? new Set(def.holds(cue, L).map((h) => h.word)) : undefined;
+    const rep = def.replacesEnter === true ? affected : typeof def.replacesEnter === 'function' ? def.replacesEnter(cue, L) : [];
+    for (const word of rep) {
+      if (holds?.has(word)) continue;
+      const p = get(word);
+      p.replaced = true;
+      const hb = atOf() * FPS - lead;
+      p.hideBefore = p.hasHide ? Math.min(p.hideBefore, hb) : hb;
+      p.hasHide = true;
+    }
+    if (def.hiddenBefore) {
+      for (const word of def.hiddenBefore(cue, L)) {
+        const p = get(word);
+        const hb = atOf() * FPS - lead;
+        p.hideBefore = p.hasHide ? Math.min(p.hideBefore, hb) : hb;
+        p.hasHide = true;
+      }
+    }
+    if (def.modify) {
+      const cueStart = atOf();
+      for (let k = 0; k < affected.length; k++) {
+        if (k > 0 && affected[k] === affected[k - 1]) continue;
+        get(affected[k]).cues.push({cue, def, at: cueStart, affected, k});
+      }
+    }
+  }
+  cuePlanMemo.set(board, plans);
+  return plans;
+};
+
 /** Full render state of word i on a board at frame f (absolute, fractional allowed). */
 export const wordStateAt = (board: Board, i: number, f: number): WordMod => {
   const L = layoutBoard(board);
   const w = L.words.get(i);
   if (!w) return {...IDENTITY, hidden: true, opacity: 0};
   const n = w.adv.length;
-  const cues = boardCues(board);
-  // a word a verb only holds (a morph's source) keeps its own entrance: only the verbs that bring the word in replace it
-  const replacers = cues.filter((c) => {
-    const def = verbFor(L.board, c.name);
-    return !!def && replacesEnterOf(def, c, L, i) && !(def.holds?.(c, L) ?? []).some((h) => h.word === i);
-  });
-  const replaced = replacers.length > 0;
-  // A word whose entrance a verb replaces stays hidden until that verb's lead window opens (it used to show at full
-  // opacity from the board's start, vanish at the lead window, then enter: a blink).
-  // (a verb may also hide only some of its words before it starts, `hiddenBefore`: SHOVE push hides its new words, not
-  // the old block it pushes)
-  const hiders = cues.filter((c) => !replacers.includes(c) && verbFor(L.board, c.name)?.hiddenBefore?.(c, L).includes(i));
-  const hideBefore = replaced || hiders.length ? Math.min(...[...replacers, ...hiders].map((c) => baseCtx(c, L, 0).at * FPS - (verbFor(L.board, c.name)?.lead ?? 0))) : -Infinity;
-  if (f < hideBefore - (board.effects ? 1e-6 : 0)) return {...IDENTITY, hidden: true, opacity: 0};
+  const plan = wordCuePlans(board, L).get(i) ?? EMPTY_PLAN;
+  const replaced = plan.replaced;
+  if (f < plan.hideBefore - (board.effects ? 1e-6 : 0)) return {...IDENTITY, hidden: true, opacity: 0};
   // K2: a picture word is drawn by its graphic, never as type (its box keeps its place in the row)
   if (w.opts.picture !== undefined) return {...IDENTITY, hidden: true, opacity: 0};
   let m: WordMod = {...IDENTITY};
@@ -322,23 +361,26 @@ export const wordStateAt = (board: Board, i: number, f: number): WordMod => {
   // verbs (collected first so a verb can ask to keep the word alive)
   let v: WordMod = {...IDENTITY};
   let effectKeepsAlive = false;
-  for (const cue of cues) {
-    const def = verbFor(L.board, cue.name);
-    if (!def?.modify) continue;
-    const base = baseCtx(cue, L, f);
-    const k = base.affected.indexOf(i);
-    if (k < 0 || base.df < -(def.lead ?? 0) - (board.effects ? 1e-6 : 0)) continue;
+  if (plan.cues.length) {
     const block = L.blocks[w.block];
-    const down = downIn(block.angle, camForBlock(board, w.block, base.at * FPS).rot);
-    const mod = def.modify({...base, i, k, geom: w, block, down,
-      source: (anchor, frame) => sourceInBlock(L, w.block, anchor, frame),
-      projectTurn: (spec, progress) => {
-        const t = resolveTurn(spec);
-        return turnWordMod(L, i, base.at * FPS + progress * t.frames, 'in', base.at * FPS, t, base.affected);
-      },
-    });
-    if (mod?.keepAlive && Object.hasOwn(board.effects ?? {}, cue.name)) effectKeepsAlive = true;
-    v = composeMod(v, mod, n);
+    const camAt = (x: number) => cameraAt(board, x);
+    const t = f / FPS;
+    for (const entry of plan.cues) {
+      const df = f - entry.at * FPS;
+      if (df < -(entry.def.lead ?? 0) - (board.effects ? 1e-6 : 0)) continue;
+      const down = downIn(block.angle, camForBlock(board, w.block, entry.at * FPS).rot);
+      const mod = entry.def.modify!({
+        cue: entry.cue, at: entry.at, f, t, df, L, affected: entry.affected, camAt,
+        i, k: entry.k, geom: w, block, down,
+        source: (anchor, frame) => sourceInBlock(L, w.block, anchor, frame),
+        projectTurn: (spec, progress) => {
+          const resolved = resolveTurn(spec);
+          return turnWordMod(L, i, entry.at * FPS + progress * resolved.frames, 'in', entry.at * FPS, resolved, entry.affected);
+        },
+      });
+      if (mod?.keepAlive && Object.hasOwn(board.effects ?? {}, entry.cue.name)) effectKeepsAlive = true;
+      v = composeMod(v, mod, n);
+    }
   }
   // retired 6 frames after its line ends, dims to 45 percent over 10 frames, stays on the board; culled far away
   if (!effectKeepsAlive && f >= cullFrame(board, i)) return {...IDENTITY, hidden: true, opacity: 0};

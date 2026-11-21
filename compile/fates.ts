@@ -92,12 +92,15 @@ export function lowerFates(ctx: EngineContext, scene: SceneWork, works: readonly
   }
   if (exit && !('kind' in exit)) {
     if (exit.def.kind !== 'exit') throw new Error(`${board.id}: ${exit.name} is not a scene exit`);
+    const exitStart = Math.round(board.end * ctx.fps);
+    let exitEnd = exitStart + exit.def.duration(exit.params, ctx);
     for (const work of scene.blocks) {
       const name = `${exit.name} · scene exit · ${work.item.id}`;
-      const schedule = scheduleUnit(exit, ctx, work.targets, Math.round(board.end * ctx.fps));
-      attach(board.blocks[work.index], name, lowerUnit(exit, ctx, {schedule}), wordsOf(work), Math.round(board.end * ctx.fps));
+      const schedule = scheduleUnit(exit, ctx, work.targets, exitStart);
+      exitEnd = Math.max(exitEnd, ...spans(schedule).map(({end}) => end));
+      attach(board.blocks[work.index], name, lowerUnit(exit, ctx, {schedule}), wordsOf(work), exitStart);
     }
-    board.scoreExitFrames = exit.def.duration(exit.params, ctx);
+    board.scoreExitFrames = Math.max(0, Math.ceil(exitEnd - exitStart));
   } else if (exit) {
     if (!['cut', 'fall', 'fade', 'leave', 'turn'].includes(exit.name)) throw new Error(`${board.id}: unsupported legacy scene exit ${exit.name}`);
     board.exit = exit.name as Board['exit'];

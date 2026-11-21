@@ -23,7 +23,6 @@ import {SLIDE_EARLY_OK} from './emergence/slide';
 import {ENERGY_SLIDE_EARLY, energyRules} from './transitRules';
 import {rigMoves, TRANSIT_KINDS} from './rig';
 import type {Board, BoardLayout, Pt} from './types';
-import {normDeg} from './util';
 import type {WordMod} from './verbRegistry';
 import {emergeCue, retireFrame, wordStateAt} from './wordState';
 import type {Violation} from './validate';
@@ -37,7 +36,7 @@ export const EMPTY_FRAMES = 12;
 
 /** Allowed lengths of a fast move by its size (Huang amendment A9). */
 export const fastLimits = (from: {x: number; y: number; zoom: number; rot: number}, to: {x: number; y: number; zoom: number; rot: number}) => {
-  const turn = Math.abs(normDeg(to.rot - from.rot));
+  const turn = Math.abs(to.rot - from.rot);
   const ratio = Math.max(to.zoom / from.zoom, from.zoom / to.zoom);
   const c = RIG_CENTRE;
   const q = toScreen(to, toWorld(from, c));

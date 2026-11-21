@@ -102,6 +102,12 @@ export interface Scene {
   exit?: Exit; rules?: readonly RuleDef[];
   /** Upper bound on a row's measured width in logical pixels. */
   rowWidth?: number;
+  /** Motion style for the compiled board (e.g. 'crisp' for exact holds and discrete moves). */
+  motionStyle?: Board['motionStyle'];
+  /** Scale style for the compiled board (e.g. 'lockup' for frame-filling hero lockups). */
+  scaleStyle?: Board['scaleStyle'];
+  /** Timed ground-only fade to black in output seconds. */
+  fadeToBlack?: Board['fadeToBlack'];
   /** Explicit layout, rig and retirement for choreography beyond the automatic scene staging. */
   stage?: Stage;
 }

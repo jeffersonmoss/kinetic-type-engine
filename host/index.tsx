@@ -22,18 +22,18 @@ export function FilmFrame({film, frame, width, height}: {film: CompiledFilm; fra
   </AbsoluteFill>;
 }
 
-function FilmVideo({film, width, height, audio}: {film: CompiledFilm; width: number; height: number; audio: string}) {
+function FilmVideo({film, width, height, audio}: {film: CompiledFilm; width: number; height: number; audio?: string | null}) {
   const frame = useCurrentFrame();
   return <>
     <FilmFrame film={film} frame={frame} width={width} height={height}/>
-    {film.clock.map(({start, output, frames}) => <Sequence key={output} from={output} durationInFrames={frames} layout="none">
+    {audio && film.clock.map(({start, output, frames}) => <Sequence key={output} from={output} durationInFrames={frames} layout="none">
       <Audio src={staticFile(audio)} trimBefore={Math.round(start * film.ctx.fps)} durationInFrames={frames}/>
     </Sequence>)}
   </>;
 }
 
 /** Called by the film-folder entry produced by the CLI. Each requested format compiles once. */
-export function mountFilm(score: Film, map: SongMap, formats: readonly Format[], audio: string, options: CompileOptions) {
+export function mountFilm(score: Film, map: SongMap, formats: readonly Format[], audio: string | null | undefined, options: CompileOptions) {
   const films = formats.map((format) => compileScore(scoreContext(format, score.look), score, map, options));
   const Root = () => <>{films.flatMap((film) => [false, true].map((draft) => {
     const id = compositionId(film.format, draft);

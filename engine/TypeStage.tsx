@@ -60,7 +60,8 @@ const WordView: React.FC<{board: Board; L: BoardLayout; b: BlockGeom; g: WordGeo
   // KIT 89: a 3D turn put its projected box into dx to sy as a stand-in for the validator; the word is drawn through the
   // projection instead (turnBody), so that stand-in is taken back out of the word's own transform here
   const tn = m.turn;
-  const wsx = tn ? m.sx / tn.stand.sx : m.sx, wsy = tn ? m.sy / tn.stand.sy : m.sy;
+  const wsx = tn && tn.stand.sx !== 0 ? m.sx / tn.stand.sx : m.sx;
+  const wsy = tn && tn.stand.sy !== 0 ? m.sy / tn.stand.sy : m.sy;
   const tf = (dx: number, dy: number) => `translate(${cx + dx} ${cy + dy}) rotate(${m.rot})${m.skewY ? ` skewY(${m.skewY})` : ''} scale(${wsx} ${wsy}) translate(${-cx} ${-cy})`;
   const fill = m.tint ?? m.colour ?? colour;
   const fam = FONT_FAMILY[g.font], st = FONT_STYLE[g.font];

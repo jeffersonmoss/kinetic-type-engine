@@ -68,9 +68,12 @@ const cache = new WeakMap<Board, RigCache>();
 const frameBox = (L: BoardLayout, ref: NonNullable<RigTarget['frame']>, t: number): {pts: Pt[]; cap?: number; cover?: number} => {
   const blockPts = (b: BlockGeom) => b.words.flatMap((w) => wordCorners(b, w));
   if ('word' in ref) { const g = L.words.get(ref.word); if (!g) throw new Error(`rig: word ${ref.word} not on board`); return {pts: wordCorners(L.blocks[g.block], g), cap: g.h, cover: Math.min(g.w, g.h) / 2}; }
-  if ('words' in ref) { const gs = ref.words.map((i) => L.words.get(i)!).filter(Boolean); return {pts: gs.flatMap((g) => wordCorners(L.blocks[g.block], g)), cap: gs[0]?.h}; }
-  if ('block' in ref) { const b = L.blocks[ref.block]; return {pts: blockPts(b), cap: b.words[0]?.h}; }
-  if ('blocks' in ref) return {pts: ref.blocks.flatMap((k) => blockPts(L.blocks[k])), cap: L.blocks[ref.blocks[0]]?.words[0]?.h};
+  if ('words' in ref) { const gs = ref.words.map((i) => L.words.get(i)!).filter(Boolean); if (!gs.length) throw new Error('rig: none of the framed words are on this board'); return {pts: gs.flatMap((g) => wordCorners(L.blocks[g.block], g)), cap: gs[0]?.h}; }
+  if ('block' in ref) { const b = L.blocks[ref.block]; if (!b) throw new Error(`rig: block ${ref.block} not on board`); return {pts: blockPts(b), cap: b.words[0]?.h}; }
+  if ('blocks' in ref) {
+    const bs = ref.blocks.map((k) => { const b = L.blocks[k]; if (!b) throw new Error(`rig: block ${k} not on board`); return b; });
+    return {pts: bs.flatMap(blockPts), cap: bs[0]?.words[0]?.h};
+  }
   if ('anchor' in ref) {
     const a = resolveAnchor(L, ref.anchor, t);
     return {pts: a.quad ?? [a.p], cap: a.h, cover: a.w !== undefined && a.h !== undefined ? Math.min(a.w, a.h) / 2 : undefined};
@@ -84,6 +87,7 @@ const fit = (pts: Pt[], r: number, fill: number) => {
   return Math.min((BOX_W * fill) / w, (BOX_H * fill) / h);
 };
 const centreOf = (pts: Pt[]): Pt => {
+  if (!pts.length) return {...RIG_CENTRE};
   const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
   return {x: (Math.min(...xs) + Math.max(...xs)) / 2, y: (Math.min(...ys) + Math.max(...ys)) / 2};
 };
@@ -158,8 +162,10 @@ const resolve = (board: Board): RigCache => {
     let base: CameraState = {...nominal};
     if (k.by !== undefined) {
       if (k.kind === 'roll' || k.kind === 'tilt') base.rot = nominal.rot + k.by;
-      else if (k.kind === 'dive') base.zoom = nominal.zoom * k.by;
-      else if (k.kind === 'soar') base.zoom = nominal.zoom / k.by;
+      else if (k.kind === 'dive' || k.kind === 'soar') {
+        if (!Number.isFinite(k.by) || k.by <= 0) throw new Error(`rig: ${k.kind} requires a positive factor (got ${k.by})`);
+        base.zoom = k.kind === 'dive' ? nominal.zoom * k.by : nominal.zoom / k.by;
+      }
     }
     const {pose, centre} = resolveTarget(L, k.to, base, t);
     let target = pose;

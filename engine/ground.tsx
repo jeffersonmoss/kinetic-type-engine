@@ -42,7 +42,10 @@ export const groundAt = (board: Board, t: number): GroundState => {
     partial.push({w, p: easeInOutSine(((t - w.t0) * FPS) / wipeFrames(board, w))});
   }
   const fade = board.fadeToBlack;
-  if (fade && t >= fade.from) full = mixHex(full, '#000000', clamp((t - fade.from) / (fade.to - fade.from)));
+  if (fade && Number.isFinite(fade.from) && Number.isFinite(fade.to) && t >= fade.from) {
+    const p = fade.to <= fade.from ? 1 : clamp((t - fade.from) / (fade.to - fade.from));
+    full = mixHex(full, '#000000', p);
+  }
   return {full, partial};
 };
 

@@ -88,7 +88,10 @@ export function compileScore(base: EngineContext, film: Film, song: SongMap, opt
       if (end <= start) throw new Error(`${scene.id}: scenes must advance on the output timeline (frames ${start}–${end})`);
       const board: SceneWork['board'] = {id: scene.id, bg: !scene.ground || scene.ground === 'night' ? ctx.look.palette.ground : scene.ground,
         start: start / ctx.fps, end: end / ctx.fps, blocks: [], exit: 'none', rules: scene.rules && [...scene.rules],
-        scoreLife: true, sheetRules: true, transitRules: 'energy', vignette: false};
+        scoreLife: true, sheetRules: true, transitRules: 'energy', vignette: false,
+        ...(scene.motionStyle ? {motionStyle: scene.motionStyle} : {}),
+        ...(scene.scaleStyle ? {scaleStyle: scene.scaleStyle} : {}),
+        ...(scene.fadeToBlack ? {fadeToBlack: {...scene.fadeToBlack}} : {})};
       const work: SceneWork = {board, lines, blocks: [], entries: []};
       works.push(work);
       for (const authored of lines) {
@@ -113,31 +116,42 @@ export function compileScore(base: EngineContext, film: Film, song: SongMap, opt
         words: item.runs.map(({i, vocal}) => ({index: i, onset: vocal?.onset ?? item.start!,
           end: vocal?.end ?? item.start!, sung: !!vocal})),
       })), ctx);
+      if (board.fadeToBlack) {
+        const {from, to} = board.fadeToBlack;
+        if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) {
+          throw new Error(`${board.id}: fadeToBlack requires finite from < to (got from=${from}, to=${to})`);
+        }
+      }
       if (!stage) setCamera(ctx, work, draft);
       if (board.scaleStyle === 'lockup') {
-        const firstOnset = new Map(work.lines.filter(({lead}) => lead.start === undefined).map((line) => [
-          line.id, Math.min(...line.lead.runs.flatMap(({vocal}) => vocal ? [vocal.onset] : [])),
-        ]));
         board.scoreStyleGroups = Object.fromEntries(work.blocks.filter(({item}) => item.start === undefined)
-          .map(({index, authored}) => [index, firstOnset.get(authored.id)!]));
+          .map(({index, authored}) => [index, words[authored.lead.runs[0].i].line]));
       }
+      const consumedEnter = new Set<number>();
       for (const block of work.blocks) {
         if (block.item.start !== undefined && block.item.start >= end) {
           throw new Error(`${block.item.id}: interlude start frame ${block.item.start} is outside scene ${scene.id}`);
         }
         lowerEntrance(ctx, block, works[i - 1], stagePlan?.enter);
+        for (const {word} of block.targets) if (stagePlan?.enter?.has(word)) consumedEnter.add(word);
         const {item} = block;
         transitions.push({line: item.id, board: scene.id, start: block.start, landing: block.landing, release: block.release,
           edge: item.card.from.kind === 'edge', handoff: isPair(item.card.enter), interlude: item.start !== undefined});
       }
+      for (const word of stagePlan?.enter?.keys() ?? []) {
+        if (!consumedEnter.has(word)) {
+          throw new Error(`${board.id}: staged entrance names word ${word}, which is not on this board`);
+        }
+      }
       for (const authored of lines) lowerAccents(ctx, work, authored, diagnostics, accents);
       for (const [word, cues] of stagePlan?.accents ?? []) {
         const block = board.blocks.find(({words: [lo, hi]}) => word >= lo && word <= hi);
-        for (const [i, {start, frames, effect}] of cues.entries()) {
-          if (!block || !Number.isInteger(start) || !Number.isInteger(frames) || frames < 1 || effect.def.kind !== 'accent') {
-            throw new Error(`${board.id}: invalid staged accent for word ${word}`);
-          }
-          const name = `${effect.name} · staged accent · ${word}.${i + 1}`;
+        if (!block) throw new Error(`${board.id}: staged accent names word ${word}, which is not on this board`);
+        for (const [k, {start, frames, effect}] of cues.entries()) {
+          if (!Number.isSafeInteger(start)) throw new Error(`${board.id}: staged accent for word ${word} requires an integer start frame (got ${start})`);
+          if (!Number.isSafeInteger(frames) || frames < 1) throw new Error(`${board.id}: staged accent for word ${word} requires integer frames >= 1 (got ${frames})`);
+          if (effect?.def?.kind !== 'accent') throw new Error(`${board.id}: staged accent for word ${word} requires an accent effect (got ${effect?.name ?? String(effect)} with kind "${effect?.def?.kind}")`);
+          const name = `${effect.name} · staged accent · ${word}.${k + 1}`;
           (block.verb ??= []).push({name, word, at: start / ctx.fps});
           work.entries.push([name, lowerUnit(effect, ctx, {schedule: [{word, span: {start, end: start + frames}}]})]);
           accents.push({frame: start + Math.floor(frames / 2), reason: name});
@@ -145,13 +159,15 @@ export function compileScore(base: EngineContext, film: Film, song: SongMap, opt
       }
       for (const [word, {start, frames, effect}] of stagePlan?.retire ?? []) {
         const block = board.blocks.find(({words: [lo, hi]}) => word >= lo && word <= hi);
-        if (!block || !Number.isInteger(start) || !Number.isInteger(frames) || frames < 0 || (effect && (effect.def.kind !== 'exit' || frames === 0))) {
-          throw new Error(`${board.id}: invalid staged retirement for word ${word}`);
-        }
+        if (!block) throw new Error(`${board.id}: staged retirement names word ${word}, which is not on this board`);
+        if (!Number.isSafeInteger(start)) throw new Error(`${board.id}: staged retirement for word ${word} requires an integer start frame (got ${start})`);
+        if (!Number.isSafeInteger(frames) || frames < 0) throw new Error(`${board.id}: staged retirement for word ${word} requires integer frames >= 0 (got ${frames})`);
+        if (effect && frames === 0) throw new Error(`${board.id}: staged retirement for word ${word} cannot combine frames === 0 with exit effect "${effect.name}"`);
+        if (effect && effect.def?.kind !== 'exit') throw new Error(`${board.id}: staged retirement for word ${word} requires an exit effect (got "${effect.name}" with kind "${effect.def?.kind}")`);
         const name = `staged retirement · ${word}`;
         const at = start / ctx.fps;
         (block.verb ??= []).push({name, word, at});
-        work.entries.push([name, frames === 0 ? {removesAt: () => at, modify: () => ({hidden: true})}
+        work.entries.push([name, frames === 0 ? {early: true, gradual: true, removesAt: () => start, modify: () => ({hidden: true, opacity: 0})}
           : lowerUnit(effect ?? fade(), ctx, {schedule: [{word, span: {start, end: start + frames}}]})]);
       }
       finalizeEffects(work);
