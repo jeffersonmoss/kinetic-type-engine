@@ -82,9 +82,18 @@ export interface StageBlock {
   readonly start?: number;
   readonly words: readonly {index: number; onset: number; end: number; sung: boolean}[];
 }
+export interface StageCue {
+  start: number;
+  frames: number;
+  effect: UnitCall<any>;
+}
 export interface StagePlan {
+  /** Per-word entrance overrides for unit entrances, in absolute frames. */
+  enter?: ReadonlyMap<number, StageCue>;
+  /** Explicit in-place or travelling motion after a word's entrance. */
+  accents?: ReadonlyMap<number, readonly StageCue[]>;
   /** First frame of a staged retirement. Omit a word to leave it under its entrance or transform. */
-  retire?: ReadonlyMap<number, {start: number; frames: number}>;
+  retire?: ReadonlyMap<number, Omit<StageCue, 'effect'> & {effect?: StageCue['effect']}>;
 }
 export type Stage = (board: Board, layout: BoardLayout, blocks: readonly StageBlock[], context: EngineContext) => StagePlan | void;
 

@@ -76,7 +76,7 @@ export const motionRuleChecks = (board: Board, name: string, L: BoardLayout): Vi
   const spans = (board.carry ?? []).flatMap((c): [number, number][] => { try { return [carrySpan(c), carryStillSpan(c)]; } catch { return []; } });
   let run = 0, runStart = startF;
   let prev = cameraAt(board, startF);
-  for (let f = startF + 1; sheet && f <= endF + 1; f++) {
+  for (let f = startF + 1; sheet && board.motionStyle !== 'crisp' && f <= endF + 1; f++) {
     const c = f <= endF ? cameraAt(board, f) : null;
     const still = !!c && Math.abs(c.x - prev.x) * c.zoom < 0.02 && Math.abs(c.y - prev.y) * c.zoom < 0.02 && Math.abs(c.zoom / prev.zoom - 1) < 1e-5 && Math.abs(c.rot - prev.rot) < 1e-3;
     const carried = spans.some(([a, b]) => f >= a && f <= b);
@@ -94,7 +94,7 @@ export const motionRuleChecks = (board: Board, name: string, L: BoardLayout): Vi
     const w = L.words.get(i)!;
     const cue = cues[w.block];
     // entrance-in-move and camera-rest (opt-in)
-    if (sheet) {
+    if (sheet && board.motionStyle !== 'crisp') {
       const lo = Math.max(startF, Math.floor(w.sf - 60));
       let bad = -1;
       for (let f = lo; f < w.sf; f++) { const m = st(i, f); if (!m.hidden && m.opacity > 0.05 && inFast(f)) { bad = f; break; } }
@@ -118,7 +118,7 @@ export const motionRuleChecks = (board: Board, name: string, L: BoardLayout): Vi
   // framing: the sung line's widest row against the safe width
   const safeW = SAFE_BOX.width;
   const lines = [...new Set(L.order.map((i) => L.words.get(i)!.line))];
-  for (const ln of sheet ? lines : []) {
+  for (const ln of sheet && board.motionStyle !== 'crisp' ? lines : []) {
     const ids = L.order.filter((i) => L.words.get(i)!.line === ln);
     const a = Math.max(startF, Math.min(...ids.map((i) => L.words.get(i)!.sf))), z = Math.min(endF, Math.max(...ids.map((i) => retireFrame(board, i))));
     let worst = Infinity, at = a;
@@ -156,7 +156,7 @@ export const motionRuleChecks = (board: Board, name: string, L: BoardLayout): Vi
 
 /** The timeline `empty` warning over a module's boards: more than 12 frames with no unretired lyric word in frame. */
 export const emptyTimeline = (boards: Board[], layouts: BoardLayout[]): {from: number; to: number}[] => {
-  const keep = boards.map((b, k) => k).filter((k) => boards[k].sheetRules);
+  const keep = boards.map((b, k) => k).filter((k) => boards[k].sheetRules && boards[k].motionStyle !== 'crisp');
   layouts = keep.map((k) => layouts[k]);
   boards = keep.map((k) => boards[k]);
   if (!boards.length) return [];

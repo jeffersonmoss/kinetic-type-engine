@@ -1,3 +1,4 @@
+import {crispChecks} from './validateCrisp';
 import {readingSampler} from './reading';
 // validateBoard (rule 181): checks every frame of every word's reading interval. Pure; runs in node through
 // tools/validate-boards.mjs. Words are read from their display frame to their retire frame (retired text is exempt from
@@ -483,7 +484,7 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
     let bright = 0, visible = 0;
     for (const i of L.order) {
       const s = states.get(i)!;
-      if (!s.shown) continue;
+      if (!(board.motionStyle === 'crisp' ? s.vis : s.shown)) continue;
       const c = s.quad.reduce((a, p) => ({x: a.x + p.x / 4, y: a.y + p.y / 4}), {x: 0, y: 0});
       if (c.x < 0 || c.x > WIDTH || c.y < 0 || c.y > HEIGHT) continue;
       visible++;
@@ -601,7 +602,7 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
   if (board.handoff?.start !== undefined) out.push(...checkHandoff(board, name, board.handoff.start, 'start'));
   if (board.handoff?.end !== undefined && board.handoff.end !== 'open') out.push(...checkHandoff(board, name, board.handoff.end, 'end'));
   out.push(...boardRuleChecks(board, {name, L, intervals, step, addPlan}));
-  out.push(...motionRuleChecks(board, name, L));
+  out.push(...motionRuleChecks(board, name, L), ...crispChecks(board, name, L));
   for (const [l, p] of plan) { const st = lineStats.get(l) ?? {line: l, transits: 0, peakBright: 0, peakVisible: 0}; st.plan = p; lineStats.set(l, st); }
   for (const st of lineStats.values()) st.transits = transits.filter((x) => lineAtFrame(x.start) === st.line).length;
   const lines = [...lineStats.values()].sort((a, b) => a.line - b.line);

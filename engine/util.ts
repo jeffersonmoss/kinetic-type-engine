@@ -77,3 +77,31 @@ export const mixHex = (a: string, b: string, k: number) => {
   if (x.some(Number.isNaN) || y.some(Number.isNaN)) return a;
   return '#' + x.map((v, i) => Math.round(v + (y[i] - v) * clamp(k)).toString(16).padStart(2, '0')).join('');
 };
+
+/** Sutherland-Hodgman: `subject` clipped to the convex polygon `clip` (either winding). */
+export const clipConvex = (subject: Pt[], clip: Pt[]): Pt[] => {
+  if (subject.length < 3 || clip.length < 3) return [];
+  const sign = polyArea(clip, true) >= 0 ? 1 : -1;
+  let out = subject;
+  for (let k = 0; k < clip.length && out.length; k++) {
+    const a = clip[k], b = clip[(k + 1) % clip.length];
+    const inside = (p: Pt) => sign * ((b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x)) >= 0;
+    const cut = (p: Pt, q: Pt): Pt => {
+      const d1 = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x), d2 = (b.x - a.x) * (q.y - a.y) - (b.y - a.y) * (q.x - a.x);
+      const u = d1 / (d1 - d2 || 1e-12);
+      return {x: p.x + (q.x - p.x) * u, y: p.y + (q.y - p.y) * u};
+    };
+    const inp = out; out = [];
+    for (let j = 0; j < inp.length; j++) {
+      const p = inp[j], q = inp[(j + 1) % inp.length];
+      if (inside(q)) { if (!inside(p)) out.push(cut(p, q)); out.push(q); } else if (inside(p)) out.push(cut(p, q));
+    }
+  }
+  return out;
+};
+/** Polygon area (absolute, or signed with `signed`). */
+export function polyArea(q: Pt[], signed = false): number {
+  let a = 0;
+  for (let k = 0; k < q.length; k++) { const p = q[k], r = q[(k + 1) % q.length]; a += p.x * r.y - r.x * p.y; }
+  return signed ? a / 2 : Math.abs(a / 2);
+}

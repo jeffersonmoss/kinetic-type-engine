@@ -30,7 +30,8 @@ export function readBoard(ctx: EngineContext, board: Board, blocks: readonly Blo
       const end = Math.max(onset + 3, landing, vocalEnd);
       const issue = (f: number) => words.map((word) => sampler.issue(word, f)).find(Boolean);
       let first: number | undefined;
-      for (let frame = start; frame <= end; frame++) {
+      const earliest = board.motionStyle === 'crisp' ? Math.max(start, onset - (preset ? 6 : 0)) : start;
+      for (let frame = earliest; frame <= end; frame++) {
         if (!issue(frame)) {first = frame; break;}
       }
       const S = preset && first !== undefined && first <= onset - 6 ? onset - 6 : first;
@@ -39,11 +40,12 @@ export function readBoard(ctx: EngineContext, board: Board, blocks: readonly Blo
       const report = (code: string, frame: number, message: string) => diagnostics.push({
         severity: 'error', code, line: work.item.id, token, frame, message: `"${text}" ${message}`,
       });
-      if (S === undefined || S < onset - 6 || S > onset + 2) {
-        const problem = issue(onset + 2);
-        report(problem?.rule ?? 'first-readable', S ?? onset + 2, S === undefined
-          ? `missed reading deadline at frame ${onset + 2}${problem ? `: ${problem.detail}` : ''}`
-          : `start of protected reading ${S} is outside [${onset - 6}, ${onset + 2}]${problem ? `: ${problem.detail}` : ''}`);
+      const deadline = board.motionStyle === 'crisp' ? onset : onset + 2;
+      if (S === undefined || S < onset - 6 || S > deadline) {
+        const problem = issue(deadline);
+        report(problem?.rule ?? 'first-readable', S ?? deadline, S === undefined
+          ? `missed reading deadline at frame ${deadline}${problem ? `: ${problem.detail}` : ''}`
+          : `start of protected reading ${S} is outside [${onset - 6}, ${deadline}]${problem ? `: ${problem.detail}` : ''}`);
       }
       if (landing > onset + 8) report('landing', landing, `lands after the deadline at frame ${onset + 8}`);
       if (interval) {

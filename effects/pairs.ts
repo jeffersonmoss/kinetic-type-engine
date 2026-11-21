@@ -31,7 +31,7 @@ const letter = (p: Pose): LetterMod => ({
 const refOf = ({word, index}: Glyph): GlyphRef => ({word, index});
 
 function planRun(out: BlockView, inc: BlockView, keep: string, pin: Pin, release: number,
-  env: Env, roll: boolean): PairPlan {
+  env: Env, roll: boolean, physical: boolean): PairPlan {
   const label = roll ? 'slotRoll' : 'matchCut';
   const oldRun = run(out, keep, `${label} outgoing`, env.keepFrom);
   const newRun = run(inc, keep, `${label} incoming`, env.keepTo);
@@ -51,6 +51,10 @@ function planRun(out: BlockView, inc: BlockView, keep: string, pin: Pin, release
       sy: lerp(ratio * from.cap / to.cap, 1, settle),
     };
   };
+  const flap = (g: Glyph, u: number, sign: number): LetterMod => {
+    const angle = Math.PI / 2 * (1 - easeSine(u));
+    return letter({sy: u === 0 ? 0 : Math.cos(angle), dy: sign * g.cap * Math.sin(angle) / 2});
+  };
   const poseIn = (u: number, unit: Unit, frame = env.start ?? 0): Pose => {
     const after = release < 1 ? clamp((u - release) / (1 - release)) : Number(u >= release);
     return {letters: unit.glyphs.map((g) => {
@@ -62,6 +66,7 @@ function planRun(out: BlockView, inc: BlockView, keep: string, pin: Pin, release
       }
       const timed = env.incomingProgress?.(unit.word, frame);
       const changed = timed ?? (roll ? after : u);
+      if (physical) return flap(g, roll && u < release ? 0 : changed, -1);
       if (roll) {
         const opening = u >= release ? changed : 0;
         return letter({sy: Math.sin(Math.PI / 2 * easeSine(opening)), dy: -g.cap * (1 - opening) / 2, opacity: clamp(opening * 3)});
@@ -78,6 +83,7 @@ function planRun(out: BlockView, inc: BlockView, keep: string, pin: Pin, release
     if (kept.has(glyphKey(g))) return letter(poseKept(u, g, frame));
     if (!roll) return letter({});
     const p = release > 0 ? clamp(u / release) : 1;
+    if (physical) return flap(g, 1 - p, 1);
     return letter({sy: Math.cos(Math.PI / 2 * easeSine(p)), dy: g.cap * p / 2, opacity: 1 - p});
   })});
   return {
@@ -87,20 +93,20 @@ function planRun(out: BlockView, inc: BlockView, keep: string, pin: Pin, release
   };
 }
 
-interface Match {keep: string; pin: Pin; frames?: number}
+interface Match {keep: string; pin: Pin; frames?: number; motion?: 'turn'}
 export const matchCut = defineEffect<Match>({
   name: 'matchCut', kind: 'transform', source: 'landmark', dismissesOld: false, release: 0.5,
-  params: {keep: nonempty, pin: {...oneOf('screen', 'board'), required: true}, frames: frames(6)},
+  params: {keep: nonempty, pin: {...oneOf('screen', 'board'), required: true}, frames: frames(6), motion: oneOf('turn')},
   duration: (p) => p.frames ?? 12,
-  plan: (out, inc, p, env) => planRun(out, inc, p.keep, p.pin, env.release ?? 0.5, env, false),
+  plan: (out, inc, p, env) => planRun(out, inc, p.keep, p.pin, env.release ?? 0.5, env, false, p.motion === 'turn'),
 });
 
-interface Slot {keep: string; frames?: number}
+interface Slot {keep: string; frames?: number; motion?: 'turn'}
 export const slotRoll = defineEffect<Slot>({
   name: 'slotRoll', kind: 'transform', source: 'landmark', dismissesOld: true, release: 0.5,
-  params: {keep: nonempty, frames: frames(6)},
+  params: {keep: nonempty, frames: frames(6), motion: oneOf('turn')},
   duration: (p) => p.frames ?? 12,
-  plan: (out, inc, p, env) => planRun(out, inc, p.keep, 'board', env.release ?? 0.5, env, true),
+  plan: (out, inc, p, env) => planRun(out, inc, p.keep, 'board', env.release ?? 0.5, env, true, p.motion === 'turn'),
 });
 
 export interface PairBinding {
@@ -149,6 +155,8 @@ export function lowerPair<P extends object>(call: PairCall<P>, ctx: EngineContex
     replacesEnter: () => [...incoming],
     defaultAt: () => at / ctx.fps,
     holds: () => carryIn ? [] : [...new Set(plan.keptMask.map(({word}) => word))].map((word) => ({word, until: releaseFrame})),
+    inkTransfers: !carryIn && 'motion' in call.params && call.params.motion === 'turn'
+      ? plan.keptMask.map((from, index) => ({frame: releaseFrame, from, to: plan.keptTargets[index]})) : undefined,
     removesAt: ({i}) => oldGone.has(i) ? releaseFrame : null,
     modify(c) {
       const u = progress(c.f);

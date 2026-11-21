@@ -4,7 +4,9 @@ import {groundAt} from './ground';
 import {blockToWorld, layoutBoard} from './layout';
 import {VISIBLE_THRESHOLD} from './motion';
 import type {Board, Pt, WordGeom} from './types';
-import {polysOverlap, rot} from './util';
+import {clipConvex, polyArea, polysOverlap, rot} from './util';
+import {projectTurn} from './turn3d';
+import type {WordMod} from './verbRegistry';
 import {boardActive, boardCues, verbFor, wordStateAt} from './wordState';
 
 export interface ReadingGlyph {index: number; ch: string; opacity: number; cap: number; quad: Pt[]}
@@ -16,8 +18,7 @@ function transform(p: Pt, pivot: Pt, dx: number, dy: number, angle: number, sx: 
   return {x: q.x + pivot.x + dx, y: q.y + pivot.y + dy};
 }
 
-export function readingGlyphs(board: Board, g: WordGeom, frame: number): ReadingGlyph[] {
-  const m = wordStateAt(board, g.i, frame);
+export function readingGlyphs(board: Board, g: WordGeom, frame: number, m = wordStateAt(board, g.i, frame)): ReadingGlyph[] {
   const b = layoutBoard(board).blocks[g.block];
   const cam = camForBlock(board, g.block, frame);
   const pivot = {x: g.x + g.w / 2, y: g.y + g.h / 2};
@@ -29,11 +30,19 @@ export function readingGlyphs(board: Board, g: WordGeom, frame: number): Reading
     if (/\s/u.test(ch)) return [];
     const l = m.letters?.[index];
     const lp = {x: gx + width / 2, y: pivot.y};
+    const plane = m.turn?.letters?.[index] ?? m.turn?.plane;
+    const stand = board.motionStyle === 'crisp' ? m.turn?.stand : undefined;
     const poly = quad(gx, g.y, width, g.boxH).map((p) => {
       const q = l ? transform(p, lp, l.dx, l.dy, l.rot, l.s * (l.sx ?? 1), l.s * (l.sy ?? 1)) : p;
-      return toScreen(cam, blockToWorld(b, transform(q, pivot, m.dx, m.dy, m.rot, m.sx, m.sy)));
+      const projected = stand && plane && plane !== 'hidden' ? projectTurn(plane, q) : q;
+      return toScreen(cam, blockToWorld(b, transform(projected, pivot,
+        m.dx - (stand?.dx ?? 0), m.dy - (stand?.dy ?? 0), m.rot, m.sx / (stand?.sx ?? 1), m.sy / (stand?.sy ?? 1))));
     });
-    return [{index, ch, quad: poly, cap: g.h * Math.abs(m.sy) * cam.zoom * Math.abs((l?.s ?? 1) * (l?.sy ?? 1)),
+    const cap = stand && plane && plane !== 'hidden' && g.boxH > 0
+      ? g.h * Math.min(Math.hypot(poly[3].x - poly[0].x, poly[3].y - poly[0].y),
+        Math.hypot(poly[2].x - poly[1].x, poly[2].y - poly[1].y)) / g.boxH
+      : g.h * Math.abs(m.sy) * cam.zoom * Math.abs((l?.s ?? 1) * (l?.sy ?? 1));
+    return [{index, ch, quad: poly, cap,
       opacity: m.hidden || m.turn?.plane === 'hidden' || m.turn?.letters?.[index] === 'hidden' ? 0 : m.opacity * (l?.opacity ?? 1)}];
   });
 }
@@ -64,6 +73,20 @@ export function insideSafe(glyph: ReadingGlyph) {
   return glyph.quad.every((p) => p.x >= x - 0.01 && p.y >= y - 0.01 && p.x <= x + width + 0.01 && p.y <= y + height + 0.01);
 }
 
+export const MIN_READING_COVERAGE = 0.85;
+export function frameArea(points: Pt[]) {
+  return polyArea(clipConvex(points, quad(0, 0, WIDTH, HEIGHT)));
+}
+
+export function wordCoverage(glyphs: readonly ReadingGlyph[]): number {
+  let area = 0, inside = 0;
+  for (const {quad: points} of glyphs) {
+    area += polyArea(points);
+    inside += frameArea(points);
+  }
+  return area > 0 ? inside / area : 0;
+}
+
 export interface ReadingProblem {rule: 'visible' | 'margin' | 'sung-cap' | 'contrast' | 'overlap'; detail: string}
 export function readingSampler(board: Board, minCap: number) {
   const layout = layoutBoard(board);
@@ -84,10 +107,16 @@ export function readingSampler(board: Board, minCap: number) {
     if (!boardActive(board, frame) || !own.length) return {rule: 'visible', detail: 'no readable ink on the active board'};
     const opacity = Math.min(...own.map((part) => part.opacity));
     if (opacity + 1e-9 < VISIBLE_THRESHOLD) return {rule: 'visible', detail: `opacity ${opacity.toFixed(3)} is below 0.5`};
-    if (own.some((g) => !insideSafe(g))) return {rule: 'margin', detail: 'outside the safe box during protected reading'};
+    if (board.motionStyle === 'crisp') {
+      const coverage = wordCoverage(own);
+      if (coverage + 1e-9 < MIN_READING_COVERAGE) return {rule: 'margin',
+        detail: `${(coverage * 100).toFixed(1)}% of the word box is on screen (needs 85%)`};
+    } else if (own.some((g) => !insideSafe(g))) return {rule: 'margin', detail: 'outside the safe box during protected reading'};
     const cap = Math.min(...own.map(({cap}) => cap));
     if (cap + 0.01 < minCap) return {rule: 'sung-cap', detail: `cap ${cap.toFixed(2)} px is below the ${minCap.toFixed(2)} px floor`};
-    const state = wordStateAt(board, word, frame);
+    const state: WordMod = wordStateAt(board, word, frame);
+    if (board.motionStyle === 'crisp' && state.turn && state.turn.plane && state.turn.plane !== 'hidden'
+      && Math.abs(state.turn.plane.theta) > 1) return {rule: 'visible', detail: 'still turning into or out of reading position'};
     const ground = groundAt(board, frame / FPS);
     const bg = ground.full;
     const colour = state.tint ?? state.colour ?? g.opts.colour ?? board.colour ??
@@ -99,8 +128,8 @@ export function readingSampler(board: Board, minCap: number) {
       if (other === word || exempt.has(other < word ? `${other}:${word}` : `${word}:${other}`)) continue;
       const og = layout.words.get(other)!;
       const z = level(og) - level(g);
-      if (z < 0 || (z === 0 && (og.block < g.block || (og.block === g.block && other < word)))) continue;
-      if (glyphs(other, frame).some((ink) => ink.opacity > 0.05 && own.some((part) => polysOverlap(part.quad, ink.quad, 0.5)))) {
+      if (board.motionStyle !== 'crisp' && (z < 0 || (z === 0 && (og.block < g.block || (og.block === g.block && other < word))))) continue;
+      if (glyphs(other, frame).some((ink) => ink.opacity > 0.05 && (board.motionStyle !== 'crisp' || polyArea(ink.quad) >= 1) && own.some((part) => polysOverlap(part.quad, ink.quad, 0.5)))) {
         return {rule: 'overlap', detail: `covered by "${og.text}" (run ${other})`};
       }
     }

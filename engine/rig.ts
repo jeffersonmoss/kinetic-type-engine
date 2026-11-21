@@ -187,7 +187,7 @@ const resolve = (board: Board): RigCache => {
   // drift directions: toward the next move
   const driftFor = (j: number): {r: number; z: number} => {
     const k = keys[j];
-    if (k && k.kind === 'hold' && k.still) return {r: 0, z: 0};
+    if (board.motionStyle === 'crisp' || (k && k.kind === 'hold' && k.still)) return {r: 0, z: 0};
     const cur = j < 0 ? pose0 : targets[j].target;
     const nx = targets[j + 1]?.target;
     if (!nx) return {r: 1, z: 1};

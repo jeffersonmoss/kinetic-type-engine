@@ -115,6 +115,8 @@ export interface VerbDef {
   /** The verb reveals or hides its words geometrically (a mask, a scale from a point, letters opening) at full
    *  opacity, so the validator's 'abrupt' rule does not apply to them. */
   gradual?: boolean;
+  /** Ownership changes for ink continuously carried through a pair. */
+  inkTransfers?: readonly {frame: number; from: {word: number; index: number}; to: {word: number; index: number}}[];
   /** Words this cue keeps on the board, unretired, until an absolute frame (a morph source until the morph is done). */
   holds?: (cue: VerbCue, L: BoardLayout) => {word: number; until: number}[];
   /** Later sung words this cue binds to a word already on the board (relight): the validator checks `display` for
@@ -495,6 +497,8 @@ export interface Board {
   fadeToBlack?: {from: number; to: number};
   /** Alternative measured giant rest for frame-filling score lockups. */
   scaleStyle?: 'lockup';
+  /** Discrete motion with exact camera holds and protected frame coverage. */
+  motionStyle?: 'crisp';
   /** Blocks belonging to the same sung line share a style group. Echoes have no group. */
   scoreStyleGroups?: Readonly<Partial<Record<number, number>>>;
   blocks: Block[];

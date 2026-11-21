@@ -41,7 +41,7 @@ import {drawnOpacityAt} from './smearSampling';
 import {ruleAt} from './rules';
 import {transitExempt} from './transitRules';
 import type {Board, BoardLayout, Pt, WordGeom} from './types';
-import {normDeg, polysOverlap, rot} from './util';
+import {clipConvex, normDeg, polyArea, polysOverlap, rot} from './util';
 import type {WordMod} from './verbRegistry';
 import {LINGER_FRAMES, graphicLife, lineMarks, ruleOwners, type LineSeg} from './lines';
 import {panelGoneAt} from './panel';
@@ -86,33 +86,7 @@ const segQuad = (a: Pt, b: Pt, w: number): Pt[] => {
   return [{x: a.x + n.x, y: a.y + n.y}, {x: b.x + n.x, y: b.y + n.y}, {x: b.x - n.x, y: b.y - n.y}, {x: a.x - n.x, y: a.y - n.y}];
 };
 const quadSize = (q: Pt[]) => ({w: Math.hypot(q[1].x - q[0].x, q[1].y - q[0].y), h: Math.hypot(q[3].x - q[0].x, q[3].y - q[0].y)});
-/** Sutherland-Hodgman: `subject` clipped to the convex polygon `clip` (either winding). */
-export const clipConvex = (subject: Pt[], clip: Pt[]): Pt[] => {
-  if (subject.length < 3 || clip.length < 3) return [];
-  const sign = polyArea(clip, true) >= 0 ? 1 : -1;
-  let out = subject;
-  for (let k = 0; k < clip.length && out.length; k++) {
-    const a = clip[k], b = clip[(k + 1) % clip.length];
-    const inside = (p: Pt) => sign * ((b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x)) >= 0;
-    const cut = (p: Pt, q: Pt): Pt => {
-      const d1 = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x), d2 = (b.x - a.x) * (q.y - a.y) - (b.y - a.y) * (q.x - a.x);
-      const u = d1 / (d1 - d2 || 1e-12);
-      return {x: p.x + (q.x - p.x) * u, y: p.y + (q.y - p.y) * u};
-    };
-    const inp = out; out = [];
-    for (let j = 0; j < inp.length; j++) {
-      const p = inp[j], q = inp[(j + 1) % inp.length];
-      if (inside(q)) { if (!inside(p)) out.push(cut(p, q)); out.push(q); } else if (inside(p)) out.push(cut(p, q));
-    }
-  }
-  return out;
-};
-/** Polygon area (absolute, or signed with `signed`). */
-export function polyArea(q: Pt[], signed = false): number {
-  let a = 0;
-  for (let k = 0; k < q.length; k++) { const p = q[k], r = q[(k + 1) % q.length]; a += p.x * r.y - r.x * p.y; }
-  return signed ? a / 2 : Math.abs(a / 2);
-}
+export {clipConvex, polyArea} from './util';
 /** A clip path made of one closed polygon of straight segments (M x y L x y ... Z) that is convex, as its points;
  *  null for anything else (several pieces, evenodd holes, curves). */
 export const convexClipPoly = (d: string): Pt[] | null => {
@@ -393,12 +367,12 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
     for (const tr of transits) if (f >= tr.start && f < tr.end) f = tr.end;
     return Math.round(cameraAt(board, f).rot);
   };
-  for (let k = 2; k < lines.length; k++) {
+  for (let k = 2; board.motionStyle !== 'crisp' && k < lines.length; k++) {
     const r0 = restR(lines[k - 2]), r1 = restR(lines[k - 1]), r2 = restR(lines[k]);
     if (Math.abs(r1 - r0) < 2 && Math.abs(r2 - r1) < 2) out.push({board: name, rule: 'variety', severity: 'error', line: lines[k], detail: `R at rest is ${r2} for three lines running (L${lines[k - 2]} to L${lines[k]}); in a verse R changes on at least every second line`});
   }
   for (const m of moves) {
-    if (m.kind !== 'roll') continue;
+    if (m.kind !== 'roll' || board.motionStyle === 'crisp') continue;
     const before = L.order.filter((i) => L.words.get(i)!.sf < m.start);
     if (!before.length) continue;
     const prevBlock = L.words.get(before[before.length - 1])!.block;
@@ -537,7 +511,7 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
       flat.set(l, rest > 0 && level >= 0.5 * rest);
       if (rest > 0) c.addPlan(l, `stance: level without tilted or sideways retired text on ${level} of ${rest} rest frames`);
     }
-    for (let k = 1; k < lines.length; k++) if (flat.get(lines[k - 1]) && flat.get(lines[k]))
+    for (let k = 1; board.motionStyle !== 'crisp' && k < lines.length; k++) if (flat.get(lines[k - 1]) && flat.get(lines[k]))
       out.push({board: name, rule: 'level-run', severity: 'error', line: lines[k], detail: `L${lines[k - 1]} and L${lines[k]} both rest level (within 8 degrees) with no tilted or sideways retired text in frame (Fable item 46)`});
   }
 

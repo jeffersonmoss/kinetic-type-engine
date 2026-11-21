@@ -1,0 +1,826 @@
+diff --git a/compile/entrance.ts b/compile/entrance.ts
+index 5318472..10d34e6 100644
+--- a/compile/entrance.ts
++++ b/compile/entrance.ts
+@@ -9,6 +9,7 @@ import {getVerb} from '../engine';
+ import {wordStateAt} from '../engine/wordState';
+ import {follow} from '../effects';
+ import {isPair, isUnit, type BoundLine} from './bind';
++import type {StageCue} from '../score';
+ import type {Located, Source} from './place';
+ import {inferredTargets, syllableTargets, type SyllableTarget} from './syllables';
+ 
+@@ -169,10 +170,20 @@ export function setCamera(ctx: EngineContext, work: SceneWork, draft: boolean) {
+   }
+ }
+ 
+-export function lowerEntrance(ctx: EngineContext, work: BlockWork, previous?: SceneWork) {
++export function lowerEntrance(ctx: EngineContext, work: BlockWork, previous?: SceneWork,
++  staged?: ReadonlyMap<number, StageCue>) {
+   const {board, item, source, scene} = work;
+   const {enter} = item.card;
+   work.targets = targetsFor(work);
++  const overrides = work.targets.flatMap(({word}) => {
++    const cue = staged?.get(word);
++    if (!cue) return [];
++    if (!isUnit(enter) || cue.effect.def.kind !== 'enter' || cue.effect.def.source !== 'none' ||
++        !Number.isInteger(cue.start) || !Number.isInteger(cue.frames) || cue.frames < 1) {
++      throw new Error(`${item.id}: invalid staged entrance for word ${word}`);
++    }
++    return [{word, cue}];
++  });
+   const echoStart = item.start;
+   const first = echoStart ?? Math.min(...work.targets.map((target) => target.sungFrame!));
+   const block = board.blocks[work.index];
+@@ -236,14 +247,26 @@ export function lowerEntrance(ctx: EngineContext, work: BlockWork, previous?: Sc
+   const firstDuration = enter.def.span?.(work.targets[0].glyphs, enter.params, ctx) ?? enter.def.duration(enter.params, ctx);
+   const lead = enter.def.source === 'edge' && !enter.cascade ? Math.min(firstDuration, 9) : firstDuration;
+   const schedule = scheduleUnit(enter, ctx, work.targets, echoStart ?? first - lead);
+-  const ranges = spans(schedule);
+-  work.schedule = schedule;
++  const overridden = new Set(overrides.map(({word}) => word));
++  const standard = schedule.filter(({word}) => !overridden.has(word));
++  const explicit = overrides.map(({word, cue}) => ({word, span: {start: cue.start, end: cue.start + cue.frames}}));
++  const ranges = spans([...standard, ...explicit]);
++  work.schedule = overrides.length ? undefined : schedule;
+   work.start = Math.min(...ranges.map((span) => span.start));
+   work.landing = Math.max(...ranges.map((span) => span.end));
+   work.release = Math.ceil(work.start + (work.landing - work.start) * (enter.def.release ?? 1));
+-  for (const entry of schedule) work.landingByWord.set(entry.word, Math.max(...spans([entry]).map(({end}) => end)));
+-  add(lowerUnit(enter, ctx, {schedule, anchor: source.anchor}));
+-  block.emerge = {move: 'effect', name, from: source.anchor, at: at(work.start)};
++  for (const entry of [...standard, ...explicit]) work.landingByWord.set(entry.word, Math.max(...spans([entry]).map(({end}) => end)));
++  if (standard.length) {
++    add(lowerUnit(enter, ctx, {schedule: standard, anchor: source.anchor}));
++    block.emerge = {move: 'effect', name, from: source.anchor, at: at(work.start)};
++  }
++  for (const [i, {word, cue}] of overrides.entries()) {
++    const key = `${cue.effect.name} · staged entrance · ${item.id}.${word}`;
++    scene.entries.push([key, lowerUnit(cue.effect, ctx, {schedule: [explicit[i]]})]);
++    if (standard.length === 0 && i === 0) block.emerge = {move: 'effect', name: key, from: source.anchor, at: at(cue.start)};
++    else (block.verb ??= []).push({name: key, word, at: at(cue.start)});
++  }
++
+ }
+ 
+ export function finalizeEffects(work: SceneWork) {
+diff --git a/compile/index.ts b/compile/index.ts
+index 0a223c6..24c5f0c 100644
+--- a/compile/index.ts
++++ b/compile/index.ts
+@@ -125,22 +125,34 @@ export function compileScore(base: EngineContext, film: Film, song: SongMap, opt
+         if (block.item.start !== undefined && block.item.start >= end) {
+           throw new Error(`${block.item.id}: interlude start frame ${block.item.start} is outside scene ${scene.id}`);
+         }
+-        lowerEntrance(ctx, block, works[i - 1]);
++        lowerEntrance(ctx, block, works[i - 1], stagePlan?.enter);
+         const {item} = block;
+         transitions.push({line: item.id, board: scene.id, start: block.start, landing: block.landing, release: block.release,
+           edge: item.card.from.kind === 'edge', handoff: isPair(item.card.enter), interlude: item.start !== undefined});
+       }
+       for (const authored of lines) lowerAccents(ctx, work, authored, diagnostics, accents);
+-      for (const [word, {start, frames}] of stagePlan?.retire ?? []) {
++      for (const [word, cues] of stagePlan?.accents ?? []) {
+         const block = board.blocks.find(({words: [lo, hi]}) => word >= lo && word <= hi);
+-        if (!block || !Number.isInteger(start) || !Number.isInteger(frames) || frames < 0) {
++        for (const [i, {start, frames, effect}] of cues.entries()) {
++          if (!block || !Number.isInteger(start) || !Number.isInteger(frames) || frames < 1 || effect.def.kind !== 'accent') {
++            throw new Error(`${board.id}: invalid staged accent for word ${word}`);
++          }
++          const name = `${effect.name} · staged accent · ${word}.${i + 1}`;
++          (block.verb ??= []).push({name, word, at: start / ctx.fps});
++          work.entries.push([name, lowerUnit(effect, ctx, {schedule: [{word, span: {start, end: start + frames}}]})]);
++          accents.push({frame: start + Math.floor(frames / 2), reason: name});
++        }
++      }
++      for (const [word, {start, frames, effect}] of stagePlan?.retire ?? []) {
++        const block = board.blocks.find(({words: [lo, hi]}) => word >= lo && word <= hi);
++        if (!block || !Number.isInteger(start) || !Number.isInteger(frames) || frames < 0 || (effect && (effect.def.kind !== 'exit' || frames === 0))) {
+           throw new Error(`${board.id}: invalid staged retirement for word ${word}`);
+         }
+         const name = `staged retirement · ${word}`;
+         const at = start / ctx.fps;
+         (block.verb ??= []).push({name, word, at});
+         work.entries.push([name, frames === 0 ? {removesAt: () => at, modify: () => ({hidden: true})}
+-          : lowerUnit(fade(), ctx, {schedule: [{word, span: {start, end: start + frames}}]})]);
++          : lowerUnit(effect ?? fade(), ctx, {schedule: [{word, span: {start, end: start + frames}}]})]);
+       }
+       finalizeEffects(work);
+       if (i) transitions.push({line: work.blocks[0].item.id, board: scene.id, start, landing: start, release: start,
+diff --git a/compile/read.ts b/compile/read.ts
+index edf11e6..ae47d7d 100644
+--- a/compile/read.ts
++++ b/compile/read.ts
+@@ -30,7 +30,8 @@ export function readBoard(ctx: EngineContext, board: Board, blocks: readonly Blo
+       const end = Math.max(onset + 3, landing, vocalEnd);
+       const issue = (f: number) => words.map((word) => sampler.issue(word, f)).find(Boolean);
+       let first: number | undefined;
+-      for (let frame = start; frame <= end; frame++) {
++      const earliest = board.motionStyle === 'crisp' ? Math.max(start, onset - (preset ? 6 : 0)) : start;
++      for (let frame = earliest; frame <= end; frame++) {
+         if (!issue(frame)) {first = frame; break;}
+       }
+       const S = preset && first !== undefined && first <= onset - 6 ? onset - 6 : first;
+@@ -39,11 +40,12 @@ export function readBoard(ctx: EngineContext, board: Board, blocks: readonly Blo
+       const report = (code: string, frame: number, message: string) => diagnostics.push({
+         severity: 'error', code, line: work.item.id, token, frame, message: `"${text}" ${message}`,
+       });
+-      if (S === undefined || S < onset - 6 || S > onset + 2) {
+-        const problem = issue(onset + 2);
+-        report(problem?.rule ?? 'first-readable', S ?? onset + 2, S === undefined
+-          ? `missed reading deadline at frame ${onset + 2}${problem ? `: ${problem.detail}` : ''}`
+-          : `start of protected reading ${S} is outside [${onset - 6}, ${onset + 2}]${problem ? `: ${problem.detail}` : ''}`);
++      const deadline = board.motionStyle === 'crisp' ? onset : onset + 2;
++      if (S === undefined || S < onset - 6 || S > deadline) {
++        const problem = issue(deadline);
++        report(problem?.rule ?? 'first-readable', S ?? deadline, S === undefined
++          ? `missed reading deadline at frame ${deadline}${problem ? `: ${problem.detail}` : ''}`
++          : `start of protected reading ${S} is outside [${onset - 6}, ${deadline}]${problem ? `: ${problem.detail}` : ''}`);
+       }
+       if (landing > onset + 8) report('landing', landing, `lands after the deadline at frame ${onset + 8}`);
+       if (interval) {
+diff --git a/effects/index.ts b/effects/index.ts
+index 8e62c44..8b91f23 100644
+--- a/effects/index.ts
++++ b/effects/index.ts
+@@ -4,3 +4,4 @@ export {unitOf} from './geometry';
+ export {rise, type, nest, turnIn, stamp, repeatStack, bindRepeatStack, type RepeatToken, fall, fade, retractExit, dockExit, beatPunch} from './units';
+ export {matchCut, slotRoll, lowerPair, type PairBinding} from './pairs';
+ export {follow, zoomLadder} from './camera';
++export {quarterTurnIn, quarterTurnOut, diveIn, diveOut, pushIn, pushOut, tumbleOut, flip, reframe} from './choreography';
+diff --git a/effects/pairs.ts b/effects/pairs.ts
+index 3ae1fd1..00b9bcb 100644
+--- a/effects/pairs.ts
++++ b/effects/pairs.ts
+@@ -31,7 +31,7 @@ const letter = (p: Pose): LetterMod => ({
+ const refOf = ({word, index}: Glyph): GlyphRef => ({word, index});
+ 
+ function planRun(out: BlockView, inc: BlockView, keep: string, pin: Pin, release: number,
+-  env: Env, roll: boolean): PairPlan {
++  env: Env, roll: boolean, physical: boolean): PairPlan {
+   const label = roll ? 'slotRoll' : 'matchCut';
+   const oldRun = run(out, keep, `${label} outgoing`, env.keepFrom);
+   const newRun = run(inc, keep, `${label} incoming`, env.keepTo);
+@@ -51,6 +51,10 @@ function planRun(out: BlockView, inc: BlockView, keep: string, pin: Pin, release
+       sy: lerp(ratio * from.cap / to.cap, 1, settle),
+     };
+   };
++  const flap = (g: Glyph, u: number, sign: number): LetterMod => {
++    const angle = Math.PI / 2 * (1 - easeSine(u));
++    return letter({sy: u === 0 ? 0 : Math.cos(angle), dy: sign * g.cap * Math.sin(angle) / 2});
++  };
+   const poseIn = (u: number, unit: Unit, frame = env.start ?? 0): Pose => {
+     const after = release < 1 ? clamp((u - release) / (1 - release)) : Number(u >= release);
+     return {letters: unit.glyphs.map((g) => {
+@@ -62,6 +66,7 @@ function planRun(out: BlockView, inc: BlockView, keep: string, pin: Pin, release
+       }
+       const timed = env.incomingProgress?.(unit.word, frame);
+       const changed = timed ?? (roll ? after : u);
++      if (physical) return flap(g, roll && u < release ? 0 : changed, -1);
+       if (roll) {
+         const opening = u >= release ? changed : 0;
+         return letter({sy: Math.sin(Math.PI / 2 * easeSine(opening)), dy: -g.cap * (1 - opening) / 2, opacity: clamp(opening * 3)});
+@@ -78,6 +83,7 @@ function planRun(out: BlockView, inc: BlockView, keep: string, pin: Pin, release
+     if (kept.has(glyphKey(g))) return letter(poseKept(u, g, frame));
+     if (!roll) return letter({});
+     const p = release > 0 ? clamp(u / release) : 1;
++    if (physical) return flap(g, 1 - p, 1);
+     return letter({sy: Math.cos(Math.PI / 2 * easeSine(p)), dy: g.cap * p / 2, opacity: 1 - p});
+   })});
+   return {
+@@ -87,20 +93,20 @@ function planRun(out: BlockView, inc: BlockView, keep: string, pin: Pin, release
+   };
+ }
+ 
+-interface Match {keep: string; pin: Pin; frames?: number}
++interface Match {keep: string; pin: Pin; frames?: number; motion?: 'turn'}
+ export const matchCut = defineEffect<Match>({
+   name: 'matchCut', kind: 'transform', source: 'landmark', dismissesOld: false, release: 0.5,
+-  params: {keep: nonempty, pin: {...oneOf('screen', 'board'), required: true}, frames: frames(6)},
++  params: {keep: nonempty, pin: {...oneOf('screen', 'board'), required: true}, frames: frames(6), motion: oneOf('turn')},
+   duration: (p) => p.frames ?? 12,
+-  plan: (out, inc, p, env) => planRun(out, inc, p.keep, p.pin, env.release ?? 0.5, env, false),
++  plan: (out, inc, p, env) => planRun(out, inc, p.keep, p.pin, env.release ?? 0.5, env, false, p.motion === 'turn'),
+ });
+ 
+-interface Slot {keep: string; frames?: number}
++interface Slot {keep: string; frames?: number; motion?: 'turn'}
+ export const slotRoll = defineEffect<Slot>({
+   name: 'slotRoll', kind: 'transform', source: 'landmark', dismissesOld: true, release: 0.5,
+-  params: {keep: nonempty, frames: frames(6)},
++  params: {keep: nonempty, frames: frames(6), motion: oneOf('turn')},
+   duration: (p) => p.frames ?? 12,
+-  plan: (out, inc, p, env) => planRun(out, inc, p.keep, 'board', env.release ?? 0.5, env, true),
++  plan: (out, inc, p, env) => planRun(out, inc, p.keep, 'board', env.release ?? 0.5, env, true, p.motion === 'turn'),
+ });
+ 
+ export interface PairBinding {
+@@ -149,6 +155,8 @@ export function lowerPair<P extends object>(call: PairCall<P>, ctx: EngineContex
+     replacesEnter: () => [...incoming],
+     defaultAt: () => at / ctx.fps,
+     holds: () => carryIn ? [] : [...new Set(plan.keptMask.map(({word}) => word))].map((word) => ({word, until: releaseFrame})),
++    inkTransfers: !carryIn && 'motion' in call.params && call.params.motion === 'turn'
++      ? plan.keptMask.map((from, index) => ({frame: releaseFrame, from, to: plan.keptTargets[index]})) : undefined,
+     removesAt: ({i}) => oldGone.has(i) ? releaseFrame : null,
+     modify(c) {
+       const u = progress(c.f);
+diff --git a/engine/reading.ts b/engine/reading.ts
+index b005f5a..68804bd 100644
+--- a/engine/reading.ts
++++ b/engine/reading.ts
+@@ -4,7 +4,9 @@ import {groundAt} from './ground';
+ import {blockToWorld, layoutBoard} from './layout';
+ import {VISIBLE_THRESHOLD} from './motion';
+ import type {Board, Pt, WordGeom} from './types';
+-import {polysOverlap, rot} from './util';
++import {clipConvex, polyArea, polysOverlap, rot} from './util';
++import {projectTurn} from './turn3d';
++import type {WordMod} from './verbRegistry';
+ import {boardActive, boardCues, verbFor, wordStateAt} from './wordState';
+ 
+ export interface ReadingGlyph {index: number; ch: string; opacity: number; cap: number; quad: Pt[]}
+@@ -16,8 +18,7 @@ function transform(p: Pt, pivot: Pt, dx: number, dy: number, angle: number, sx:
+   return {x: q.x + pivot.x + dx, y: q.y + pivot.y + dy};
+ }
+ 
+-export function readingGlyphs(board: Board, g: WordGeom, frame: number): ReadingGlyph[] {
+-  const m = wordStateAt(board, g.i, frame);
++export function readingGlyphs(board: Board, g: WordGeom, frame: number, m = wordStateAt(board, g.i, frame)): ReadingGlyph[] {
+   const b = layoutBoard(board).blocks[g.block];
+   const cam = camForBlock(board, g.block, frame);
+   const pivot = {x: g.x + g.w / 2, y: g.y + g.h / 2};
+@@ -29,11 +30,19 @@ export function readingGlyphs(board: Board, g: WordGeom, frame: number): Reading
+     if (/\s/u.test(ch)) return [];
+     const l = m.letters?.[index];
+     const lp = {x: gx + width / 2, y: pivot.y};
++    const plane = m.turn?.letters?.[index] ?? m.turn?.plane;
++    const stand = board.motionStyle === 'crisp' ? m.turn?.stand : undefined;
+     const poly = quad(gx, g.y, width, g.boxH).map((p) => {
+       const q = l ? transform(p, lp, l.dx, l.dy, l.rot, l.s * (l.sx ?? 1), l.s * (l.sy ?? 1)) : p;
+-      return toScreen(cam, blockToWorld(b, transform(q, pivot, m.dx, m.dy, m.rot, m.sx, m.sy)));
++      const projected = stand && plane && plane !== 'hidden' ? projectTurn(plane, q) : q;
++      return toScreen(cam, blockToWorld(b, transform(projected, pivot,
++        m.dx - (stand?.dx ?? 0), m.dy - (stand?.dy ?? 0), m.rot, m.sx / (stand?.sx ?? 1), m.sy / (stand?.sy ?? 1))));
+     });
+-    return [{index, ch, quad: poly, cap: g.h * Math.abs(m.sy) * cam.zoom * Math.abs((l?.s ?? 1) * (l?.sy ?? 1)),
++    const cap = stand && plane && plane !== 'hidden' && g.boxH > 0
++      ? g.h * Math.min(Math.hypot(poly[3].x - poly[0].x, poly[3].y - poly[0].y),
++        Math.hypot(poly[2].x - poly[1].x, poly[2].y - poly[1].y)) / g.boxH
++      : g.h * Math.abs(m.sy) * cam.zoom * Math.abs((l?.s ?? 1) * (l?.sy ?? 1));
++    return [{index, ch, quad: poly, cap,
+       opacity: m.hidden || m.turn?.plane === 'hidden' || m.turn?.letters?.[index] === 'hidden' ? 0 : m.opacity * (l?.opacity ?? 1)}];
+   });
+ }
+@@ -64,6 +73,20 @@ export function insideSafe(glyph: ReadingGlyph) {
+   return glyph.quad.every((p) => p.x >= x - 0.01 && p.y >= y - 0.01 && p.x <= x + width + 0.01 && p.y <= y + height + 0.01);
+ }
+ 
++export const MIN_READING_COVERAGE = 0.85;
++export function frameArea(points: Pt[]) {
++  return polyArea(clipConvex(points, quad(0, 0, WIDTH, HEIGHT)));
++}
++
++export function wordCoverage(glyphs: readonly ReadingGlyph[]): number {
++  let area = 0, inside = 0;
++  for (const {quad: points} of glyphs) {
++    area += polyArea(points);
++    inside += frameArea(points);
++  }
++  return area > 0 ? inside / area : 0;
++}
++
+ export interface ReadingProblem {rule: 'visible' | 'margin' | 'sung-cap' | 'contrast' | 'overlap'; detail: string}
+ export function readingSampler(board: Board, minCap: number) {
+   const layout = layoutBoard(board);
+@@ -84,10 +107,16 @@ export function readingSampler(board: Board, minCap: number) {
+     if (!boardActive(board, frame) || !own.length) return {rule: 'visible', detail: 'no readable ink on the active board'};
+     const opacity = Math.min(...own.map((part) => part.opacity));
+     if (opacity + 1e-9 < VISIBLE_THRESHOLD) return {rule: 'visible', detail: `opacity ${opacity.toFixed(3)} is below 0.5`};
+-    if (own.some((g) => !insideSafe(g))) return {rule: 'margin', detail: 'outside the safe box during protected reading'};
++    if (board.motionStyle === 'crisp') {
++      const coverage = wordCoverage(own);
++      if (coverage + 1e-9 < MIN_READING_COVERAGE) return {rule: 'margin',
++        detail: `${(coverage * 100).toFixed(1)}% of the word box is on screen (needs 85%)`};
++    } else if (own.some((g) => !insideSafe(g))) return {rule: 'margin', detail: 'outside the safe box during protected reading'};
+     const cap = Math.min(...own.map(({cap}) => cap));
+     if (cap + 0.01 < minCap) return {rule: 'sung-cap', detail: `cap ${cap.toFixed(2)} px is below the ${minCap.toFixed(2)} px floor`};
+-    const state = wordStateAt(board, word, frame);
++    const state: WordMod = wordStateAt(board, word, frame);
++    if (board.motionStyle === 'crisp' && state.turn && state.turn.plane && state.turn.plane !== 'hidden'
++      && Math.abs(state.turn.plane.theta) > 1) return {rule: 'visible', detail: 'still turning into or out of reading position'};
+     const ground = groundAt(board, frame / FPS);
+     const bg = ground.full;
+     const colour = state.tint ?? state.colour ?? g.opts.colour ?? board.colour ??
+@@ -99,8 +128,8 @@ export function readingSampler(board: Board, minCap: number) {
+       if (other === word || exempt.has(other < word ? `${other}:${word}` : `${word}:${other}`)) continue;
+       const og = layout.words.get(other)!;
+       const z = level(og) - level(g);
+-      if (z < 0 || (z === 0 && (og.block < g.block || (og.block === g.block && other < word)))) continue;
+-      if (glyphs(other, frame).some((ink) => ink.opacity > 0.05 && own.some((part) => polysOverlap(part.quad, ink.quad, 0.5)))) {
++      if (board.motionStyle !== 'crisp' && (z < 0 || (z === 0 && (og.block < g.block || (og.block === g.block && other < word))))) continue;
++      if (glyphs(other, frame).some((ink) => ink.opacity > 0.05 && (board.motionStyle !== 'crisp' || polyArea(ink.quad) >= 1) && own.some((part) => polysOverlap(part.quad, ink.quad, 0.5)))) {
+         return {rule: 'overlap', detail: `covered by "${og.text}" (run ${other})`};
+       }
+     }
+diff --git a/engine/rig.ts b/engine/rig.ts
+index 17b7db2..7c8a3a3 100644
+--- a/engine/rig.ts
++++ b/engine/rig.ts
+@@ -187,7 +187,7 @@ const resolve = (board: Board): RigCache => {
+   // drift directions: toward the next move
+   const driftFor = (j: number): {r: number; z: number} => {
+     const k = keys[j];
+-    if (k && k.kind === 'hold' && k.still) return {r: 0, z: 0};
++    if (board.motionStyle === 'crisp' || (k && k.kind === 'hold' && k.still)) return {r: 0, z: 0};
+     const cur = j < 0 ? pose0 : targets[j].target;
+     const nx = targets[j + 1]?.target;
+     if (!nx) return {r: 1, z: 1};
+diff --git a/engine/types.ts b/engine/types.ts
+index 33bd696..213ed9b 100644
+--- a/engine/types.ts
++++ b/engine/types.ts
+@@ -115,6 +115,8 @@ export interface VerbDef {
+   /** The verb reveals or hides its words geometrically (a mask, a scale from a point, letters opening) at full
+    *  opacity, so the validator's 'abrupt' rule does not apply to them. */
+   gradual?: boolean;
++  /** Ownership changes for ink continuously carried through a pair. */
++  inkTransfers?: readonly {frame: number; from: {word: number; index: number}; to: {word: number; index: number}}[];
+   /** Words this cue keeps on the board, unretired, until an absolute frame (a morph source until the morph is done). */
+   holds?: (cue: VerbCue, L: BoardLayout) => {word: number; until: number}[];
+   /** Later sung words this cue binds to a word already on the board (relight): the validator checks `display` for
+@@ -495,6 +497,8 @@ export interface Board {
+   fadeToBlack?: {from: number; to: number};
+   /** Alternative measured giant rest for frame-filling score lockups. */
+   scaleStyle?: 'lockup';
++  /** Discrete motion with exact camera holds and protected frame coverage. */
++  motionStyle?: 'crisp';
+   /** Blocks belonging to the same sung line share a style group. Echoes have no group. */
+   scoreStyleGroups?: Readonly<Partial<Record<number, number>>>;
+   blocks: Block[];
+diff --git a/engine/util.ts b/engine/util.ts
+index 7e110d8..9b75741 100644
+--- a/engine/util.ts
++++ b/engine/util.ts
+@@ -77,3 +77,31 @@ export const mixHex = (a: string, b: string, k: number) => {
+   if (x.some(Number.isNaN) || y.some(Number.isNaN)) return a;
+   return '#' + x.map((v, i) => Math.round(v + (y[i] - v) * clamp(k)).toString(16).padStart(2, '0')).join('');
+ };
++
++/** Sutherland-Hodgman: `subject` clipped to the convex polygon `clip` (either winding). */
++export const clipConvex = (subject: Pt[], clip: Pt[]): Pt[] => {
++  if (subject.length < 3 || clip.length < 3) return [];
++  const sign = polyArea(clip, true) >= 0 ? 1 : -1;
++  let out = subject;
++  for (let k = 0; k < clip.length && out.length; k++) {
++    const a = clip[k], b = clip[(k + 1) % clip.length];
++    const inside = (p: Pt) => sign * ((b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x)) >= 0;
++    const cut = (p: Pt, q: Pt): Pt => {
++      const d1 = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x), d2 = (b.x - a.x) * (q.y - a.y) - (b.y - a.y) * (q.x - a.x);
++      const u = d1 / (d1 - d2 || 1e-12);
++      return {x: p.x + (q.x - p.x) * u, y: p.y + (q.y - p.y) * u};
++    };
++    const inp = out; out = [];
++    for (let j = 0; j < inp.length; j++) {
++      const p = inp[j], q = inp[(j + 1) % inp.length];
++      if (inside(q)) { if (!inside(p)) out.push(cut(p, q)); out.push(q); } else if (inside(p)) out.push(cut(p, q));
++    }
++  }
++  return out;
++};
++/** Polygon area (absolute, or signed with `signed`). */
++export function polyArea(q: Pt[], signed = false): number {
++  let a = 0;
++  for (let k = 0; k < q.length; k++) { const p = q[k], r = q[(k + 1) % q.length]; a += p.x * r.y - r.x * p.y; }
++  return signed ? a / 2 : Math.abs(a / 2);
++}
+diff --git a/engine/validate.ts b/engine/validate.ts
+index 43d01ab..6addfa3 100644
+--- a/engine/validate.ts
++++ b/engine/validate.ts
+@@ -1,3 +1,4 @@
++import {crispChecks} from './validateCrisp';
+ import {readingSampler} from './reading';
+ // validateBoard (rule 181): checks every frame of every word's reading interval. Pure; runs in node through
+ // tools/validate-boards.mjs. Words are read from their display frame to their retire frame (retired text is exempt from
+@@ -483,7 +484,7 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
+     let bright = 0, visible = 0;
+     for (const i of L.order) {
+       const s = states.get(i)!;
+-      if (!s.shown) continue;
++      if (!(board.motionStyle === 'crisp' ? s.vis : s.shown)) continue;
+       const c = s.quad.reduce((a, p) => ({x: a.x + p.x / 4, y: a.y + p.y / 4}), {x: 0, y: 0});
+       if (c.x < 0 || c.x > WIDTH || c.y < 0 || c.y > HEIGHT) continue;
+       visible++;
+@@ -601,7 +602,7 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
+   if (board.handoff?.start !== undefined) out.push(...checkHandoff(board, name, board.handoff.start, 'start'));
+   if (board.handoff?.end !== undefined && board.handoff.end !== 'open') out.push(...checkHandoff(board, name, board.handoff.end, 'end'));
+   out.push(...boardRuleChecks(board, {name, L, intervals, step, addPlan}));
+-  out.push(...motionRuleChecks(board, name, L));
++  out.push(...motionRuleChecks(board, name, L), ...crispChecks(board, name, L));
+   for (const [l, p] of plan) { const st = lineStats.get(l) ?? {line: l, transits: 0, peakBright: 0, peakVisible: 0}; st.plan = p; lineStats.set(l, st); }
+   for (const st of lineStats.values()) st.transits = transits.filter((x) => lineAtFrame(x.start) === st.line).length;
+   const lines = [...lineStats.values()].sort((a, b) => a.line - b.line);
+diff --git a/engine/validateMotion.ts b/engine/validateMotion.ts
+index b97dfca..3a4147f 100644
+--- a/engine/validateMotion.ts
++++ b/engine/validateMotion.ts
+@@ -76,7 +76,7 @@ export const motionRuleChecks = (board: Board, name: string, L: BoardLayout): Vi
+   const spans = (board.carry ?? []).flatMap((c): [number, number][] => { try { return [carrySpan(c), carryStillSpan(c)]; } catch { return []; } });
+   let run = 0, runStart = startF;
+   let prev = cameraAt(board, startF);
+-  for (let f = startF + 1; sheet && f <= endF + 1; f++) {
++  for (let f = startF + 1; sheet && board.motionStyle !== 'crisp' && f <= endF + 1; f++) {
+     const c = f <= endF ? cameraAt(board, f) : null;
+     const still = !!c && Math.abs(c.x - prev.x) * c.zoom < 0.02 && Math.abs(c.y - prev.y) * c.zoom < 0.02 && Math.abs(c.zoom / prev.zoom - 1) < 1e-5 && Math.abs(c.rot - prev.rot) < 1e-3;
+     const carried = spans.some(([a, b]) => f >= a && f <= b);
+@@ -94,7 +94,7 @@ export const motionRuleChecks = (board: Board, name: string, L: BoardLayout): Vi
+     const w = L.words.get(i)!;
+     const cue = cues[w.block];
+     // entrance-in-move and camera-rest (opt-in)
+-    if (sheet) {
++    if (sheet && board.motionStyle !== 'crisp') {
+       const lo = Math.max(startF, Math.floor(w.sf - 60));
+       let bad = -1;
+       for (let f = lo; f < w.sf; f++) { const m = st(i, f); if (!m.hidden && m.opacity > 0.05 && inFast(f)) { bad = f; break; } }
+@@ -118,7 +118,7 @@ export const motionRuleChecks = (board: Board, name: string, L: BoardLayout): Vi
+   // framing: the sung line's widest row against the safe width
+   const safeW = SAFE_BOX.width;
+   const lines = [...new Set(L.order.map((i) => L.words.get(i)!.line))];
+-  for (const ln of sheet ? lines : []) {
++  for (const ln of sheet && board.motionStyle !== 'crisp' ? lines : []) {
+     const ids = L.order.filter((i) => L.words.get(i)!.line === ln);
+     const a = Math.max(startF, Math.min(...ids.map((i) => L.words.get(i)!.sf))), z = Math.min(endF, Math.max(...ids.map((i) => retireFrame(board, i))));
+     let worst = Infinity, at = a;
+@@ -156,7 +156,7 @@ export const motionRuleChecks = (board: Board, name: string, L: BoardLayout): Vi
+ 
+ /** The timeline `empty` warning over a module's boards: more than 12 frames with no unretired lyric word in frame. */
+ export const emptyTimeline = (boards: Board[], layouts: BoardLayout[]): {from: number; to: number}[] => {
+-  const keep = boards.map((b, k) => k).filter((k) => boards[k].sheetRules);
++  const keep = boards.map((b, k) => k).filter((k) => boards[k].sheetRules && boards[k].motionStyle !== 'crisp');
+   layouts = keep.map((k) => layouts[k]);
+   boards = keep.map((k) => boards[k]);
+   if (!boards.length) return [];
+diff --git a/engine/validateRules.ts b/engine/validateRules.ts
+index 739a0c8..d5c2d87 100644
+--- a/engine/validateRules.ts
++++ b/engine/validateRules.ts
+@@ -41,7 +41,7 @@ import {drawnOpacityAt} from './smearSampling';
+ import {ruleAt} from './rules';
+ import {transitExempt} from './transitRules';
+ import type {Board, BoardLayout, Pt, WordGeom} from './types';
+-import {normDeg, polysOverlap, rot} from './util';
++import {clipConvex, normDeg, polyArea, polysOverlap, rot} from './util';
+ import type {WordMod} from './verbRegistry';
+ import {LINGER_FRAMES, graphicLife, lineMarks, ruleOwners, type LineSeg} from './lines';
+ import {panelGoneAt} from './panel';
+@@ -86,33 +86,7 @@ const segQuad = (a: Pt, b: Pt, w: number): Pt[] => {
+   return [{x: a.x + n.x, y: a.y + n.y}, {x: b.x + n.x, y: b.y + n.y}, {x: b.x - n.x, y: b.y - n.y}, {x: a.x - n.x, y: a.y - n.y}];
+ };
+ const quadSize = (q: Pt[]) => ({w: Math.hypot(q[1].x - q[0].x, q[1].y - q[0].y), h: Math.hypot(q[3].x - q[0].x, q[3].y - q[0].y)});
+-/** Sutherland-Hodgman: `subject` clipped to the convex polygon `clip` (either winding). */
+-export const clipConvex = (subject: Pt[], clip: Pt[]): Pt[] => {
+-  if (subject.length < 3 || clip.length < 3) return [];
+-  const sign = polyArea(clip, true) >= 0 ? 1 : -1;
+-  let out = subject;
+-  for (let k = 0; k < clip.length && out.length; k++) {
+-    const a = clip[k], b = clip[(k + 1) % clip.length];
+-    const inside = (p: Pt) => sign * ((b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x)) >= 0;
+-    const cut = (p: Pt, q: Pt): Pt => {
+-      const d1 = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x), d2 = (b.x - a.x) * (q.y - a.y) - (b.y - a.y) * (q.x - a.x);
+-      const u = d1 / (d1 - d2 || 1e-12);
+-      return {x: p.x + (q.x - p.x) * u, y: p.y + (q.y - p.y) * u};
+-    };
+-    const inp = out; out = [];
+-    for (let j = 0; j < inp.length; j++) {
+-      const p = inp[j], q = inp[(j + 1) % inp.length];
+-      if (inside(q)) { if (!inside(p)) out.push(cut(p, q)); out.push(q); } else if (inside(p)) out.push(cut(p, q));
+-    }
+-  }
+-  return out;
+-};
+-/** Polygon area (absolute, or signed with `signed`). */
+-export function polyArea(q: Pt[], signed = false): number {
+-  let a = 0;
+-  for (let k = 0; k < q.length; k++) { const p = q[k], r = q[(k + 1) % q.length]; a += p.x * r.y - r.x * p.y; }
+-  return signed ? a / 2 : Math.abs(a / 2);
+-}
++export {clipConvex, polyArea} from './util';
+ /** A clip path made of one closed polygon of straight segments (M x y L x y ... Z) that is convex, as its points;
+  *  null for anything else (several pieces, evenodd holes, curves). */
+ export const convexClipPoly = (d: string): Pt[] | null => {
+@@ -393,12 +367,12 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
+     for (const tr of transits) if (f >= tr.start && f < tr.end) f = tr.end;
+     return Math.round(cameraAt(board, f).rot);
+   };
+-  for (let k = 2; k < lines.length; k++) {
++  for (let k = 2; board.motionStyle !== 'crisp' && k < lines.length; k++) {
+     const r0 = restR(lines[k - 2]), r1 = restR(lines[k - 1]), r2 = restR(lines[k]);
+     if (Math.abs(r1 - r0) < 2 && Math.abs(r2 - r1) < 2) out.push({board: name, rule: 'variety', severity: 'error', line: lines[k], detail: `R at rest is ${r2} for three lines running (L${lines[k - 2]} to L${lines[k]}); in a verse R changes on at least every second line`});
+   }
+   for (const m of moves) {
+-    if (m.kind !== 'roll') continue;
++    if (m.kind !== 'roll' || board.motionStyle === 'crisp') continue;
+     const before = L.order.filter((i) => L.words.get(i)!.sf < m.start);
+     if (!before.length) continue;
+     const prevBlock = L.words.get(before[before.length - 1])!.block;
+@@ -537,7 +511,7 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
+       flat.set(l, rest > 0 && level >= 0.5 * rest);
+       if (rest > 0) c.addPlan(l, `stance: level without tilted or sideways retired text on ${level} of ${rest} rest frames`);
+     }
+-    for (let k = 1; k < lines.length; k++) if (flat.get(lines[k - 1]) && flat.get(lines[k]))
++    for (let k = 1; board.motionStyle !== 'crisp' && k < lines.length; k++) if (flat.get(lines[k - 1]) && flat.get(lines[k]))
+       out.push({board: name, rule: 'level-run', severity: 'error', line: lines[k], detail: `L${lines[k - 1]} and L${lines[k]} both rest level (within 8 degrees) with no tilted or sideways retired text in frame (Fable item 46)`});
+   }
+ 
+diff --git a/score/index.ts b/score/index.ts
+index 020bfe6..e726ddc 100644
+--- a/score/index.ts
++++ b/score/index.ts
+@@ -82,9 +82,18 @@ export interface StageBlock {
+   readonly start?: number;
+   readonly words: readonly {index: number; onset: number; end: number; sung: boolean}[];
+ }
++export interface StageCue {
++  start: number;
++  frames: number;
++  effect: UnitCall<any>;
++}
+ export interface StagePlan {
++  /** Per-word entrance overrides for unit entrances, in absolute frames. */
++  enter?: ReadonlyMap<number, StageCue>;
++  /** Explicit in-place or travelling motion after a word's entrance. */
++  accents?: ReadonlyMap<number, readonly StageCue[]>;
+   /** First frame of a staged retirement. Omit a word to leave it under its entrance or transform. */
+-  retire?: ReadonlyMap<number, {start: number; frames: number}>;
++  retire?: ReadonlyMap<number, Omit<StageCue, 'effect'> & {effect?: StageCue['effect']}>;
+ }
+ export type Stage = (board: Board, layout: BoardLayout, blocks: readonly StageBlock[], context: EngineContext) => StagePlan | void;
+ 
+diff --git a/effects/choreography.ts b/effects/choreography.ts
+new file mode 100644
+index 0000000..38a377d
+--- /dev/null
++++ b/effects/choreography.ts
+@@ -0,0 +1,113 @@
++import {defineEffect, frames, numberIn, oneOf, type Env, type Pose, type Unit} from './define';
++import {easeSine, poseInk, rotate} from './geometry';
++
++type Turn = {axis: 'x' | 'y'; frames?: number};
++const turnParams = {axis: {...oneOf('x', 'y'), required: true}, frames: frames(1)};
++function turnPose(u: number, {axis}: Turn, env: Env): Pose {
++  if (u >= 1) return {};
++  const spec = {axis, unit: 'word', pivot: 'centre', frames: 1, perspective: 6000, ease: 'sine'} as const;
++  const projection = env.projectTurn?.(spec, u);
++  const scale = Math.sin(Math.PI / 2 * easeSine(u));
++  return projection ?? (axis === 'x' ? {sy: scale} : {sx: scale});
++}
++
++export const quarterTurnIn = defineEffect<Turn>({
++  name: 'quarterTurnIn', kind: 'enter', source: 'none', params: turnParams,
++  duration: (p) => p.frames ?? 9,
++  pose: (u, _, p, env) => turnPose(u, p, env),
++  ink: (u, unit, p, env) => poseInk(unit, turnPose(u, p, env)),
++});
++export const quarterTurnOut = defineEffect<Turn>({
++  name: 'quarterTurnOut', kind: 'exit', source: 'none', params: turnParams,
++  duration: (p) => p.frames ?? 9,
++  pose: (u, _, p, env) => u >= 1 ? {...turnPose(0, p, env), hidden: true} : turnPose(1 - u, p, env),
++  ink: (u, unit, p, env) => poseInk(unit, turnPose(1 - u, p, env)),
++});
++
++type Depth = {frames?: number; spin?: number};
++const depthParams = {frames: frames(1), spin: numberIn(-360, 360)};
++// Scale is the perspective factor for depth P * (1 / scale - 1). At infinite distance the box has zero area.
++function depthPose(u: number, {spin = 0}: Depth): Pose {
++  const p = easeSine(u);
++  return {sx: p, sy: p, rot: spin * (1 - p) ** 2, hidden: p === 0};
++}
++export const diveIn = defineEffect<Depth>({
++  name: 'diveIn', kind: 'enter', source: 'none', params: depthParams,
++  duration: (p) => p.frames ?? 9,
++  pose: (u, _, p) => depthPose(u, p),
++  ink: (u, unit, p) => poseInk(unit, depthPose(u, p)),
++});
++export const diveOut = defineEffect<Depth>({
++  name: 'diveOut', kind: 'exit', source: 'none', params: depthParams,
++  duration: (p) => p.frames ?? 9,
++  pose: (u, _, p) => depthPose(1 - u, p),
++  ink: (u, unit, p) => poseInk(unit, depthPose(1 - u, p)),
++});
++
++type Slide = {dx: number; dy: number; frames?: number};
++const slideParams = {dx: {...numberIn(-10000, 10000), required: true}, dy: {...numberIn(-10000, 10000), required: true}, frames: frames(1)};
++function slidePose(u: number, {dx, dy}: Slide): Pose {
++  const p = easeSine(u);
++  return {dx: p * dx, dy: p * dy};
++}
++export const pushIn = defineEffect<Slide>({
++  name: 'pushIn', kind: 'enter', source: 'none', params: slideParams,
++  duration: (p) => p.frames ?? 12,
++  pose: (u, _, p) => slidePose(1 - u, p),
++  ink: (u, unit, p) => poseInk(unit, slidePose(1 - u, p)),
++});
++export const pushOut = defineEffect<Slide>({
++  name: 'pushOut', kind: 'exit', source: 'none', params: slideParams,
++  duration: (p) => p.frames ?? 12,
++  pose: (u, _, p) => ({...slidePose(u, p), hidden: u >= 1}),
++  ink: (u, unit, p) => poseInk(unit, slidePose(u, p)),
++});
++
++type Tumble = {frames?: number};
++function tumblePose(u: number, unit: Unit, env: Env): Pose {
++  const p = easeSine(u);
++  const down = env.down ?? {x: 0, y: 1};
++  const travel = 2 * Math.hypot(env.ctx.format.width, env.ctx.format.height) / (env.zoom ?? 1);
++  return {letters: unit.glyphs.map((_, i) => {
++    const spread = (i - (unit.glyphs.length - 1) / 2) * 0.09;
++    return {
++      dx: p * travel * (down.x + down.y * spread),
++      dy: p * travel * (down.y - down.x * spread),
++      rot: p * (180 + i * 45) * (i % 2 ? 1 : -1), s: 1, opacity: 1,
++    };
++  })};
++}
++export const tumbleOut = defineEffect<Tumble>({
++  name: 'tumbleOut', kind: 'exit', source: 'none', params: {frames: frames(1)},
++  duration: (p) => p.frames ?? 16,
++  pose: (u, unit, _, env) => tumblePose(u, unit, env),
++  ink: (u, unit, _, env) => poseInk(unit, tumblePose(u, unit, env)),
++});
++
++export const flip = defineEffect<Turn>({
++  name: 'flip', kind: 'accent', source: 'none', params: turnParams,
++  duration: (p) => p.frames ?? 14,
++  pose(u, _, p, env) {
++    if (u <= 0 || u >= 1) return {};
++    return turnPose(Math.abs(2 * u - 1), p, env);
++  },
++  ink(u, unit, p, env) {
++    return poseInk(unit, u <= 0 || u >= 1 ? {} : turnPose(Math.abs(2 * u - 1), p, env));
++  },
++});
++
++type Reframe = Slide & {turn: number; scale: number; offsetX?: number; offsetY?: number};
++const reframeParams = {...slideParams, turn: {...numberIn(-360, 360), required: true},
++  scale: {...numberIn(0.05, 10), required: true}, offsetX: numberIn(-10000, 10000), offsetY: numberIn(-10000, 10000)};
++function reframePose(u: number, {dx, dy, turn, scale, offsetX = 0, offsetY = 0}: Reframe): Pose {
++  const p = easeSine(u);
++  const s = 1 + (scale - 1) * p;
++  const offset = rotate({x: offsetX * s, y: offsetY * s}, p * turn);
++  return {dx: p * dx + offset.x - offsetX, dy: p * dy + offset.y - offsetY, rot: p * turn, sx: s, sy: s};
++}
++export const reframe = defineEffect<Reframe>({
++  name: 'reframe', kind: 'accent', source: 'none', params: reframeParams,
++  duration: (p) => p.frames ?? 12,
++  pose: (u, _, p) => reframePose(u, p),
++  ink: (u, unit, p) => poseInk(unit, reframePose(u, p)),
++});
+diff --git a/engine/validateCrisp.ts b/engine/validateCrisp.ts
+new file mode 100644
+index 0000000..37210ec
+--- /dev/null
++++ b/engine/validateCrisp.ts
+@@ -0,0 +1,143 @@
++import {cameraAt, camForBlock} from './camera';
++import {FPS, WORDS} from './config';
++import {frameArea, readingGlyphs} from './reading';
++import type {Board, BoardLayout, CameraState, WordGeom} from './types';
++import {normDeg} from './util';
++import type {Violation} from './validate';
++import {letterIdentity, type WordMod} from './verbRegistry';
++import {boardCues, verbFor, wordStateAt} from './wordState';
++
++const DRIFT_FRAMES = 6;
++const SLOW_PX = 2, SLOW_DEGREES = 0.1, SLOW_SCALE = 0.002;
++const EXACT = 1e-6;
++const MIN_INK_AREA = 1;
++
++type Delta = {travel: number; angle: number; scale: number};
++const changed = (d: Delta) => Math.max(d.travel, d.angle, d.scale) > EXACT;
++const decisive = (d: Delta) => d.travel >= SLOW_PX || d.angle >= SLOW_DEGREES || d.scale >= SLOW_SCALE;
++const scaleDelta = (a: number, b: number) => Math.abs(b - a) / Math.max(1, Math.abs(a), Math.abs(b));
++const angleDelta = (a: number, b: number) => Math.abs(normDeg(b - a));
++
++function cameraDelta(a: CameraState, b: CameraState): Delta {
++  return {travel: Math.hypot(b.x - a.x, b.y - a.y) * b.zoom,
++    angle: angleDelta(a.rot, b.rot), scale: scaleDelta(a.zoom, b.zoom)};
++}
++function wordDelta(a: WordMod, b: WordMod, zoom: number): Delta {
++  const turnAngle = (m: WordMod) => m.turn?.plane === 'hidden' ? 90 : m.turn?.plane?.theta ?? 0;
++  return {travel: Math.hypot(b.dx - a.dx, b.dy - a.dy) * zoom,
++    angle: Math.max(angleDelta(a.rot, b.rot), angleDelta(turnAngle(a), turnAngle(b))),
++    scale: Math.max(scaleDelta(a.sx, b.sx), scaleDelta(a.sy, b.sy))};
++}
++
++export function crispChecks(board: Board, name: string, layout: BoardLayout): Violation[] {
++  if (board.motionStyle !== 'crisp') return [];
++  const first = Math.round(board.start * FPS);
++  const cut = Math.round(board.end * FPS);
++  const result: Violation[] = [];
++  const motion = new Set<number>();
++  const ink = new Set<number>();
++  function audit(label: string, read: (f: number) => Delta | undefined, word?: WordGeom) {
++    let run = 0;
++    for (let f = first + 1; f <= cut; f++) {
++      const delta = f < cut ? read(f) : undefined;
++      if (delta && decisive(delta)) motion.add(f);
++      if (delta && changed(delta) && !decisive(delta)) {run++; continue;}
++      if (run > DRIFT_FRAMES) result.push({board: name, rule: 'wobble', severity: 'error', word: word?.i,
++        from: f - run - 1, to: f - 1, frames: run, detail: `${label} moves below 2 px, 0.1 degrees and 0.2% scale per frame for ${run} frames`});
++      run = 0;
++    }
++  }
++
++  const cameras = Array.from({length: cut - first}, (_, i) => cameraAt(board, first + i));
++  audit('camera', (f) => cameraDelta(cameras[f - first - 1], cameras[f - first]));
++  const transits = cameras.map((cam, i) => i > 0 && changed(cameraDelta(cameras[i - 1], cam)));
++  const transfer = new Set<string>();
++  for (const cue of boardCues(board)) {
++    for (const {frame, from, to} of verbFor(board, cue.name)?.inkTransfers ?? []) {
++      const old = readingGlyphs(board, layout.words.get(from.word)!, frame - 0.00001).find((g) => g.index === from.index);
++      const next = readingGlyphs(board, layout.words.get(to.word)!, frame + 0.00001).find((g) => g.index === to.index);
++      if (!old || !next || old.opacity < 0.95 || next.opacity < 0.95 ||
++        old.quad.some((p, k) => Math.hypot(p.x - next.quad[k].x, p.y - next.quad[k].y) > 0.2)) continue;
++      const sample = Math.ceil(frame - EXACT);
++      transfer.add(`${sample}:${from.word}:${from.index}`);
++      transfer.add(`${sample}:${to.word}:${to.index}`);
++    }
++  }
++
++  const notes: [number, number][] = [];
++  for (const w of layout.words.values()) {
++    const reading = board.readingIntervals?.[w.i];
++    if (reading) {
++      const during = transits.findIndex((m, i) => m && first + i >= reading.start && first + i <= reading.end);
++      if (during >= 0) result.push({board: name, rule: 'camera-reading', severity: 'error', word: w.i,
++        from: first + during, detail: `camera moves during the protected reading of "${w.text}"`});
++      const onset = Math.round(WORDS[w.i].start_s * FPS);
++      const end = Math.round(w.end * FPS);
++      if (end - onset >= FPS) notes.push([onset, end]);
++    }
++
++    const states = Array.from({length: cut - first}, (_, i) => wordStateAt(board, w.i, first + i));
++    const samples = states.map((m, i) => {
++      const f = first + i;
++      const glyphs = readingGlyphs(board, w, f, m).map((g) => ({...g, area: frameArea(g.quad)}));
++      if (glyphs.some((g) => g.opacity >= 0.5 && g.area >= 4)) ink.add(f);
++      return {m, glyphs, zoom: camForBlock(board, w.block, f).zoom};
++    });
++    const local = (f: number) => [samples[f - first - 1], samples[f - first]] as const;
++    const visible = (s: typeof samples[number]) => s.glyphs.some((g) => g.opacity > 0.02 && g.area >= MIN_INK_AREA);
++    audit(`"${w.text}"`, (f) => {
++      const [a, b] = local(f);
++      return visible(a) && visible(b) ? wordDelta(a.m, b.m, b.zoom) : undefined;
++    }, w);
++
++    for (const glyph of samples[0].glyphs) {
++      const letterDelta = (a: WordMod, b: WordMod, zoom: number): Delta => {
++        const x = a.letters?.[glyph.index] ?? letterIdentity(), y = b.letters?.[glyph.index] ?? letterIdentity();
++        return {travel: Math.hypot(y.dx - x.dx, y.dy - x.dy) * zoom, angle: angleDelta(x.rot, y.rot),
++          scale: Math.max(scaleDelta(x.s * (x.sx ?? 1), y.s * (y.sx ?? 1)), scaleDelta(x.s * (x.sy ?? 1), y.s * (y.sy ?? 1)))};
++      };
++      const onScreen = (g: typeof glyph) => g.opacity > 0.02 && g.area >= MIN_INK_AREA;
++      const glyphIndex = samples[0].glyphs.indexOf(glyph);
++      audit(`"${w.text}" glyph ${glyph.index + 1}`, (f) => {
++        const [a, b] = local(f);
++        if (!onScreen(a.glyphs[glyphIndex]) || !onScreen(b.glyphs[glyphIndex])) return undefined;
++        return letterDelta(a.m, b.m, b.zoom);
++      }, w);
++    }
++
++    const pops = new Set<number>();
++    for (let f = first + 1; f < cut; f++) {
++      const [a, b] = local(f);
++      const stillWord = !changed(wordDelta(a.m, b.m, b.zoom));
++      for (const [k, now] of b.glyphs.entries()) {
++        const before = a.glyphs[k];
++        if (!stillWord || Math.abs(now.opacity - before.opacity) < EXACT ||
++          !((now.opacity > 0.02 && now.area >= MIN_INK_AREA) || (before.opacity > 0.02 && before.area >= MIN_INK_AREA)) ||
++          transfer.has(`${f}:${w.i}:${now.index}`)) continue;
++        const x = a.m.letters?.[now.index] ?? letterIdentity(), y = b.m.letters?.[now.index] ?? letterIdentity();
++        if (Math.abs(x.dx - y.dx) + Math.abs(x.dy - y.dy) + angleDelta(x.rot, y.rot) +
++          scaleDelta(x.s * (x.sx ?? 1), y.s * (y.sx ?? 1)) + scaleDelta(x.s * (x.sy ?? 1), y.s * (y.sy ?? 1)) <= EXACT) pops.add(f);
++      }
++    }
++    if (pops.size) result.push({board: name, rule: 'pop', severity: 'error', word: w.i, from: Math.min(...pops),
++      to: Math.max(...pops), frames: pops.size, detail: `"${w.text}" changes ink opacity in place`});
++  }
++
++  let empty = first;
++  for (let f = first; f <= cut; f++) {
++    if (f < cut && !ink.has(f) && !(board.fadeToBlack && f >= board.fadeToBlack.from * FPS)) continue;
++    if (f - empty > 12) result.push({board: name, rule: 'empty', severity: 'warn', from: empty, to: f - 1,
++      frames: f - empty, detail: `${f - empty} frames without visible type`});
++    empty = f + 1;
++  }
++
++  let hold = first;
++  for (let f = first + 1; f <= cut; f++) {
++    if (f < cut && !motion.has(f) && !notes.some(([a, b]) => f >= a && f <= b) &&
++      !(board.fadeToBlack && f >= board.fadeToBlack.from * FPS)) continue;
++    if (f - hold > FPS) result.push({board: name, rule: 'motion-gap', severity: 'warn', from: hold, to: f - 1,
++      frames: f - hold, detail: `${f - hold} frames with no decisive camera or type movement outside sustained notes`});
++    hold = f;
++  }
++  return result;
++}

@@ -9,6 +9,7 @@ import {getVerb} from '../engine';
 import {wordStateAt} from '../engine/wordState';
 import {follow} from '../effects';
 import {isPair, isUnit, type BoundLine} from './bind';
+import type {StageCue} from '../score';
 import type {Located, Source} from './place';
 import {inferredTargets, syllableTargets, type SyllableTarget} from './syllables';
 
@@ -169,10 +170,20 @@ export function setCamera(ctx: EngineContext, work: SceneWork, draft: boolean) {
   }
 }
 
-export function lowerEntrance(ctx: EngineContext, work: BlockWork, previous?: SceneWork) {
+export function lowerEntrance(ctx: EngineContext, work: BlockWork, previous?: SceneWork,
+  staged?: ReadonlyMap<number, StageCue>) {
   const {board, item, source, scene} = work;
   const {enter} = item.card;
   work.targets = targetsFor(work);
+  const overrides = work.targets.flatMap(({word}) => {
+    const cue = staged?.get(word);
+    if (!cue) return [];
+    if (!isUnit(enter) || cue.effect.def.kind !== 'enter' || cue.effect.def.source !== 'none' ||
+        !Number.isInteger(cue.start) || !Number.isInteger(cue.frames) || cue.frames < 1) {
+      throw new Error(`${item.id}: invalid staged entrance for word ${word}`);
+    }
+    return [{word, cue}];
+  });
   const echoStart = item.start;
   const first = echoStart ?? Math.min(...work.targets.map((target) => target.sungFrame!));
   const block = board.blocks[work.index];
@@ -236,14 +247,26 @@ export function lowerEntrance(ctx: EngineContext, work: BlockWork, previous?: Sc
   const firstDuration = enter.def.span?.(work.targets[0].glyphs, enter.params, ctx) ?? enter.def.duration(enter.params, ctx);
   const lead = enter.def.source === 'edge' && !enter.cascade ? Math.min(firstDuration, 9) : firstDuration;
   const schedule = scheduleUnit(enter, ctx, work.targets, echoStart ?? first - lead);
-  const ranges = spans(schedule);
-  work.schedule = schedule;
+  const overridden = new Set(overrides.map(({word}) => word));
+  const standard = schedule.filter(({word}) => !overridden.has(word));
+  const explicit = overrides.map(({word, cue}) => ({word, span: {start: cue.start, end: cue.start + cue.frames}}));
+  const ranges = spans([...standard, ...explicit]);
+  work.schedule = overrides.length ? undefined : schedule;
   work.start = Math.min(...ranges.map((span) => span.start));
   work.landing = Math.max(...ranges.map((span) => span.end));
   work.release = Math.ceil(work.start + (work.landing - work.start) * (enter.def.release ?? 1));
-  for (const entry of schedule) work.landingByWord.set(entry.word, Math.max(...spans([entry]).map(({end}) => end)));
-  add(lowerUnit(enter, ctx, {schedule, anchor: source.anchor}));
-  block.emerge = {move: 'effect', name, from: source.anchor, at: at(work.start)};
+  for (const entry of [...standard, ...explicit]) work.landingByWord.set(entry.word, Math.max(...spans([entry]).map(({end}) => end)));
+  if (standard.length) {
+    add(lowerUnit(enter, ctx, {schedule: standard, anchor: source.anchor}));
+    block.emerge = {move: 'effect', name, from: source.anchor, at: at(work.start)};
+  }
+  for (const [i, {word, cue}] of overrides.entries()) {
+    const key = `${cue.effect.name} · staged entrance · ${item.id}.${word}`;
+    scene.entries.push([key, lowerUnit(cue.effect, ctx, {schedule: [explicit[i]]})]);
+    if (standard.length === 0 && i === 0) block.emerge = {move: 'effect', name: key, from: source.anchor, at: at(cue.start)};
+    else (block.verb ??= []).push({name: key, word, at: at(cue.start)});
+  }
+
 }
 
 export function finalizeEffects(work: SceneWork) {
