@@ -72,6 +72,8 @@ export interface EngineConfig {
   /** Loudness 0 to 1 sampled at 10 Hz (optional; a few verbs scale with it). */
   energy?: number[];
   palette: Palette;
+  /** Enable hard shadows behind text and plates unless overridden by a word style. */
+  shadow?: boolean;
   fonts: Record<FontKey, FontDef>;
   /** Font of a block when neither the block nor its board names one (default: the first font). */
   defaultFont?: FontKey;
@@ -104,6 +106,7 @@ export let WORDS: SongWord[] = [];
 export let LINES: SongLine[] = [];
 export let BEATS: SongBeat[] = [];
 export let ENERGY: number[] = [];
+export let SHADOW = false;
 export let PALETTE: Palette = {ground: '#000000', shadow: '#000000', paper: '#FFFFFF', accent: '#FF0000', accent2: '#00FF00', highlight: '#FFFF00'};
 export let FONTS: Record<FontKey, FontDef> = {};
 export let DEFAULT_FONT: FontKey = '';
@@ -191,6 +194,7 @@ export const configureEngine = (c: EngineConfig): void => {
     if (x.some(Number.isNaN) || y.some(Number.isNaN)) return a;
     return '#' + x.map((v, i) => Math.round(v + (y[i] - v) * k).toString(16).padStart(2, '0')).join('');
   };
+  SHADOW = c.shadow ?? false;
   PALETTE = {...c.palette, light: c.palette.light ?? [c.palette.paper, c.palette.highlight, c.palette.accent],
     body: c.palette.body ?? c.palette.shadow, detail: c.palette.detail ?? mix(c.palette.ground, c.palette.paper, 0.6),
     ground2: c.palette.ground2 ?? mix(c.palette.ground, c.palette.shadow, 0.6)};

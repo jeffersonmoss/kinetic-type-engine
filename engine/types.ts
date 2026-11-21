@@ -90,10 +90,10 @@ export interface WordOpts {
   tier?: Tier;
   /** Replace the displayed text (e.g. strip punctuation). */
   text?: string;
-  /** Solid plate drawn behind the word (road sign, slab). pad in px of word size fraction (default 0.18). */
+  /** Solid plate drawn behind the word (road sign, slab). Pad is a fraction of word size (default 0.18). Shadow follows the look unless set here. */
   plate?: {fill: string; pad?: number; shadow?: boolean};
   replace?: LetterArt[];
-  /** Hard offset shadow in the palette's `shadow` (6, 6 screen px). Default on for E2/E3 on dark grounds. */
+  /** Hard offset shadow in the palette's `shadow` (6, 6 screen px). Off by default. A look may enable it for E2/E3 on dark grounds. */
   shadow?: boolean;
   /** Extra uniform scale (applied after layout; rarely needed). */
   scale?: number;

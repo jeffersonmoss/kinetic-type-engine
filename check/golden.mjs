@@ -46,6 +46,9 @@ try {
             const frame = first + Math.round((last - first) * i / 11);
             const t = frame / FPS;
             const markup = renderToStaticMarkup(<TypeStage boards={boards} t={t} />);
+            if (fixture === 'pure type' && markup.includes('fill="' + pureTypeConfig.palette.shadow + '"')) {
+              throw new Error('the default look emitted a text or plate shadow');
+            }
             const recoloured = fixture === 'pure type' && i === 6
               ? renderToStaticMarkup(<TypeStage boards={[{...board, colour: '#4EDEA2'}]} t={t} />)
               : undefined;

@@ -1,6 +1,6 @@
 // The type engine's renderer: draws boards (laid-out lyric blocks) through the virtual camera, one SVG.
 import React from 'react';
-import {FPS, HEIGHT, PALETTE, WIDTH} from './config';
+import {FPS, HEIGHT, PALETTE, SHADOW, WIDTH} from './config';
 import {SCREEN_CAM, cameraAt, cameraTransform, toScreen} from './camera';
 import {carriedOff, carryCam} from './carry';
 import {Ground, Vignette} from './ground';
@@ -63,7 +63,8 @@ const WordView: React.FC<{board: Board; L: BoardLayout; b: BlockGeom; g: WordGeo
   const tf = (dx: number, dy: number) => `translate(${cx + dx} ${cy + dy}) rotate(${m.rot})${m.skewY ? ` skewY(${m.skewY})` : ''} scale(${wsx} ${wsy}) translate(${-cx} ${-cy})`;
   const fill = m.tint ?? m.colour ?? colour;
   const fam = FONT_FAMILY[g.font], st = FONT_STYLE[g.font];
-  const shadowOn = g.opts.shadow ?? (g.tier >= 2 && !isLightGround(board.bg));
+  const shadowOn = g.opts.shadow ?? (SHADOW && g.tier >= 2 && !isLightGround(board.bg));
+  const plateShadowOn = g.opts.plate?.shadow ?? SHADOW;
   const shOff = rot({x: 6 / cam.zoom, y: 6 / cam.zoom}, -(cam.rot + b.angle));
   const perLetter = !!m.letters || !!g.opts.replace?.length;
   const xs = letterXs(g);
@@ -110,7 +111,7 @@ const WordView: React.FC<{board: Board; L: BoardLayout; b: BlockGeom; g: WordGeo
         {m.underlay}
         {g.opts.plate && (
           <>
-            {g.opts.plate.shadow !== false && <rect x={g.x - pad + shOff.x} y={g.y - pad + shOff.y} width={g.w + 2 * pad} height={g.boxH + 2 * pad} fill={PALETTE.shadow} />}
+            {plateShadowOn && <rect x={g.x - pad + shOff.x} y={g.y - pad + shOff.y} width={g.w + 2 * pad} height={g.boxH + 2 * pad} fill={PALETTE.shadow} />}
             <rect x={g.x - pad} y={g.y - pad} width={g.w + 2 * pad} height={g.boxH + 2 * pad} fill={g.opts.plate.fill} />
           </>
         )}
@@ -138,7 +139,7 @@ const WordView: React.FC<{board: Board; L: BoardLayout; b: BlockGeom; g: WordGeo
               <g>
                 {g.opts.plate && (
                   <>
-                    {g.opts.plate.shadow !== false && <rect x={tx0 + shOff.x} y={g.y - pad + shOff.y} width={tx1 - tx0} height={g.boxH + 2 * pad} fill={PALETTE.shadow} />}
+                    {plateShadowOn && <rect x={tx0 + shOff.x} y={g.y - pad + shOff.y} width={tx1 - tx0} height={g.boxH + 2 * pad} fill={PALETTE.shadow} />}
                     <rect x={tx0} y={g.y - pad} width={tx1 - tx0} height={g.boxH + 2 * pad} fill={g.opts.plate.fill} />
                   </>
                 )}
@@ -162,7 +163,7 @@ const WordView: React.FC<{board: Board; L: BoardLayout; b: BlockGeom; g: WordGeo
           {m.underlay}
           {g.opts.plate && (
             <>
-              {g.opts.plate.shadow !== false && <rect x={g.x - pad + shOff.x} y={g.y - pad + shOff.y} width={g.w + 2 * pad} height={g.boxH + 2 * pad} fill={PALETTE.shadow} />}
+              {plateShadowOn && <rect x={g.x - pad + shOff.x} y={g.y - pad + shOff.y} width={g.w + 2 * pad} height={g.boxH + 2 * pad} fill={PALETTE.shadow} />}
               <rect x={g.x - pad} y={g.y - pad} width={g.w + 2 * pad} height={g.boxH + 2 * pad} fill={g.opts.plate.fill} />
             </>
           )}
