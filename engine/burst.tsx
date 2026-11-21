@@ -1,5 +1,6 @@
 // Burst: paper triangles and dots thrown radially with gravity. One <path> per colour, seeded, pure.
 import React from 'react';
+import {scoped} from './scope';
 import {PALETTE} from './config';
 import type {Pt} from './types';
 import {dotsPath, rand, rot} from './util';
@@ -50,6 +51,6 @@ export const burstPaths = (o: BurstOpts): {colour: string; d: string}[] => {
 };
 
 /** SVG group of a burst in the parent's coordinate space. */
-export const Burst: React.FC<BurstOpts> = (props) => (
+export const Burst: React.FC<BurstOpts> = scoped((props) => (
   <g>{burstPaths(props).map((p, k) => <path key={k} d={p.d} fill={p.colour} />)}</g>
-);
+));

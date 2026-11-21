@@ -3,6 +3,7 @@
 // edge, flip over (its back shows), tear along a rule into two pieces, unroll from an edge, slide. Each transform lasts at
 // least 8 frames; panelTrack() registers the outline for the validator's motion checks. Pure function of song time.
 import React from 'react';
+import {scoped} from './scope';
 import {FPS, PALETTE} from './config';
 import type {TrackedElement} from './motionCheck';
 import type {Pt} from './types';
@@ -93,7 +94,7 @@ export const panelStateAt = (p: PanelDef, t: number): PanelState => {
   return s;
 };
 
-const Markings: React.FC<{p: PanelDef; ink: string}> = ({p, ink}) => {
+const Markings: React.FC<{p: PanelDef; ink: string}> = scoped(({p, ink}) => {
   const {w, h} = p;
   const sw = Math.max(2, Math.min(w, h) * 0.012);
   const line = (x1: number, y1: number, x2: number, y2: number, k: string, op = 0.35) => <line key={k} x1={x1} y1={y1} x2={x2} y2={y2} stroke={ink} strokeWidth={sw} opacity={op} />;
@@ -110,8 +111,8 @@ const Markings: React.FC<{p: PanelDef; ink: string}> = ({p, ink}) => {
     case 'book': return <g>{line(w / 2, 0, w / 2, h, 'sp', 0.45)}</g>;
     case 'slab': default: return null;
   }
-};
-const Bars: React.FC<{p: PanelDef; ink: string; t: number}> = ({p, ink, t}) => {
+});
+const Bars: React.FC<{p: PanelDef; ink: string; t: number}> = scoped(({p, ink, t}) => {
   const k = p.barsUntil === undefined ? 1 : 1 - Math.min(1, Math.max(0, ((t - p.barsUntil) * FPS) / 8));
   if (k <= 0) return null;
   // each bar closes from both ends inward along its longer side
@@ -121,9 +122,9 @@ const Bars: React.FC<{p: PanelDef; ink: string; t: number}> = ({p, ink, t}) => {
     const ww = long ? W * k : W, hh = long ? H : H * k;
     return <rect key={j} x={cx - ww / 2} y={cy - hh / 2} width={ww} height={hh} fill={ink} opacity={0.3} />;
   })}</g>;
-};
+});
 /** A panel at song seconds t; children are drawn on it (in its frame, origin top-left) and take its transforms. */
-export const Panel: React.FC<{def: PanelDef; t: number; uid?: string; children?: React.ReactNode}> = ({def: p, t, uid, children}) => {
+export const Panel: React.FC<{def: PanelDef; t: number; uid?: string; children?: React.ReactNode}> = scoped(({def: p, t, uid, children}) => {
   const s = panelStateAt(p, t);
   if (!s.visible) return null;
   const fill = s.back ? s.backColour ?? PALETTE.shadow : p.colour ?? PALETTE.paper;
@@ -160,7 +161,7 @@ export const Panel: React.FC<{def: PanelDef; t: number; uid?: string; children?:
       <g clipPath={edgeClip ? `url(#${id}-reveal)` : undefined}>{content}</g>
     </g>
   );
-};
+});
 
 /** Outline of a panel at t (in the space it is drawn in), for keepClear (do not: a panel is a ground) or tracking. */
 export const panelQuad = (p: PanelDef, t: number): Pt[] | null => {

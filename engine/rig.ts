@@ -2,7 +2,7 @@
 // through a board. Between keys the rig DRIFTs (R 0.4 degrees per second, zoom 1.5 percent per second, toward the next
 // move) unless a `hold` key says `still`. Whole-camera moves are exempt from the 32 px per frame cap but every key is
 // eased and a quarter turn takes at least 8 frames. Pure function of (board, frame), cached per board.
-import {BOX_H, BOX_W, FPS, HALF_DIAGONAL, HEIGHT, WIDTH} from './config';
+import {BOX_H, BOX_W, FPS, HALF_DIAGONAL, RIG_CENTRE} from './config';
 import {layoutBoard, wordCorners} from './layout';
 import {resolveAnchor} from './letters';
 import {carryCam} from './carry';
@@ -39,11 +39,11 @@ export const rampEase = (frames: number, ramp = 6) => (p: number) => {
 
 export const toScreenCam = (cam: CameraState, p: Pt): Pt => {
   const q = rot({x: (p.x - cam.x) * cam.zoom, y: (p.y - cam.y) * cam.zoom}, cam.rot);
-  return {x: q.x + WIDTH / 2, y: q.y + HEIGHT / 2};
+  return {x: q.x + RIG_CENTRE.x, y: q.y + RIG_CENTRE.y};
 };
 /** Camera centre that puts world point P at screen point S for a given angle and zoom. */
 export const solveCentre = (P: Pt, S: Pt, r: number, z: number): Pt => {
-  const d = rot({x: S.x - WIDTH / 2, y: S.y - HEIGHT / 2}, -r);
+  const d = rot({x: S.x - RIG_CENTRE.x, y: S.y - RIG_CENTRE.y}, -r);
   return {x: P.x - d.x / z, y: P.y - d.y / z};
 };
 
@@ -102,7 +102,7 @@ export const resolveTarget = (L: BoardLayout, to: RigTarget | undefined, base: C
   if (to.cover && fb.cover) pose.zoom = (HALF_DIAGONAL / fb.cover) * 1.04;
   else if (to.cap && fb.cap) pose.zoom = to.cap / fb.cap;
   else if (to.fill) pose.zoom = fit(fb.pts, pose.rot, to.fill);
-  const S = to.screen ?? {x: WIDTH / 2, y: HEIGHT / 2};
+  const S = to.screen ?? RIG_CENTRE;
   const c = solveCentre(C, S, pose.rot, pose.zoom);
   pose.x = c.x; pose.y = c.y;
   return {pose, centre: C};
@@ -142,12 +142,12 @@ const resolve = (board: Board): RigCache => {
   const startF = board.start * FPS;
   const firstBlockPose = (): CameraState => {
     const b = L.blocks[0];
-    if (!b) return {x: WIDTH / 2, y: HEIGHT / 2, zoom: 1, rot: 0};
+    if (!b) return {...RIG_CENTRE, zoom: 1, rot: 0};
     const pts = b.words.flatMap((w) => wordCorners(b, w));
     const C = centreOf(pts);
     return {x: C.x, y: C.y, zoom: Math.min(1.6, fit(pts, 0, 0.9)), rot: 0};
   };
-  const pose0 = board.rigStart ? resolveTarget(L, board.rigStart, {x: WIDTH / 2, y: HEIGHT / 2, zoom: 1, rot: 0}, board.start).pose : firstBlockPose();
+  const pose0 = board.rigStart ? resolveTarget(L, board.rigStart, {...RIG_CENTRE, zoom: 1, rot: 0}, board.start).pose : firstBlockPose();
   const keys = [...(board.rig ?? [])].sort((a, b) => a.t - b.t);
   const moves: RigMove[] = [];
   let nominal = pose0;

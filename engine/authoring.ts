@@ -1,7 +1,8 @@
 // Authoring helpers : small builders for the moves that need more than one declaration (a morph, a
 // relight bind, a TIP with its rig tilt, a PORTAL with its wipe and dive, the STEP keys of a STACK). Each returns plain
 // data to put on a board; nothing here keeps state.
-import {FPS, HEIGHT, PALETTE, WIDTH, WORDS} from './config';
+import {FPS, PALETTE, RIG_CENTRE, SAFE_BOX, WORDS} from './config';
+import {WIDE_LIMITS} from './format';
 import type {AnchorRef, Board, Emergence, FrameEdge, GroundWipe, Pt, RigKey, RigTarget, SlideSource, VerbCue} from './types';
 import {blockToWorld, layoutBoard} from './layout';
 
@@ -118,11 +119,11 @@ export const quarterClearFrames = (deg: number) => Math.ceil(18 + (9 * (Math.min
  *  lands ahead of the camera, inside the safe frame. Give the block `rows: [n]` and a wide `width`. The key runs from
  *  `lead` frames (default 12; negative starts after it, so the first word keeps its 20 frames) before the first word is sung to the last word's sung frame, ending with the last word at
  *  `screen` (default 62 percent across, at the frame's mid height). Validator `run-speed` checks the 22 px cap. */
-export const RUN_SPEED = 22;
+export const RUN_SPEED = WIDE_LIMITS.runSpeed;
 export const runTrack = (o: {words: [number, number]; lead?: number; screen?: Pt; label?: string}): RigKey => {
   const lead = o.lead ?? 12;
   const f0 = Math.round(sungAt(o.words[0]) * FPS) - lead, f1 = Math.round(sungAt(o.words[1]) * FPS);
-  return {t: f0 / FPS, kind: 'track', frames: Math.max(6, f1 - f0), ease: 'linear', to: {frame: {word: o.words[1]}, screen: o.screen ?? {x: 0.62 * WIDTH, y: HEIGHT / 2}},
+  return {t: f0 / FPS, kind: 'track', frames: Math.max(6, f1 - f0), ease: 'linear', to: {frame: {word: o.words[1]}, screen: o.screen ?? {x: SAFE_BOX.x + (745.6 / 1184) * SAFE_BOX.width, y: RIG_CENTRE.y}},
     label: o.label ?? 'RUN', name: 'RUN'};
 };
 
@@ -155,7 +156,7 @@ export const cameraFollow = (o: {t: number; frames: number; words: number[]; boa
     return pts;
   };
   const lag = (o.lag ?? 12) / FPS;
-  const screen = o.screen ?? {x: WIDTH / 2, y: HEIGHT / 2};
+  const screen = o.screen ?? RIG_CENTRE;
   const ease = (x: number) => 0.5 - 0.5 * Math.cos(Math.PI * Math.min(1, Math.max(0, x)));
   return {
     t: o.t, kind: 'crane', frames: o.frames, to: o.to, label: o.label ?? 'follow',

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
@@ -10,8 +11,8 @@ import * as esbuild from 'esbuild';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const baseline = new URL('../fixtures/golden/sha256.json', import.meta.url);
 const args = process.argv.slice(2);
-assert(args.length <= 1 && args.every((arg) => ['--update', '--self-test', '--print', '--frame-core'].includes(arg)),
-  'usage: node check/golden.mjs [--update | --self-test | --print | --frame-core]');
+assert(args.length <= 1 && args.every((arg) => ['--update', '--self-test', '--print', '--frame-core', '--context-test'].includes(arg)),
+  'usage: node check/golden.mjs [--update | --self-test | --print | --frame-core | --context-test]');
 
 const tmp = mkdtempSync(join(tmpdir(), 'kte-build-golden-'));
 const cleanup = () => rmSync(tmp, {recursive: true, force: true});
@@ -36,6 +37,9 @@ try {
         import {BOARDS} from './example/boards';
         import {configureEngine, FPS} from './engine/config';
         import {TypeStage} from './engine/TypeStage';
+        import {checkScopes as checkSSRScopes} from './fixtures/golden/contexts';
+        export {checkPortraitGiant, interleavedContexts, soloContext} from './fixtures/golden/contexts';
+        export const checkScopes = () => checkSSRScopes(renderToStaticMarkup);
         export {checkFrameCore} from './fixtures/golden/frame-core';
         import {pureTypeBoard, pureTypeConfig} from './fixtures/golden/pure-type';
 
@@ -65,9 +69,20 @@ try {
     },
     bundle: true, platform: 'node', format: 'cjs', jsx: 'automatic', outfile: bundle,
   });
-  const {renderSamples, checkFrameCore} = createRequire(import.meta.url)(bundle);
-  if (args.includes('--frame-core')) checkFrameCore();
-  else checkGoldens(renderSamples());
+  const checks = createRequire(import.meta.url)(bundle);
+  if (args.includes('--frame-core')) checks.checkFrameCore();
+  else if (args.includes('--context-test')) {
+    checks.checkScopes();
+    const together = checks.interleavedContexts();
+    const alone = ['wide', 'portrait', 'wide'].map((format) => JSON.parse(execFileSync(process.execPath, [
+      '-e', 'process.stdout.write(JSON.stringify(require(process.argv[1]).soloContext(process.argv[2])))',
+      bundle, format,
+    ], {encoding: 'utf8', timeout: 10000})));
+    assert.deepEqual(JSON.parse(JSON.stringify(together)), alone);
+    console.log('127(b) wide, portrait, wide with interleaved frame requests matched three solo processes.');
+    checks.checkPortraitGiant();
+    checkGoldens(checks.renderSamples());
+  } else checkGoldens(checks.renderSamples());
 } finally {
   cleanup();
   esbuild.stop();

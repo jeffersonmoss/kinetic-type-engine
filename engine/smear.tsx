@@ -24,6 +24,7 @@
 // Cost: every sample re-renders the whole board, panels, evenodd panel-cover clips and clip masks included, so a
 // transit frame costs up to 17 board renders (16 samples and the sharp pass). Each sample gets its own SVG id prefix.
 import React from 'react';
+import {scoped} from './scope';
 import {FPS, HEIGHT, WIDTH} from './config';
 import {TypeStage, type TypeStageProps} from './TypeStage';
 import {SMEAR_SPAN, smearSamplesAt} from './smearSampling';
@@ -31,7 +32,7 @@ import {SMEAR_SPAN, smearSamplesAt} from './smearSampling';
 export {SMEAR_MAX, SMEAR_MIN, SMEAR_PX, SMEAR_SHUTTER, SMEAR_SPAN, drawnOpacityAt, inRigTransit, rigDisplacementAt, smearSampleFrames, smearSamplesAt, smearWordPass} from './smearSampling';
 
 /** A TypeStage with true motion blur on rig transits. Same props as TypeStage. */
-export const SmearStage: React.FC<TypeStageProps> = (props) => {
+export const SmearStage: React.FC<TypeStageProps> = scoped((props) => {
   const f = props.t * FPS;
   const n = smearSamplesAt(props.boards, f);
   if (n <= 1) return <TypeStage {...props} />;
@@ -49,4 +50,4 @@ export const SmearStage: React.FC<TypeStageProps> = (props) => {
       <TypeStage {...props} uid={`${uid}sh`} smearPass="sharp" sharpFrame={f} />
     </div>
   );
-};
+});

@@ -3,8 +3,9 @@
 // readability); rig transits are exempt and the words sung during one are checked when it ends; speed is the smaller
 // of screen and board-relative speed (the rig is exempt from the cap); every block must declare its emergence from a
 // resolvable anchor; stances, handoffs and rig keys are checked.
-import {FPS, FORMAT, HANDOFFS, HEIGHT, LINES, WIDTH, WORDS, bannedIn} from './config';
+import {FPS, FORMAT, HANDOFFS, HEIGHT, LIMITS, LINES, SAFE_BOX, WIDTH, WORDS, bannedIn} from './config';
 import {camForBlock, cameraAt, toScreen} from './camera';
+import {WIDE_LIMITS} from './format';
 import {groundAt} from './ground';
 import {slideSource} from './emergence/slide';
 import {blockToWorld, layoutBoard} from './layout';
@@ -63,15 +64,15 @@ export const stanceOf = (deg: number): Stance => {
 };
 /** Frames a quarter turn must be held while sung, and the cap height it needs. */
 export const QUARTER_HOLD = 20;
-export const QUARTER_MIN_CAP = 90;
+export const QUARTER_MIN_CAP = WIDE_LIMITS.quarterMinCap;
 /** Fable item 46: a sung word's cap height on screen while it is read. */
-export const SUNG_MIN_CAP = 56;
+export const SUNG_MIN_CAP = WIDE_LIMITS.legacySungMinCap;
 /** Fable item 29: frames a word stays whole inside the margin after its sung frame (cap 200 px or more: 12). */
 export const MARGIN_WHOLE = 20;
 export const MARGIN_WHOLE_BIG = 12;
-export const MARGIN_BIG_CAP = 200;
+export const MARGIN_BIG_CAP = WIDE_LIMITS.marginBigCap;
 /** Tolerance (screen px) for matching a handoff frame. */
-export const HANDOFF_TOL = 3;
+export const HANDOFF_TOL = WIDE_LIMITS.handoffTolerance;
 
 /** Screen quad (TL, TR, BR, BL) of a word under its render state (through `cam`, default the block's camera at f). */
 const screenQuad = (board: Board, w: WordGeom, m: WordMod, f: number, camIn?: CameraState): Pt[] => {
@@ -92,11 +93,11 @@ type Agg = {v: Violation; worst: number};
 
 /** K2 picture words: the graphic that draws the word is wholly in frame, at least PICTURE_MIN_SIDE screen px on its
  *  longer side and at full opacity (0.9) from the sung frame for PICTURE_FRAMES frames. */
-export const PICTURE_MIN_SIDE = 180;
+export const PICTURE_MIN_SIDE = WIDE_LIMITS.pictureMinSide;
 export const PICTURE_FRAMES = 15;
 /** Checks one board. `opts.step` samples every n-th frame (default 1: every frame). */
 /** Fable item 38 (Huang item 37): a word in its first 15 frames stays this far from a keep-clear prop. */
-export const PROP_CLEAR = 24;
+export const PROP_CLEAR = WIDE_LIMITS.propClear;
 export const PROP_CLEAR_FRAMES = 15;
 export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardReport => {
   const step = board.readingIntervals ? 1 : opts.step ?? 1;
@@ -371,9 +372,9 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
         if (j === i) continue;
         const o = states.get(j)!;
         if (!o.vis || isExempt(i, j)) continue;
-        if (f < w.sf || f < L.words.get(j)!.sf) continue; // a word still making its entrance may pass over a neighbour
+        if (!board.readingIntervals?.[i] && (f < w.sf || f < L.words.get(j)!.sf)) continue; // a word still making its entrance may pass over a neighbour
         // KIT 89 and 90: a word turning in 3D, or (transitRules 'energy') in its first 12 frames of motion, may cross
-        if (o.m.turn || transitExempt(board, j, f)) continue;
+        if (!board.readingIntervals?.[i] && (o.m.turn || transitExempt(board, j, f))) continue;
         if (!polysOverlap(s.quad, o.quad, 3)) continue;
         // Fable item 31 (KIT 79.5 narrowed): with a panel between their layers the overlap is skipped only where the
         // panel covers it; ink already uncovered while it opens or folds is checked
@@ -413,14 +414,14 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
           continue;
         }
       }
-      if (moving && b.def.pin !== 'screen') continue; // rule 181.2: checked when the transit ends
+      if (!protectedReading && moving && b.def.pin !== 'screen') continue; // rule 181.2: checked when the transit ends
       // KIT 89: a word turning in 3D is in transit (edge-on is not a wipe); KIT 90: so is, under transitRules 'energy',
       // a word in its first 12 frames of motion. Both are checked again once they are still.
-      if (s.m.turn || transitExempt(board, i, f)) continue;
+      if (!protectedReading && (s.m.turn || transitExempt(board, i, f))) continue;
       if (f < (grace.get(i) ?? -Infinity)) continue; // rule 81.7: checked from 10 frames after the start handoff
       // rule 58: a held morph source waits exempt from the readability rules, but nothing may touch its ink (Fable
       // item 30 overruled the overlap exemption of KIT 79.4)
-      if (waiting(i, f)) { if (s.vis) overlapPass(i, w, s, f, base); continue; }
+      if (!protectedReading && waiting(i, f)) { if (s.vis) overlapPass(i, w, s, f, base); continue; }
       // Fable item 38a: a word printed on a page that a page above uncovers by folding (a DOOR flip) may complete up to
       // PANEL_REVEAL_GRACE frames after its sung frame; after that, and for anything else, the visibility check applies
       if (!s.shown && b.def.on && f < w.sf + PANEL_REVEAL_GRACE && (board.panels ?? []).some((p) => p.id !== b.def.on && panelSwinging(p, f / FPS))) continue;
@@ -428,24 +429,25 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
       // KIT 90: frames read at rest (shown, still, outside any rig transit), for `energy-read`
       if (energy && !wordMoving(board, i, f)) restFrames.set(i, (restFrames.get(i) ?? 0) + step);
       const xs = s.quad.map((p) => p.x), ys = s.quad.map((p) => p.y);
-      const over = Math.max(FORMAT.safeInsets.left - Math.min(...xs), Math.max(...xs) - (WIDTH - FORMAT.safeInsets.right), FORMAT.safeInsets.top - Math.min(...ys), Math.max(...ys) - (HEIGHT - FORMAT.safeInsets.bottom));
+      const over = Math.max(SAFE_BOX.x - Math.min(...xs), Math.max(...xs) - ((SAFE_BOX.x + SAFE_BOX.width)), SAFE_BOX.y - Math.min(...ys), Math.max(...ys) - ((SAFE_BOX.y + SAFE_BOX.height)));
       const capPx = w.h * Math.abs(s.m.sy) * bcam.zoom;
       // Fable item 29: a word stays whole inside the margin for 12 frames after its sung frame
       // if its cap is 200 px or more on screen (20 frames otherwise); after that it may be cropped, but never to less
       // than half its height in frame while its own line is still being sung (`crop-half`)
-      const wholeFor = capAtSung(i) >= MARGIN_BIG_CAP ? MARGIN_WHOLE_BIG : MARGIN_WHOLE;
-      if (over > 0.5 && f < w.sf + wholeFor) note(`margin${i}`, {...base, rule: 'margin', detail: `outside the ${FORMAT.id === 'wide' ? '48 px safe margin' : 'format safe box'} within ${wholeFor} frames of its sung frame`}, f, over);
-      if (f >= w.sf + wholeFor && f < lineSungEnd(w.line)) {
+      const wholeFor = capAtSung(i) >= LIMITS.marginBigCap ? MARGIN_WHOLE_BIG : MARGIN_WHOLE;
+      if (over > 0.5 && (protectedReading || f < w.sf + wholeFor)) note(`margin${i}`, {...base, rule: 'margin', detail: protectedReading ? 'outside the safe box during protected reading'
+        : `outside the ${FORMAT.id === 'wide' ? '48 px safe margin' : 'format safe box'} within ${wholeFor} frames of its sung frame`}, f, over);
+      if (!protectedReading && f >= w.sf + wholeFor && f < lineSungEnd(w.line)) {
         // a word wholly out of frame (the rig has moved on down a stack) is not cropped; a sliver of it is
         const kept = heightInFrame(s.quad);
         if (kept > 0.001 && kept < 0.5) note(`crop${i}`, {...base, rule: 'crop-half', detail: 'cropped by the frame edge to less than half its height while its line is still sung'}, f, 100 * (1 - kept));
       }
       // Fable item 46: a sung word is at least 56 px cap on screen while it is read
-      const minCap = SUNG_MIN_CAP;
+      const minCap = protectedReading ? LIMITS.sungMinCap : LIMITS.legacySungMinCap;
       if (capPx < minCap - 0.25) note(`cap${i}`, {...base, rule: 'sung-cap', detail: `cap height below ${minCap} px on screen`}, f, minCap - capPx);
       const ang = normDeg(b.angle + s.m.rot + bcam.rot);
       const st = stanceOf(ang);
-      if (!b.def.tower) {
+      if (!protectedReading && !b.def.tower) {
         if (st === 'inverted') note(`inv${i}`, {...base, rule: 'stance', detail: 'turned 100 degrees or more from level while sung (upside down)'}, f, Math.abs(ang));
         else if (st === 'between') note(`st${i}`, {...base, rule: 'stance', detail: 'between stances while sung (level 8, tilt 12 or 25 plus or minus 4, quarter 90 plus or minus 5)'}, f, Math.abs(ang));
         else if (st === 'quarter-' || st === 'quarter+') {
@@ -453,7 +455,7 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
           if (st === 'quarter+' && !(b.words.length === 1 && [...w.text].filter((c) => /\p{L}/u.test(c)).length <= 6))
             note(`qp${i}`, {...base, rule: 'stance', detail: '+90 (reading top to bottom) is only for a single word of at most 6 letters'}, f, Math.abs(ang));
           if (st === 'quarter-' && rowWords > 3) note(`qw${i}`, {...base, rule: 'stance', detail: `a quarter turn carries at most 3 words per line (this block has ${rowWords})`}, f, rowWords);
-          if (capPx < QUARTER_MIN_CAP - 0.25) note(`qc${i}`, {...base, rule: 'stance', detail: `a quarter-turned word needs a cap height of at least ${QUARTER_MIN_CAP} px`}, f, QUARTER_MIN_CAP - capPx);
+          if (capPx < LIMITS.quarterMinCap - 0.25) note(`qc${i}`, {...base, rule: 'stance', detail: `a quarter-turned word needs a cap height of at least ${LIMITS.quarterMinCap} px`}, f, LIMITS.quarterMinCap - capPx);
           const q = quarterRun.get(i);
           if (q) q.len += step; else quarterRun.set(i, {start: f, len: step, worst: 0});
         }
@@ -462,7 +464,7 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
       overlapPass(i, w, s, f, base);
       clearScreen.forEach((poly, k) => {
         if (polysOverlap(s.quad, poly, 3)) note(`gr${i}-${k}`, {...base, rule: 'overlap', detail: `overlaps keepClear graphic ${k}`}, f, 1);
-        else if (f >= w.sf && f < w.sf + PROP_CLEAR_FRAMES && polysOverlap(s.quad, poly, -PROP_CLEAR)) note(`pc${i}-${k}`, {...base, rule: 'prop-clear', detail: `within ${PROP_CLEAR} px of keepClear shape ${k} in its first ${PROP_CLEAR_FRAMES} frames (Fable item 38)`}, f, 1);
+        else if (f >= w.sf && f < w.sf + PROP_CLEAR_FRAMES && polysOverlap(s.quad, poly, -LIMITS.propClear)) note(`pc${i}-${k}`, {...base, rule: 'prop-clear', detail: `within ${LIMITS.propClear} px of keepClear shape ${k} in its first ${PROP_CLEAR_FRAMES} frames (Fable item 38)`}, f, 1);
       });
     }
     // Reading load per line
@@ -501,7 +503,7 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
       const over = Math.max(-Math.min(...xs), Math.max(...xs) - WIDTH, -Math.min(...ys), Math.max(...ys) - HEIGHT);
       if (over > 0.5) note(`picf${i}`, {...base, detail: `picture graphic "${id}" is not wholly in frame`}, f, over);
       const side = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
-      if (side < PICTURE_MIN_SIDE - 0.25) note(`pics${i}`, {...base, detail: `picture graphic "${id}" is under ${PICTURE_MIN_SIDE} px on its longer side`}, f, PICTURE_MIN_SIDE - side);
+      if (side < LIMITS.pictureMinSide - 0.25) note(`pics${i}`, {...base, detail: `picture graphic "${id}" is under ${LIMITS.pictureMinSide} px on its longer side`}, f, LIMITS.pictureMinSide - side);
     }
   }
   // KIT 90 (brief item 10.3): under transitRules 'energy' every word reads at rest for 8 frames of its reading interval
@@ -618,7 +620,7 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
 };
 
 /** Checks a board against a handoff frame at its start or end: the ground colour, the rig at rest for 3 frames, the
- *  vignette, and each handoff word's screen box (within HANDOFF_TOL px). Marks (a video's own graphics) are listed, not
+ *  vignette, and each handoff word's screen box (within LIMITS.handoffTolerance px). Marks (a video's own graphics) are listed, not
  *  measured; a mark that names a board path needs that path on the board. */
 export const checkHandoff = (board: Board, name: string, id: HandoffId, side: 'start' | 'end'): Violation[] => {
   const out: Violation[] = [];
@@ -659,7 +661,7 @@ export const checkHandoff = (board: Board, name: string, id: HandoffId, side: 's
         if (!best || d < best.d) best = {d, box};
       }
       if (!best) err(`no fully visible word "${want.text}" on the board at frame ${f}`);
-      else if (best.d > HANDOFF_TOL) err(`"${want.text}" is at (${best.box.map((v) => v.toFixed(0)).join(', ')}) but the handoff has (${[want.x, want.y, want.w, want.h].map((v) => v.toFixed(0)).join(', ')}), off by ${best.d.toFixed(1)} px`);
+      else if (best.d > LIMITS.handoffTolerance) err(`"${want.text}" is at (${best.box.map((v) => v.toFixed(0)).join(', ')}) but the handoff has (${[want.x, want.y, want.w, want.h].map((v) => v.toFixed(0)).join(', ')}), off by ${best.d.toFixed(1)} px`);
     } else if (e.path !== undefined && !board.paths?.some((p) => p.id === e.path)) err(`the handoff has ${e.label} (path "${e.path}") but the board has no such path`);
     else err(`${e.label}: not measured by the validator; check the still`, 'warn');
   }

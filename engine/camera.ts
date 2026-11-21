@@ -1,6 +1,6 @@
 // The camera of a board is its rig (rig.ts): a pure function of (board, frame). This module holds the camera helpers the
 // rest of the engine shares: the camera of a block (screen-pinned blocks use SCREEN_CAM) and the world/screen maps.
-import {HEIGHT, SCREEN_CAM, WIDTH} from './config';
+import {RIG_CENTRE, SCREEN_CAM} from './config';
 import {carryCam} from './carry';
 import {rigAt, rigMoves} from './rig';
 import type {Board, CameraState, Pt} from './types';
@@ -22,13 +22,13 @@ export const camForBlock = (board: Board, block: number, frame: number): CameraS
 /** World -> screen for a camera state. */
 export const toScreen = (cam: CameraState, p: Pt): Pt => {
   const q = rot({x: (p.x - cam.x) * cam.zoom, y: (p.y - cam.y) * cam.zoom}, cam.rot);
-  return {x: q.x + WIDTH / 2, y: q.y + HEIGHT / 2};
+  return {x: q.x + RIG_CENTRE.x, y: q.y + RIG_CENTRE.y};
 };
 /** Screen -> world for a camera state. */
 export const toWorld = (cam: CameraState, p: Pt): Pt => {
-  const q = rot({x: p.x - WIDTH / 2, y: p.y - HEIGHT / 2}, -cam.rot);
+  const q = rot({x: p.x - RIG_CENTRE.x, y: p.y - RIG_CENTRE.y}, -cam.rot);
   return {x: q.x / cam.zoom + cam.x, y: q.y / cam.zoom + cam.y};
 };
 /** SVG transform string placing world space on screen. */
 export const cameraTransform = (cam: CameraState) =>
-  `translate(${WIDTH / 2} ${HEIGHT / 2}) rotate(${cam.rot}) scale(${cam.zoom}) translate(${-cam.x} ${-cam.y})`;
+  `translate(${RIG_CENTRE.x} ${RIG_CENTRE.y}) rotate(${cam.rot}) scale(${cam.zoom}) translate(${-cam.x} ${-cam.y})`;

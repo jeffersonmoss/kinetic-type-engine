@@ -1,5 +1,6 @@
 // The type engine's renderer: draws boards (laid-out lyric blocks) through the virtual camera, one SVG.
 import React from 'react';
+import {scoped} from './scope';
 import {FPS, HEIGHT, PALETTE, SHADOW, WIDTH} from './config';
 import {SCREEN_CAM, cameraAt, cameraTransform, toScreen} from './camera';
 import {carriedOff, carryCam} from './carry';
@@ -53,7 +54,7 @@ export const boardContext = (board: Board, t: number): BoardCtx => {
 const letterXs = (g: WordGeom) => { const xs: number[] = []; let x = g.x; for (const a of g.adv) { xs.push(x); x += a; } return xs; };
 
 /** One word in block-local coordinates. */
-const WordView: React.FC<{board: Board; L: BoardLayout; b: BlockGeom; g: WordGeom; m: WordMod; f: number; cam: CameraState; look: Pt; colour: string; uid: string}> = ({board, b, g, m, f, cam, look, colour, uid}) => {
+const WordView: React.FC<{board: Board; L: BoardLayout; b: BlockGeom; g: WordGeom; m: WordMod; f: number; cam: CameraState; look: Pt; colour: string; uid: string}> = scoped(({board, b, g, m, f, cam, look, colour, uid}) => {
   if (m.hidden || m.opacity <= 0.003) return null;
   const cx = g.x + g.w / 2, cy = g.y + g.h / 2;
   // KIT 89: a 3D turn put its projected box into dx to sy as a stand-in for the validator; the word is drawn through the
@@ -188,10 +189,10 @@ const WordView: React.FC<{board: Board; L: BoardLayout; b: BlockGeom; g: WordGeo
       <g clipPath={`url(#${id})`}>{content}</g>
     </g>
   );
-};
+});
 
 /** Every rule of a board at t (rules.ts): 3 world px by default, never under 2 px on screen. */
-export const BoardRules: React.FC<{board: Board; t: number; cam: CameraState}> = ({board, t, cam}) => (
+export const BoardRules: React.FC<{board: Board; t: number; cam: CameraState}> = scoped(({board, t, cam}) => (
   <g>
     {(board.rules ?? []).map((def) => {
       const s = ruleAt(board, def, t);
@@ -199,14 +200,14 @@ export const BoardRules: React.FC<{board: Board; t: number; cam: CameraState}> =
       return <line key={def.id} x1={s.a.x} y1={s.a.y} x2={s.b.x} y2={s.b.y} stroke={s.colour} strokeWidth={Math.max(s.width, 2 / Math.max(0.01, cam.zoom))} opacity={s.opacity} strokeLinecap="butt" />;
     })}
   </g>
-);
+));
 
 /** One board at song time t (without the SVG root). */
 /** Which part of a board a motion-blur pass draws (smear.tsx): 'blur' is one sub-frame sample of everything the camera
  *  moves except the words being read; 'sharp' is, at the frame's own time, the words being read and everything in screen
  *  space (pinned blocks, screen graphics, the vignette). Without a pass the board is drawn whole, once. */
 export type SmearPass = 'blur' | 'sharp';
-export const BoardView: React.FC<{board: Board; t: number; uid?: string; smearPass?: SmearPass; sharpFrame?: number}> = ({board, t, uid = 'b', smearPass, sharpFrame}) => {
+export const BoardView: React.FC<{board: Board; t: number; uid?: string; smearPass?: SmearPass; sharpFrame?: number}> = scoped(({board, t, uid = 'b', smearPass, sharpFrame}) => {
   const f = t * FPS;
   if (!boardActive(board, f)) return null;
   const ctx = boardContext(board, t);
@@ -307,7 +308,7 @@ export const BoardView: React.FC<{board: Board; t: number; uid?: string; smearPa
     );
   }
   return inner;
-};
+});
 
 export interface TypeStageProps {
   boards: Board[];
@@ -323,7 +324,7 @@ export interface TypeStageProps {
   sharpFrame?: number;
 }
 /** All active boards at t in one frame-sized SVG. An exiting board is drawn over the board replacing it. */
-export const TypeStage: React.FC<TypeStageProps> = ({boards, t, uid = 'ts', style, children, smearPass, sharpFrame}) => {
+export const TypeStage: React.FC<TypeStageProps> = scoped(({boards, t, uid = 'ts', style, children, smearPass, sharpFrame}) => {
   const f = t * FPS;
   const active = boards.filter((b) => boardActive(b, f)).sort((a, b) => b.start - a.start);
   return (
@@ -332,6 +333,6 @@ export const TypeStage: React.FC<TypeStageProps> = ({boards, t, uid = 'ts', styl
       {children}
     </svg>
   );
-};
+});
 
 export {worldToBlock};

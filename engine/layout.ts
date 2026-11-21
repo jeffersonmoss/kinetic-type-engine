@@ -1,5 +1,6 @@
 // Block and board layout: rows, word sizes and block placement. Pure; memoised per Board object.
-import {DEFAULT_FONT, FONTS, WORD_RULE, WORDS, guardDisplay} from './config';
+import {DEFAULT_FONT, FONTS, LIMITS, WORD_RULE, WORDS, guardDisplay} from './config';
+import {WIDE_LIMITS} from './format';
 import {FONT_INFO, letterAdvances, type FontKey} from './metrics';
 import {defaultTier} from './words';
 import type {Block, BlockGeom, Board, BoardLayout, Pt, RowGeom, Tier, WordGeom, WordOpts} from './types';
@@ -7,16 +8,12 @@ import {add, rot, sfOf} from './util';
 import {resolveAnchor, type AnchorEnv} from './letters';
 import type {BlockAlign, LetterPart} from './types';
 
-export const DEFAULT_W = 640;
-export const BLOCK_GAP = 40;
-export const ROW_MIN = 70;
-export const ROW_MAX = 320;
+export const DEFAULT_W = WIDE_LIMITS.layoutWidth;
+export const BLOCK_GAP = WIDE_LIMITS.blockGap;
+export const ROW_MIN = WIDE_LIMITS.rowMin;
+export const ROW_MAX = WIDE_LIMITS.rowMax;
 const E0_SCALE = 0.5;
 const STACK_SCALE = 0.46;
-const TARGET: Record<Tier, number> = {0: 115, 1: 115, 2: 150, 3: 320};
-/** Largest row size by the row's highest tier (rule 16: E1 about 90 to 140, E3 200 to 320). A row clamped
- *  below its fill size is left-aligned (or centred in centred boards), as rule 15 allows. */
-const ROW_CAP: Record<Tier, number> = {0: 160, 1: 160, 2: 240, 3: ROW_MAX};
 const hasDescender = (text: string) => /[gjpqy]/.test(text);
 
 /** Displayed text of a word whose case follows font `font` (an `upper` font shows capitals; double quotes are dropped). */
@@ -80,12 +77,12 @@ const breakRows = (items: Item[], W: number, blockFont: FontKey, manual?: number
       if (!rowFeasible(row, allE0)) continue;
       const s = W / rowUnitWidth(row, blockFont);
       const single = row.filter((x) => x.tier > 0).length <= 1;
-      if (s < ROW_MIN && !single) continue;
+      if (s < LIMITS.rowMin && !single) continue;
       const maxTier = Math.max(...row.map((x) => x.tier)) as Tier;
-      const target = TARGET[maxTier];
-      const sc = Math.min(s, ROW_CAP[Math.max(...row.map((x) => x.tier)) as Tier]);
+      const target = LIMITS.rowTargets[maxTier];
+      const sc = Math.min(s, LIMITS.rowCaps[Math.max(...row.map((x) => x.tier)) as Tier]);
       const cost = maxTier === 3 ? 0 : Math.pow((sc - target) / target, 2);
-      const c = best[a].cost + cost + 0.08 + (s < ROW_MIN ? 50 : 0);
+      const c = best[a].cost + cost + 0.08 + (s < LIMITS.rowMin ? 50 : 0);
       if (c < best[b].cost) best[b] = {cost: c, prev: a};
     }
   }
@@ -98,7 +95,7 @@ const breakRows = (items: Item[], W: number, blockFont: FontKey, manual?: number
 /** Lays out one block in its own frame (x right along the reading direction, y down). */
 export const layoutBlock = (def: Block, index: number, board: Board): BlockGeom => {
   const blockFont: FontKey = def.font ?? board.font ?? DEFAULT_FONT;
-  const W = def.width ?? board.width ?? DEFAULT_W;
+  const W = def.width ?? board.width ?? LIMITS.layoutWidth;
   const upper = !!FONTS[blockFont]?.upper;
   const connFont: FontKey = FONTS[blockFont]?.connectives ?? blockFont;
   const align = def.align ?? board.align ?? 'left';
@@ -125,8 +122,8 @@ export const layoutBlock = (def: Block, index: number, board: Board): BlockGeom 
   let prevSize = 0;
   rowsItems.forEach((row, r) => {
     const unit = rowUnitWidth(row, blockFont);
-    const rowCap = ROW_CAP[Math.max(...row.map((x) => x.tier)) as Tier];
-    const size = Math.max(ROW_MIN, Math.min(rowCap, W / unit));
+    const rowCap = LIMITS.rowCaps[Math.max(...row.map((x) => x.tier)) as Tier];
+    const size = Math.max(LIMITS.rowMin, Math.min(rowCap, W / unit));
     const width = unit * size;
     if (r > 0) y += 0.08 * Math.max(prevSize, size);
     const capH = info.cap * size;
@@ -312,7 +309,7 @@ const base90 = (a: number) => Math.round(a / 90) * 90;
 /** Places block b relative to the previous block p according to its attachment code (rule 17). */
 const place = (b: BlockGeom, p: BlockGeom | null, board: Board, blocksSoFar: BlockGeom[]) => {
   const def = b.def;
-  const gap = def.gap ?? BLOCK_GAP;
+  const gap = def.gap ?? LIMITS.blockGap;
   const toWorld = (q: Pt) => (p ? add({x: p.ox, y: p.oy}, rot(q, p.angle)) : q);
   let local: Pt = {x: 0, y: 0};
   let angle = p ? p.angle : 0;

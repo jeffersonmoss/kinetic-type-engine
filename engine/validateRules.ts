@@ -25,8 +25,9 @@
 //   behind           a BEHIND plate still over a hidden word on its sung frame
 //   carry            a chunk carry whose board camera moves, whose type is not clear of the edge at B, or whose outgoing
 //                    type is still in frame when the chunk unmounts
-import {FPS, FORMAT, HEIGHT, LINES, WIDTH, WORDS} from './config';
+import {FPS, FORMAT, HEIGHT, LIMITS, LINES, SAFE_BOX, WIDTH, WORDS} from './config';
 import {camForBlock, cameraAt, toScreen} from './camera';
+import {WIDE_LIMITS} from './format';
 import {blockToWorld} from './layout';
 import {handoffById} from './handoffWords';
 import {countersMeasured, resolveAnchor} from './letters';
@@ -34,7 +35,7 @@ import {FONT_INFO} from './metrics';
 import {panelQuad} from './panel';
 import {rigMoves, rigOwnAt, rigTransits} from './rig';
 import {behindFailures} from './emergence/behind';
-import {RUN_SPEED, quarterClearFrames} from './authoring';
+import {quarterClearFrames} from './authoring';
 import {CARRY_TAIL, SLIDE_UP_IN_MIN_Y, SLIDE_UP_OUT_MAX_Y, carrySpan, carryStillSpan} from './carry';
 import {drawnOpacityAt} from './smearSampling';
 import {ruleAt} from './rules';
@@ -50,15 +51,14 @@ import type {Violation} from './validate';
 
 /** Screen-side giant level (rule 49): cap height at least this, spanning at least GIANT_SPAN (or the frame height in a
  *  quarter stance). */
-export const GIANT_CAP = 240;
-export const GIANT_SPAN = 800;
+export const GIANT_CAP = WIDE_LIMITS.giantCap;
+export const GIANT_SPAN = WIDE_LIMITS.giantSpan;
 /** Caption checks (kit pass 21): the same 48 px margin, 56 px cap and 15-frame floor as sung words (validate.ts SAFE,
  *  SUNG_MIN_CAP, motion.ts MIN_VISIBLE_FRAMES; repeated here because validate.ts imports this file). */
 
-const CAPTION_MIN_CAP = 56;
 const CAPTION_MIN_FRAMES = 15;
 /** FAN Joint distance cap in screen px (DOGE item 45: 320 world px at its 1920-wide world, two thirds of a screen px each). */
-export const JOINT_MAX = 213;
+export const JOINT_MAX = WIDE_LIMITS.jointMax;
 
 const local = (w: WordGeom, m: WordMod, x0In: number, y0: number, x1In: number, y1: number) => {
   const cx = w.x + w.w / 2, cy = w.y + w.h / 2;
@@ -245,8 +245,7 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
     // no frame of a rig move is empty of type (kit pass 21: a graphic that draws type, a title or a caption, counts)
     if (inMove(f) && !shown.some((x) => x.m.opacity > 0.3 && onScreen(inks.get(x.i)!)) && !typeGraphicInFrame(f))
       note('empty', {board: name, rule: 'empty-frame', severity: 'error', detail: 'a frame of a rig move has no type in it (bare ground)'}, f, 1);
-    // giant-level rests (rule 49): at rest (not in a transit), a word in frame at cap 240 or more spanning 800 px (or
-    // the frame's height in a quarter stance)
+    // giant-level rests (rule 49): at rest (not in a transit), a word in frame at the format's giant cap and span (with a vertical span for quarter stances)
     if (!inTransit(f)) {
       const l = lineOfFrame(f);
       if (l >= 0) for (const x of shown) {
@@ -256,7 +255,7 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
         const sz = quadSize(local(x.w, x.m, x.w.x, x.w.y, x.w.x + x.w.w, x.w.baseline).map((p) => toScreen(camForBlock(board, x.w.block, f), blockToWorld(L.blocks[x.w.block], p))));
         const ang = Math.abs(normDeg(L.blocks[x.w.block].angle + x.m.rot + camForBlock(board, x.w.block, f).rot));
         const quarter = Math.abs(ang - 90) <= 5;
-        if (sz.h >= GIANT_CAP - 0.5 && (sz.w >= GIANT_SPAN || (quarter && sz.w >= 0.9 * HEIGHT))) { giantAt.set(l, (giantAt.get(l) ?? 0) + step); break; }
+        if (sz.h >= LIMITS.giantCap - 0.5 && (sz.w >= LIMITS.giantSpan || (quarter && sz.w >= LIMITS.quarterGiantSpan))) { giantAt.set(l, (giantAt.get(l) ?? 0) + step); break; }
       }
     }
   }
@@ -264,7 +263,7 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
   for (const l of lines) c.addPlan(l, (giantAt.get(l) ?? 0) >= 10 ? `scale: rests at the giant level for ${giantAt.get(l)} frames` : 'scale: no rest at the giant level');
   for (let k = 1; k < lines.length; k++) {
     if ((giantAt.get(lines[k - 1]) ?? 0) < 10 && (giantAt.get(lines[k]) ?? 0) < 10)
-      out.push({board: name, rule: 'two-scales', severity: 'error', line: lines[k], detail: `lines L${lines[k - 1]} and L${lines[k]} both lack a rest of at least 10 frames with a word at the giant level (cap ${GIANT_CAP} px or more spanning ${GIANT_SPAN} px; rule 49)`});
+      out.push({board: name, rule: 'two-scales', severity: 'error', line: lines[k], detail: `lines L${lines[k - 1]} and L${lines[k]} both lack a rest of at least 10 frames with a word at the giant level (cap ${LIMITS.giantCap} px or more spanning ${LIMITS.giantSpan} px; rule 49)`});
   }
 
   // ---------------------------------------------------------------- arrivals (Fable item 39: no word arrives by opacity)
@@ -423,11 +422,11 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
       if (op < 0.5) return;
       const cap = g.caption!.cap * (g.layer === 'screen' ? 1 : zoom);
       const xs = sp.flat().map((p) => p.x), ys = sp.flat().map((p) => p.y);
-      const over = Math.max(FORMAT.safeInsets.left - Math.min(...xs), Math.max(...xs) - (WIDTH - FORMAT.safeInsets.right), FORMAT.safeInsets.top - Math.min(...ys), Math.max(...ys) - (HEIGHT - FORMAT.safeInsets.bottom));
+      const over = Math.max(SAFE_BOX.x - Math.min(...xs), Math.max(...xs) - ((SAFE_BOX.x + SAFE_BOX.width)), SAFE_BOX.y - Math.min(...ys), Math.max(...ys) - ((SAFE_BOX.y + SAFE_BOX.height)));
       const base = {board: name, rule: 'caption', severity: 'error' as const, text: g.caption!.text};
       if (over > 0.5) note(`capm ${g.id}`, {...base, detail: `caption "${g.id}" is outside the ${FORMAT.id === 'wide' ? '48 px safe margin' : 'format safe box'}`}, f, over);
-      if (cap < CAPTION_MIN_CAP - 0.25) note(`capc ${g.id}`, {...base, detail: `caption "${g.id}" cap height below ${CAPTION_MIN_CAP} px on screen`}, f, CAPTION_MIN_CAP - cap);
-      if (over <= 0.5 && cap >= CAPTION_MIN_CAP - 0.25) capRead.set(g.id, (capRead.get(g.id) ?? 0) + step);
+      if (cap < LIMITS.legacySungMinCap - 0.25) note(`capc ${g.id}`, {...base, detail: `caption "${g.id}" cap height below ${LIMITS.legacySungMinCap} px on screen`}, f, LIMITS.legacySungMinCap - cap);
+      if (over <= 0.5 && cap >= LIMITS.legacySungMinCap - 0.25) capRead.set(g.id, (capRead.get(g.id) ?? 0) + step);
       const cam = cameraAt(board, f);
       for (const sg of lineMarks(board, f) as LineSeg[]) {
         if (sg.opacity < 0.05) continue;
@@ -559,7 +558,7 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
     const cam = camForBlock(board, k, first.sf);
     const dist = Math.hypot(newStart.x - oldEnd.x, newStart.y - oldEnd.y) * cam.zoom;
     const base = {board: name, word: first.i, text: first.text, line: first.line, from: first.sf};
-    if (dist > JOINT_MAX + 0.5) out.push({...base, rule: 'joint-distance', severity: 'error', detail: `FAN: the old line's end and the new line's start are ${dist.toFixed(0)} screen px apart at the Joint (at most ${JOINT_MAX}, DOGE item 45: 320 of its world px)`});
+    if (dist > LIMITS.jointMax + 0.5) out.push({...base, rule: 'joint-distance', severity: 'error', detail: `FAN: the old line's end and the new line's start are ${dist.toFixed(0)} screen px apart at the Joint (at most ${LIMITS.jointMax}, DOGE item 45: 320 of its world px)`});
     const fan = b.def.fan ?? 18;
     const oldA = normDeg(p.angle + cam.rot), newA = normDeg(b.angle + cam.rot);
     const diff = normDeg(newA - oldA);
@@ -586,7 +585,7 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
         const c0 = cameraAt(board, f - 1), c1 = cameraAt(board, f);
         worst = Math.max(worst, Math.hypot(c1.x - c0.x, c1.y - c0.y) * c1.zoom);
       }
-      if (worst > RUN_SPEED + 0.5) out.push({board: name, rule: 'run-speed', severity: 'error', from: m.start, to: m.start + m.dur, detail: `RUN camera travels up to ${worst.toFixed(1)} px per frame (DOGE item 63: ${RUN_SPEED}); start it earlier or shorten the row`});
+      if (worst > LIMITS.runSpeed + 0.5) out.push({board: name, rule: 'run-speed', severity: 'error', from: m.start, to: m.start + m.dur, detail: `RUN camera travels up to ${worst.toFixed(1)} px per frame (DOGE item 63: ${LIMITS.runSpeed}); start it earlier or shorten the row`});
     }
   }
   L.blocks.forEach((b, k) => {

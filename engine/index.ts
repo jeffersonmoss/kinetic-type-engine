@@ -60,3 +60,4 @@ export {PICTURE_MIN_SIDE, PICTURE_FRAMES} from './validate';
 // Paper Trail engine addition K2 (KIT.md section 21); importing it registers the `spread` verb
 export {spread, spreadAt, SPREAD_SPEED_SHARE, SPREAD_DEFAULT_TO, SPREAD_DEFAULT_FRAMES} from './spread';
 export type {SpreadDef, SpreadAnchor} from './spread';
+export {scoped} from './scope';

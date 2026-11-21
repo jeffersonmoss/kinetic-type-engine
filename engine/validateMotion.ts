@@ -15,7 +15,7 @@
 //   framing          (warning, DOGE) the sung line's widest row spans under 60 percent of the safe width on screen
 //   prop-size        (error) a tracked element with `minSize` whose longer side is under it on screen while it is shown
 //   empty            (warning, timeline) more than 12 frames with no unretired lyric word in frame (validateBoards)
-import {FPS, FORMAT, HEIGHT, WIDTH} from './config';
+import {FPS, HEIGHT, LIMITS, RIG_CENTRE, SAFE_BOX, WIDTH} from './config';
 import {cameraAt, toScreen, toWorld} from './camera';
 import {carrySpan, carryStillSpan} from './carry';
 import {inkQuad} from './validateRules';
@@ -39,11 +39,11 @@ export const EMPTY_FRAMES = 12;
 export const fastLimits = (from: {x: number; y: number; zoom: number; rot: number}, to: {x: number; y: number; zoom: number; rot: number}) => {
   const turn = Math.abs(normDeg(to.rot - from.rot));
   const ratio = Math.max(to.zoom / from.zoom, from.zoom / to.zoom);
-  const c = {x: WIDTH / 2, y: HEIGHT / 2};
+  const c = RIG_CENTRE;
   const q = toScreen(to, toWorld(from, c));
   const travel = Math.hypot(q.x - c.x, q.y - c.y);
   if (turn >= 45) return {min: 12, max: 16, what: `pivot of ${turn.toFixed(0)} degrees`};
-  if (ratio >= 1.5 - 1e-6 || travel > 400) return {min: 12, max: 16, what: `push or pull (${ratio.toFixed(2)} times, ${travel.toFixed(0)} px)`};
+  if (ratio >= 1.5 - 1e-6 || travel > LIMITS.fastTravel) return {min: 12, max: 16, what: `push or pull (${ratio.toFixed(2)} times, ${travel.toFixed(0)} px)`};
   return {min: 8, max: 14, what: 'fast move'};
 };
 export const fastMoves = (board: Board) => rigMoves(board).filter((m) => TRANSIT_KINDS.has(m.kind) && m.dur > 0 && m.dur <= FAST_FRAMES);
@@ -116,7 +116,7 @@ export const motionRuleChecks = (board: Board, name: string, L: BoardLayout): Vi
   }
 
   // framing: the sung line's widest row against the safe width
-  const safeW = WIDTH - FORMAT.safeInsets.left - FORMAT.safeInsets.right;
+  const safeW = SAFE_BOX.width;
   const lines = [...new Set(L.order.map((i) => L.words.get(i)!.line))];
   for (const ln of sheet ? lines : []) {
     const ids = L.order.filter((i) => L.words.get(i)!.line === ln);
@@ -169,7 +169,8 @@ export const emptyTimeline = (boards: Board[], layouts: BoardLayout[]): {from: n
       const L = layouts[k];
       return L.order.some((i) => {
         const w = L.words.get(i)!;
-        if (f < w.sf || f >= retireFrame(b, i)) return false;
+        const reading = b.readingIntervals?.[i];
+        if (reading ? f < reading.start || f > reading.end : f < w.sf || f >= retireFrame(b, i)) return false;
         const m = wordStateAt(b, i, f);
         return !m.hidden && m.opacity >= 0.5 && fracInFrame(inkQuad(b, L, w, m, f)) > 0;
       });

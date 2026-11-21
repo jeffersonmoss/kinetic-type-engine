@@ -3,6 +3,7 @@
 // through it). Never by a cut or a short fade. Pure state (groundAt) plus the renderer (Ground), shared by the stage
 // and the validator.
 import React from 'react';
+import {scoped} from './scope';
 import {FPS, HEIGHT, PALETTE, WIDTH} from './config';
 import {cameraAt, cameraTransform} from './camera';
 import {SPEED_CAP} from './motion';
@@ -44,7 +45,7 @@ export const groundAt = (board: Board, t: number): GroundState => {
 };
 
 /** The ground of a board at t (screen space, under everything on the board). */
-export const Ground: React.FC<{board: Board; t: number}> = ({board, t}) => {
+export const Ground: React.FC<{board: Board; t: number}> = scoped(({board, t}) => {
   const g = groundAt(board, t);
   const cam = cameraAt(board, t * FPS);
   return (
@@ -79,10 +80,10 @@ export const Ground: React.FC<{board: Board; t: number}> = ({board, t}) => {
       })}
     </g>
   );
-};
+});
 
 /** The warm vignette (rule 73): Ink 2 to transparent, 18 percent at the corners, fixed to the screen. */
-export const Vignette: React.FC<{uid?: string; opacity?: number}> = ({uid = 'v', opacity = 0.18}) => (
+export const Vignette: React.FC<{uid?: string; opacity?: number}> = scoped(({uid = 'v', opacity = 0.18}) => (
   <g pointerEvents="none">
     <defs>
       <radialGradient id={`vig-${uid}`} cx={WIDTH / 2} cy={HEIGHT / 2} r={Math.hypot(WIDTH, HEIGHT) / 2} gradientUnits="userSpaceOnUse">
@@ -92,4 +93,4 @@ export const Vignette: React.FC<{uid?: string; opacity?: number}> = ({uid = 'v',
     </defs>
     <rect x={0} y={0} width={WIDTH} height={HEIGHT} fill={`url(#vig-${uid})`} />
   </g>
-);
+));

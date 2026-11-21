@@ -8,7 +8,8 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "esModuleInterop": true,
+    "allowJs": true,
     "noEmit": true
   },
-  "include": ["engine", "example", "fixtures", "props", "remotion.config.ts"]
+  "include": ["engine", "context", "song", "effects", "score", "compile", "check", "host", "cli", "example", "fixtures", "props", "remotion.config.ts"]
 }
