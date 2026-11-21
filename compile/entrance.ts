@@ -112,17 +112,17 @@ export function setCamera(ctx: EngineContext, work: SceneWork, draft: boolean) {
   const viewFor = (target: BlockWork, previousAngle: number, start: number) => ({
     block: target.index, placement: target.item.card.place, angle: board.blocks[target.index].at!.angle, previousAngle, start,
   });
-  const firstCall = first.authored.card.camera;
-  const hasAuthoredCamera = blocks.some((block) => block.authored.card.camera);
-  const draftBoard = draft && !hasAuthoredCamera && blocks.every((block) => block.item.card.from.kind === 'opening' || block.item.card.from.kind === 'row');
+  const firstCall = first.item.camera;
+  const hasAuthoredCamera = blocks.some((block) => block.item.camera);
+  const draftBoard = draft && !hasAuthoredCamera && blocks.every((block) => block.authored.blocks.filter((item) => !item.reply).length === 1) &&
+    blocks.every((block) => block.item.card.from.kind === 'opening' || block.item.card.from.kind === 'row');
   board.rig = [];
   if (draftBoard) {
     // An unfilled draft tracks between call/reply pairs on the sung clock.
     // Keeping unit zoom preserves the second tier's exact reading floor.
     const layout = layoutBoard({...board});
     const targetFor = (target: BlockWork) => {
-      const partner = blocks.find((block) => block !== target && block.authored === target.authored);
-      const subset = partner ? [target.index, partner.index] : [target.index];
+      const subset = blocks.filter((block) => block.authored === target.authored).map(({index}) => index);
       const rows = subset.map((index) => layout.blocks[index]);
       const left = Math.min(...rows.map((b) => b.ox));
       const top = Math.min(...rows.map((b) => b.oy));
@@ -146,14 +146,21 @@ export function setCamera(ctx: EngineContext, work: SceneWork, draft: boolean) {
   if (firstCall) board.rig.push(...cameraKeys(firstCall, viewFor(first, firstAngle, Math.ceil(board.start * ctx.fps)), ctx));
   let previousAngle = firstAngle;
   for (const work of blocks.slice(1)) {
-    if (work.item.reply) continue;
-    const call = work.authored.card.camera ?? follow();
+    if (work.item.reply || work.item !== work.authored.lead && !work.item.camera) continue;
+    const call = work.item.camera ?? follow();
     const predicted = Math.min(...work.item.runs.map((run) => run.vocal?.onset ?? Infinity));
     const time = Math.max(Math.ceil(board.start * ctx.fps), predicted - call.def.duration(call.params, ctx));
     const other = blocks.find((block) => block.authored === work.authored && block.item.reply);
     const keys = cameraKeys(call, viewFor(work, previousAngle, time), ctx);
-    for (const k of keys) if (!work.authored.card.camera && k.to) {
-      k.to = {...k.to, fill: undefined, zoom: 1, frame: other ? {blocks: [work.index, other.index]} : {block: work.index}};
+    for (const k of keys) {
+      if (!k.to) continue;
+      if (work.item !== work.authored.lead) {
+        // A part's camera frames the phrases already introduced, including the new target.
+        k.to = {...k.to, frame: {blocks: blocks.filter((block) => block.authored === work.authored && block.index <= work.index)
+          .map(({index}) => index)}};
+      } else if (!work.item.camera) {
+        k.to = {...k.to, fill: undefined, zoom: 1, frame: other ? {blocks: [work.index, other.index]} : {block: work.index}};
+      }
     }
     board.rig.push(...keys);
     previousAngle = board.blocks[work.index].at!.angle;

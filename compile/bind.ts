@@ -14,12 +14,17 @@ export interface BoundRow {runs: Run[]; size: Size}
 export interface BoundBlock {
   id: string; card: ReplyCard & {from: NonNullable<ReplyCard['from']>; enter: Entrance};
   runs: Run[]; rows: BoundRow[]; auto: boolean; reply: boolean;
+  camera?: LineCard['camera'];
 }
-export interface BoundLine {id: string; card: LineCard; lead: BoundBlock; reply?: BoundBlock}
+export interface BoundLine {id: string; card: LineCard; lead: BoundBlock; blocks: BoundBlock[]}
 export interface BoundScene {scene: Scene; lines: BoundLine[]}
 
 const draftRise = () => cascade(rise(), {by: 'word', clock: 'sung'});
 export const key = (s: string) => s.normalize('NFKC').toUpperCase().replace(/[^\p{L}\p{N}]/gu, '');
+const matches = (ref: string, token: SongToken) => ref === token.id || key(ref) === key(token.text);
+const presetFor = (card: ReplyCard, token: SongToken) =>
+  card.preset === true || (Array.isArray(card.preset) && card.preset.some((ref) => matches(ref, token)));
+interface PhraseBinding {tokens: SongToken[]; cursor: number; last: boolean}
 const connectives = new Set(CONNECTIVES.map(key));
 const isLegacy = (call: Entrance): call is import('../effects').LegacyCall => 'kind' in call;
 export const isPair = (call: Entrance): call is import('../effects').PairCall<any> => !isLegacy(call) && call.def.kind === 'transform';
@@ -42,7 +47,23 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly 
     diagnostics.push({severity: 'warn', code: 'draft-fallback', line: id, message: `used draft fallback for ${field}`});
     return value;
   }
-  function block(id: string, card: BoundBlock['card'], tokens: Vocal[], reply: boolean): BoundBlock {
+  function orderBlocks(id: string, blocks: BoundBlock[]): BoundBlock[] {
+    const pending = new Map(blocks.map((block) => [block.id, block]));
+    const first = blocks[0].card.from;
+    if (blocks[0].id === id && 'line' in first && pending.has(first.line)) {
+      fail(id, 'a primary phrase cannot take its landmark from its own line');
+    }
+    const ordered: BoundBlock[] = [];
+    while (pending.size) {
+      const next = [...pending.values()].find(({card: {from}}) => !('line' in from) || !pending.has(from.line));
+      if (!next) return fail(id, `cyclic landmarks among ${[...pending.keys()].join(', ')}`);
+      ordered.push(next);
+      pending.delete(next.id);
+    }
+    return ordered;
+  }
+
+  function block(id: string, card: BoundBlock['card'], tokens: Vocal[], reply: boolean, phrase?: PhraseBinding): BoundBlock | undefined {
     const auto = card.rows === undefined || card.rows === 'auto';
     const omitted = new Set<Vocal>();
     for (const ref of card.omit ?? []) {
@@ -51,6 +72,8 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly 
       omitted.add(found[0]);
     }
     const active = tokens.filter((token) => !omitted.has(token));
+    const candidates = phrase?.tokens ?? active.map(({token}) => token);
+    const mapped = new Map(active.map((vocal) => [vocal.token.id, vocal]));
     const size = card.size ?? (reply ? 'second' : 'body');
     let rows: RowCard[] = auto ? [{text: active.map(({token}) => token.text), size}]
       : (card.rows as Exclude<typeof card.rows, 'auto' | undefined>).map((entry) => typeof entry === 'string' ? {text: entry} :
@@ -58,27 +81,43 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly 
     if (isUnit(card.enter) && card.enter.def.bindsRepeats && !auto) {
       if (rows.length !== 1 || typeof rows[0].text !== 'string') fail(id, 'repeatStack requires one explicit phrase row');
       const count = (rows[0].text as string).trim().split(/\s+/u).length;
-      if (!active.length || active.length % count !== 0) fail(id, 'repeatStack requires complete sung copies of the phrase');
+      if (phrase || !count || !active.length || active.length % count !== 0) fail(id, 'repeatStack requires complete sung copies of the phrase');
       rows = Array.from({length: active.length / count}, () => rows[0]);
     }
-    let cursor = 0, rest = '';
-    const runs: Run[] = [];
-    const boundRows = rows.map((entry): BoundRow => {
+    const start = phrase?.cursor ?? 0;
+    let cursor = start, rest = '';
+    // Bind the full lyric before dropping runs outside an edit. This keeps authored part IDs stable.
+    const matched = rows.map((entry) => {
       const items = typeof entry.text === 'string' ? entry.text.trim().split(/\s+/u).filter(Boolean) : entry.text;
-      return {size: entry.size ?? size, runs: items.map((item) => {
+      return {size: entry.size ?? size, items: items.map((item) => {
         const source = typeof item === 'string' ? item : item.text;
         if (!source.trim() || /[()]/u.test(source)) fail(id, `invalid displayed text "${source}"`);
         let vocal: Vocal | undefined;
         if (typeof item === 'string') {
-          const current = active[cursor];
+          const current = candidates[cursor];
           if (!current) fail(id, `unbound text "${source}"; use echo() for unsung text`);
-          vocal = current;
-          const wanted = rest || key(current.token.text);
+          vocal = mapped.get(current.id);
+          const wanted = rest || key(current.text);
           const part = key(source);
           if (wanted === part) { cursor++; rest = ''; }
-          else if (part && wanted.startsWith(part) && (rest || /[-‐‑]/u.test(current.token.text))) rest = wanted.slice(part.length);
-          else fail(id, `cannot bind "${source}" to ${current.token.id} "${current.token.text}"; use echo() for unsung text`);
+          else if (part && wanted.startsWith(part) && (rest || /[-‐‑]/u.test(current.text))) rest = wanted.slice(part.length);
+          else fail(id, `cannot bind "${source}" to ${current.id} "${current.text}"; use echo() for unsung text`);
         }
+        return {source, vocal, skipped: typeof item === 'string' && !vocal};
+      })};
+    });
+    if (rest || ((!phrase || phrase.last) && cursor < candidates.length)) {
+      fail(id, `missing sung tokens: ${candidates.slice(cursor).map((token) => `${token.id} "${token.text}"`).join(', ')}`);
+    }
+    if (phrase) {
+      if (cursor === start) fail(id, 'a lead phrase needs sung tokens');
+      phrase.cursor = cursor;
+      if (!candidates.slice(start, cursor).some(({id}) => mapped.has(id))) return undefined;
+    }
+    const runs: Run[] = [];
+    const boundRows = matched.map(({size, items}): BoundRow => ({
+      size, runs: items.flatMap(({source, vocal, skipped}) => {
+        if (skipped) return [];
         const wordStyle = (vocal && (card.words?.[vocal.token.id] ?? card.words?.[vocal.token.text])) ?? card.words?.[source];
         const style = {...card, ...wordStyle};
         const font = style.font ?? (connectives.has(key(source)) ? 'barlow' : 'anton');
@@ -93,10 +132,9 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly 
         if (!timing) fail(id, 'visual echoes require a sung line');
         words.push({text, start_s: timing.onset / fps, end_s: timing.end / fps, line: lines.length});
         runs.push(run);
-        return run;
-      })};
-    });
-    if (cursor < active.length) fail(id, `missing sung tokens: ${active.slice(cursor).map(({token}) => `${token.id} "${token.text}"`).join(', ')}`);
+        return [run];
+      }),
+    })).filter(({runs}) => runs.length);
     if (!runs.length) fail(id, 'block has no displayed runs');
     const indices = runs.map(({i}) => i);
     lines.push({id: lines.length, text: runs.map(({text}) => text).join(' '), words: indices,
@@ -117,15 +155,16 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly 
       seenLines.add(id);
       const record = songLines.get(id) ?? fail(id, 'no corresponding song-map line');
       const card = format === 'portrait' ? portraitCard(item.card) : {...item.card};
-      const vocals = record.tokenIds.flatMap((tokenId) => {
-        const token = songTokens.get(tokenId) ?? fail(id, `unknown token ${tokenId}`);
+      const tokens = record.tokenIds.map((tokenId) => songTokens.get(tokenId) ?? fail(id, `unknown token ${tokenId}`));
+      const vocals = tokens.flatMap((token) => {
         const timing = mapVocal(token, clock, fps);
-        const preset = card.preset === true || (Array.isArray(card.preset) && card.preset.some((ref) => ref === token.id || key(ref) === key(token.text)));
+        const preset = presetFor(card, token);
         return timing ? [{token, ...timing, preset}] : [];
       });
       if (!vocals.length) continue;
       const calls = vocals.filter(({token}) => token.role === 'lead');
-      const replies = calls.length ? vocals.filter(({token}) => token.role === 'adlib') : [];
+      const replies = (card.parts?.length ? tokens.some(({role}) => role === 'lead') : calls.length)
+        ? vocals.filter(({token}) => token.role === 'adlib') : [];
       const previous = bound.at(-1);
       const sceneOpener = n === 0 || !previous;
       const from = card.from ?? (sceneOpener && index === 0 ? opening() : fallback(id, 'from',
@@ -134,21 +173,45 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly 
       if (sceneOpener && card.old) fail(id, 'a scene opener cannot declare old');
       if (!sceneOpener && !card.old && !(isPair(enter) && enter.def.dismissesOld)) card.old = fallback(id, 'old', clear(fade()));
       if (!sceneOpener && from.kind === 'opening') fail(id, 'opening() requires a scene opener');
-      const matches = (ref: string, {token}: Vocal) => ref === token.id || key(ref) === key(token.text);
+      const parts = card.parts ?? [];
+      if (!Array.isArray(parts) || parts.length > 2 || [...parts].some((part) => !part)) fail(id, 'expected at most two ordered lead parts');
+      const hasParts = parts.length > 0;
+      const blocks: BoundBlock[] = [];
+      const add = (item: BoundBlock | undefined, camera?: LineCard['camera']) => {
+        if (item) blocks.push({...item, camera});
+      };
       for (const ref of card.omit ?? []) {
-        const found = vocals.filter((vocal) => matches(ref, vocal));
-        if (found.length !== 1) fail(id, `omit "${ref}" needs one token; candidates: ${found.map(({token}) => token.id).join(', ') || 'none'}`);
+        const found = (hasParts ? tokens : vocals.map(({token}) => token)).filter((token) => matches(ref, token));
+        if (found.length !== 1) fail(id, `omit "${ref}" needs one token; candidates: ${found.map(({id}) => id).join(', ') || 'none'}`);
       }
-      const lead = block(id, {...card, from, enter, omit: card.omit?.filter((ref) => (calls.length ? calls : vocals).some((vocal) => matches(ref, vocal)))},
-        calls.length ? calls : vocals, false);
+      if (hasParts) {
+        if (!Array.isArray(card.rows)) fail(id, 'a split lead needs explicit rows for its primary phrase');
+        const leads = tokens.filter(({role}) => role === 'lead');
+        if (!leads.length) fail(id, 'parts require lead vocals');
+        const phrase: PhraseBinding = {tokens: leads.filter((token) => !card.omit?.some((ref) => matches(ref, token))), cursor: 0, last: false};
+        add(block(id, {...card, from, enter, omit: undefined}, calls, false, phrase), card.camera);
+        parts.forEach((part, i) => {
+          const partId = `${id}.p${i + 1}`;
+          if (!part || !Array.isArray(part.rows)) return fail(partId, 'a part needs explicit rows');
+          const from = part.from ?? fallback(partId, 'from', row(id, -1));
+          if (from.kind === 'opening') fail(partId, 'a part cannot use opening()');
+          const enter = part.enter ?? fallback(partId, 'enter', draftRise());
+          phrase.last = i === parts.length - 1;
+          add(block(partId, {...part, from, enter, omit: undefined}, calls.map((vocal) =>
+            ({...vocal, preset: vocal.preset || presetFor(part, vocal.token)})), false, phrase), part.camera);
+        });
+      } else {
+        const lead = calls.length ? calls : vocals;
+        add(block(id, {...card, from, enter, omit: card.omit?.filter((ref) => lead.some(({token}) => matches(ref, token)))},
+          lead, false), card.camera);
+      }
       let reply: BoundBlock | undefined;
       const replyId = id + '.reply';
       if (replies.length && (card.reply || draft)) {
         const authored = card.reply ?? fallback<ReplyCard>(replyId, 'reply', {});
         const from = authored.from ?? fallback(replyId, 'from', row(id, -1));
         const enter = authored.enter ?? fallback(replyId, 'enter', draftRise());
-        const replyVocals = replies.map((vocal) => ({...vocal, preset: vocal.preset || authored.preset === true ||
-          (Array.isArray(authored.preset) && authored.preset.some((ref) => ref === vocal.token.id || key(ref) === key(vocal.token.text)))}));
+        const replyVocals = replies.map((vocal) => ({...vocal, preset: vocal.preset || presetFor(authored, vocal.token)}));
         const replyOmitted = [...(authored.omit ?? []), ...(card.omit ?? []).filter((ref) => replies.some(({token}) => ref === token.id || key(ref) === key(token.text)))];
         const allOmitted = replies.every(({token}) => replyOmitted.some((ref) => ref === token.id || key(ref) === key(token.text)));
         if (!allOmitted) reply = block(replyId, {...authored, from, enter, omit: replyOmitted}, replyVocals, true);
@@ -156,7 +219,8 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly 
         const missing = replies.filter(({token}) => !card.omit?.some((ref) => ref === token.id || key(ref) === key(token.text)));
         if (missing.length) fail(id, `missing ad-lib tokens ${missing.map(({token}) => token.id).join(', ')}; use reply or omit`);
       } else if (card.reply && vocals.length === record.tokenIds.length) fail(replyId, 'no ad-lib tokens to bind');
-      bound.push({id, card, lead, reply});
+      if (reply) add(reply);
+      if (blocks.length) bound.push({id, card, lead: blocks[0], blocks: orderBlocks(id, blocks)});
     }
     if (bound.length) scenes.push({scene: resolved, lines: bound});
   }

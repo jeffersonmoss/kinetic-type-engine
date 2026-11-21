@@ -74,7 +74,7 @@ export function lowerFates(ctx: EngineContext, scene: SceneWork, works: readonly
     const incoming = scene.blocks.find((work) => work.item === line.lead)!;
     const enter = line.lead.card.enter;
     const fate = line.card.old;
-    if ((line.lead.card.place === 'turnCW' || line.lead.card.place === 'turnCCW') && fate?.kind === 'dock') {
+    if (fate?.kind === 'dock' && line.blocks.some(({card}) => card.place === 'turnCW' || card.place === 'turnCCW')) {
       throw new Error(`${line.id}: dock cannot accompany turned placement`);
     }
     const dismisses = isPair(enter) && enter.def.dismissesOld;

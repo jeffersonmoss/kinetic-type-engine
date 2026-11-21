@@ -59,8 +59,8 @@ export function compileScore(base: EngineContext, film: Film, song: SongMap, opt
     const transitions: Transition[] = [];
     const readings: TokenReading[] = [];
     const firstOf = (scene: typeof scenes[number]) => Math.min(...scene.lines[0].lead.runs.map((run) => run.vocal?.onset ?? Infinity));
-    const nominalEnd = (scene: typeof scenes[number]) => Math.max(...scene.lines.flatMap(({lead, reply}) =>
-      [...lead.runs, ...(reply?.runs ?? [])].flatMap(({vocal}) => vocal ? [vocal.end, vocal.onset + 14] : [])));
+    const nominalEnd = (scene: typeof scenes[number]) => Math.max(...scene.lines.flatMap(({blocks}) =>
+      blocks.flatMap(({runs}) => runs.flatMap(({vocal}) => vocal ? [vocal.end, vocal.onset + 14] : []))));
     const starts = scenes.map((scene, index) => {
       const item = scene.lines[0].lead;
       const earliest = firstOf(scene);
@@ -82,8 +82,8 @@ export function compileScore(base: EngineContext, film: Film, song: SongMap, opt
       const work: SceneWork = {board, lines, blocks: [], entries: []};
       works.push(work);
       for (const authored of lines) {
-        for (const item of [authored.lead, authored.reply]) {
-          if (!item) continue;
+        for (const item of authored.blocks) {
+          if (byId.has(item.id)) throw new Error(`${item.id}: duplicate block ID`);
           let source;
           try {source = sourceOf(board, item.card.from, byId);}
           catch (error) {throw new Error(`${item.id}: ${(error as Error).message}`);}
@@ -100,23 +100,30 @@ export function compileScore(base: EngineContext, film: Film, song: SongMap, opt
       setCamera(ctx, work, draft);
       for (const block of work.blocks) {
         lowerEntrance(ctx, block, works[i - 1]);
-        const {item, index} = block;
-        if (!item.reply) {
-          for (const [n, call] of (block.authored.card.accents ?? []).entries()) {
-            if (call.def.kind !== 'accent') throw new Error(`${item.id}: ${call.name} is not an accent`);
-            const params = call.params as {word?: string};
-            const targets = block.targets.filter(({word}) => !params.word || item.runs.some((run) => run.i === word && run.text.toUpperCase() === params.word!.toUpperCase()));
-            if (!targets.length) throw new Error(`${item.id}: ${call.name} has no matching target "${params.word}"`);
-            if (params.word && targets.length !== 1) throw new Error(`${item.id}: ${call.name} has an ambiguous target "${params.word}"`);
-            const name = `${call.name} · ${item.id} · ${n + 1}`;
+        const {item} = block;
+        transitions.push({line: item.id, board: scene.id, start: block.start, landing: block.landing, release: block.release,
+          edge: item.card.from.kind === 'edge', handoff: isPair(item.card.enter)});
+      }
+      for (const authored of lines) {
+        const owners = work.blocks.filter((block) => block.authored === authored);
+        for (const [n, call] of (authored.card.accents ?? []).entries()) {
+          if (call.def.kind !== 'accent') throw new Error(`${authored.id}: ${call.name} is not an accent`);
+          const params = call.params as {word?: string};
+          const selection = params.word ? owners.filter(({item}) => !item.reply) : owners.slice(0, 1);
+          const matches = selection.map((block) => ({block, targets: block.targets.filter(({word}) => !params.word ||
+            block.item.runs.some((run) => run.i === word && run.text.toUpperCase() === params.word!.toUpperCase()))}));
+          const count = matches.reduce((sum, {targets}) => sum + targets.length, 0);
+          if (!count) throw new Error(`${authored.id}: ${call.name} has no matching target "${params.word}"`);
+          if (params.word && count !== 1) throw new Error(`${authored.id}: ${call.name} has an ambiguous target "${params.word}"`);
+          for (const {block, targets} of matches) {
+            if (!targets.length) continue;
+            const name = `${call.name} · ${block.item.id} · ${n + 1}`;
             const start = Math.min(...targets.map(({sungFrame}) => sungFrame!));
             const schedule = scheduleUnit(call, ctx, targets, start);
             work.entries.push([name, lowerUnit(call, ctx, {schedule})]);
-            (board.blocks[index].verb ??= []).push(...unitCues(name, schedule, ctx.fps));
+            (board.blocks[block.index].verb ??= []).push(...unitCues(name, schedule, ctx.fps));
           }
         }
-        transitions.push({line: item.id, board: scene.id, start: block.start, landing: block.landing, release: block.release,
-          edge: item.card.from.kind === 'edge', handoff: isPair(item.card.enter)});
       }
       finalizeEffects(work);
       if (i) transitions.push({line: work.blocks[0].item.id, board: scene.id, start, landing: start, release: start,

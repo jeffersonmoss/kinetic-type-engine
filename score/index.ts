@@ -48,9 +48,15 @@ export interface ReplyCard extends Emphasis {
   /** Explicit glyph groups with no inferred syllable timing. Keys are sung token IDs. */
   syllables?: Readonly<Record<string, readonly {text: string; offsetFrames?: number}[]>>;
 }
+export interface PartCard extends Omit<ReplyCard, 'rows' | 'omit'> {
+  rows: Exclude<Rows, 'auto'>;
+  camera?: CameraCall<any>;
+}
 export interface LineCard extends ReplyCard {
   old?: Fate;
   reply?: ReplyCard;
+  /** Further lead phrases in lyric order. The primary phrase is authored in rows. */
+  parts?: readonly [] | readonly [PartCard] | readonly [PartCard, PartCard];
   camera?: CameraCall<any>;
   accents?: readonly UnitCall<any>[];
   portrait?: Partial<Omit<LineCard, 'portrait'>>;
@@ -89,9 +95,16 @@ export function motif(name: string, {lines}: {lines: Readonly<Record<string, Lin
     if (!Number.isSafeInteger(n) || n < 1) throw new Error(`Invalid occurrence of motif ${name}: ${n}`);
     const id = (value: string) => value.startsWith(prefix) ? `${name}${n}.${value.slice(prefix.length)}` : value;
     const landmark = (from?: Landmark): Landmark | undefined => from && ('line' in from ? {...from, line: id(from.line)} : from);
+    const rewritePart = (part: PartCard): PartCard => ({...part, from: landmark(part.from)});
+    const rewriteParts = (parts: LineCard['parts']): LineCard['parts'] => {
+      if (parts?.length === 2) return [rewritePart(parts[0]), rewritePart(parts[1])];
+      if (parts?.length === 1) return [rewritePart(parts[0])];
+      return parts;
+    };
     const rewrite = <T extends LineCard>(card: T): T => ({...card,
       from: landmark(card.from),
       reply: card.reply && {...card.reply, from: landmark(card.reply.from)},
+      parts: rewriteParts(card.parts),
       portrait: card.portrait && rewrite(card.portrait),
     });
     return Object.entries(lines).map(([key, entry]) => line(id(entry.id), rewrite(mergeCard(entry.card, occurrences[n]?.[key]))));
