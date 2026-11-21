@@ -113,6 +113,9 @@ export const retireFrame = (board: Board, i: number): number => {
   if (!w) return Infinity;
   memo.set(i, Infinity); // guard against cycles through binds
   let r = Math.max(lineEndF(w.line) + RETIRE_AFTER, w.sf + Math.max(20, MIN_VISIBLE_FRAMES));
+  // A legacy hold may outlast protected reading. Never let implicit retirement dim a protected word.
+  const reading = board.readingIntervals?.[i];
+  if (reading) r = Math.max(r, reading.end + 1);
   const ku = L.blocks[w.block].def.keepUntil;
   if (ku !== undefined) r = Math.max(r, ku * FPS);
   for (const cue of boardCues(board)) {
@@ -120,7 +123,7 @@ export const retireFrame = (board: Board, i: number): number => {
     for (const h of def?.holds?.(cue, L) ?? []) if (h.word === i) r = Math.max(r, h.until);
     for (const b of def?.binds?.(cue, L) ?? []) if (b.display === i) {
       const sw = WORDS[b.sung];
-      if (sw) r = Math.max(r, lineEndF(sw.line) + RETIRE_AFTER, sfOf(sw.start_s) + 20);
+      if (sw) r = Math.max(r, lineEndF(sw.line) + RETIRE_AFTER, sfOf(sw.start_s) + 20, (board.readingIntervals?.[b.sung]?.end ?? -Infinity) + 1);
     }
   }
   const sungEnd = sfOf(WORDS[i].end_s);

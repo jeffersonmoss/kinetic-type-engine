@@ -405,6 +405,9 @@ export interface Handoff {id: HandoffId; t: number; bg: string; elements: Handof
 
 export interface CameraState {x: number; y: number; zoom: number; rot: number}
 
+/** Inclusive absolute frame bounds supplied by the compiler. */
+export interface ReadingInterval {readonly start: number; readonly end: number}
+
 export interface Board {
   /** Optional label for validator output. */
   id?: string;
@@ -423,6 +426,8 @@ export interface Board {
   end: number;
   bg: string;
   blocks: Block[];
+  /** Protected reading bounds by word index. Split runs use the same bounds for their sung token. */
+  readingIntervals?: Readonly<Partial<Record<number, ReadingInterval>>>;
   exit: ExitStyle;
   /** exit 'turn' (KIT 89): the turn every block leaves by at `end`. */
   turn?: TurnSpec;

@@ -43,10 +43,11 @@ const onScreen = (q: Pt[], box: {w: number; h: number}) => {
 /** Checks one element sampled per frame from f0 to f1 (absolute frames). */
 export const checkTrack = (
   id: string, f0: number, f1: number, at: (f: number) => TrackedSample | null,
-  opts: {exempt?: MotionRule[]; word?: number; abruptOk?: boolean; /** only frames where the element is at least partly inside this screen box count for speed (nothing off screen is seen moving). */ screen?: {w: number; h: number}; /** largest opacity change allowed between two frames. */ maxOpacityStep?: number} = {},
+  opts: {exempt?: MotionRule[]; word?: number; abruptOk?: boolean; visibilityThreshold?: number; /** only frames where the element is at least partly inside this screen box count for speed (nothing off screen is seen moving). */ screen?: {w: number; h: number}; /** largest opacity change allowed between two frames. */ maxOpacityStep?: number} = {},
 ): MotionViolation[] => {
   const out: MotionViolation[] = [];
   const ex = new Set(opts.exempt ?? []);
+  const visibilityThreshold = opts.visibilityThreshold ?? VISIBLE_THRESHOLD;
   const agg = new Map<string, MotionViolation & {worst: number}>();
   const note = (rule: MotionRule, f: number, worst: number, detail: (w: number) => string) => {
     if (ex.has(rule)) return;
@@ -82,7 +83,7 @@ export const checkTrack = (
     // visibility events, with ramp lengths for the abrupt check
     if (op <= 0.05) lastLow = f;
     if (op >= 0.95) lastHigh = f;
-    const nowVis = op >= VISIBLE_THRESHOLD;
+    const nowVis = op >= visibilityThreshold;
     if (nowVis && !vis) {
       events.push({f, kind: 'appear'});
       runStart = f;

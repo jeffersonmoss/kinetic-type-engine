@@ -18,8 +18,8 @@ export {SPEED_CAP, SPEED_CAP_FRACTION, BEAT_FRAMES} from './config';
 export const MIN_TRANSITION_FRAMES = 6;
 /** Anything that appears stays visible at least this many frames (0.5 s, item 12.2). */
 export const MIN_VISIBLE_FRAMES = 15;
-/** Opacity above which an element counts as visible for appear and disappear events. */
-export const VISIBLE_THRESHOLD = 0.25;
+/** Minimum opacity for reading and for visibility events. */
+export const VISIBLE_THRESHOLD = 0.5;
 /** Peak speed of easeInOutSine relative to its average speed (pi/2); the engine eases entrances and transits with it. */
 export const IN_OUT_PEAK = Math.PI / 2;
 

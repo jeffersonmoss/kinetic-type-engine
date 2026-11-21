@@ -12,7 +12,7 @@ import {MIN_TRANSITION_FRAMES, rectQuad} from './motion';
 import {clipConvex, polyArea} from './validateRules';
 import {RIG_FRAME_RANGE, SLOW_SOAR_MAX, SLOW_SOAR_MIN, isSlowSoar, rigMoves, rigTransits} from './rig';
 import {handoffById, handoffGraceEnd, handoffPairsNested, handoffWordSet} from './handoffWords';
-import {MIN_VISIBLE_FRAMES} from './motion';
+import {MIN_VISIBLE_FRAMES, VISIBLE_THRESHOLD} from './motion';
 import {carryReadEnd} from './carry';
 import {ruleTracks} from './rules';
 import type {Board, CameraState, HandoffId, Pt, Waiver, WordGeom} from './types';
@@ -27,7 +27,7 @@ import {emptyTimeline, motionRuleChecks} from './validateMotion';
 import {groundClearSpan} from './groundClear';
 import {graphicLife} from './lines';
 import {morphKeptDrift} from './morphPin';
-import {EXIT_FRAMES, RETIRE_AFTER, handoffClearAt, baseCtx, boardCues, cueAffects, cueAt, replacesEnterOf, retireFrame, wordStateAt, inkOpacity, GONE_OPACITY, blockEmergence, exitFramesOf} from './wordState';
+import {EXIT_FRAMES, RETIRE_AFTER, handoffClearAt, baseCtx, boardActive, boardCues, cueAffects, cueAt, retireFrame, wordStateAt, inkOpacity, GONE_OPACITY, blockEmergence, exitFramesOf} from './wordState';
 
 export const SAFE = 48;
 export type Severity = 'error' | 'warn';
@@ -98,7 +98,7 @@ export const PICTURE_FRAMES = 15;
 export const PROP_CLEAR = 24;
 export const PROP_CLEAR_FRAMES = 15;
 export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardReport => {
-  const step = opts.step ?? 1;
+  const step = board.readingIntervals ? 1 : opts.step ?? 1;
   const name = board.id ?? `board@${board.start.toFixed(2)}`;
   const L = layoutBoard(board);
   const out: Violation[] = [];
@@ -177,7 +177,6 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
   for (const i of L.order) { const c = handoffClearAt(board, i); if (c < Infinity) clearAt.set(i, c); }
   exempt.push(...handoffPairsNested(board, L));
   const isExempt = (a: number, b: number) => exempt.some(([x, y]) => (x === a && y === b) || (x === b && y === a));
-  const replacedEnter = (i: number) => cues.some((c) => { const d = getVerb(c.name); return !!d && replacesEnterOf(d, c, L, i); });
   const gradualFor = (i: number) => cues.some((c) => getVerb(c.name)?.gradual && cueAffects(c, L, getVerb(c.name)).includes(i));
   // display frames (morph targets), relight binds
   const displayFrom = new Map<number, number>();
@@ -233,6 +232,17 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
   const carried = new Set([...handoffWordSet(board, L, 'start')].filter((i) => L.words.get(i)!.sf < startF));
   for (const i of L.order) {
     const w = L.words.get(i)!;
+    const reading = board.readingIntervals?.[i];
+    if (reading) {
+      if (!Number.isSafeInteger(reading.start) || !Number.isSafeInteger(reading.end) || reading.end - reading.start + 1 < MIN_VISIBLE_FRAMES) {
+        out.push({board: name, rule: 'reading-interval', severity: 'error', word: i, text: w.text, line: w.line,
+          detail: `invalid protected frames [${reading.start}, ${reading.end}]: expected at least ${MIN_VISIBLE_FRAMES} integer frames`});
+        intervals.set(i, [Infinity, -Infinity]);
+      } else {
+        intervals.set(i, [reading.start, reading.end]);
+      }
+      continue;
+    }
     const req = retireFrame(board, i);
     const rem0 = removal.get(i) ?? Infinity;
     const clear = clearAt.get(i) ?? Infinity;
@@ -258,14 +268,15 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
     if (!sw || !L.words.has(bd.display)) { out.push({board: name, rule: 'relight', severity: 'error', word: bd.display, detail: `relight binds word ${bd.sung} to word ${bd.display}, which is not on this board (or the sung word does not exist)`}); continue; }
     const s0 = Math.round(sw.start_s * FPS), s1 = Math.round(sw.end_s * FPS);
     const iv = intervals.get(bd.display)!;
-    if (iv[1] < s1 - 0.5) out.push({board: name, rule: 'relight', severity: 'error', word: bd.display, text: WORDS[bd.display].text, detail: `retires at frame ${iv[1].toFixed(0)}, before the bound word "${sw.text}" finishes (frame ${s1})`});
-    intervals.set(bd.display, [iv[0], Math.max(iv[1], Math.min(s1, endF))]);
+    if (!board.readingIntervals?.[bd.display] && iv[1] < s1 - 0.5) out.push({board: name, rule: 'relight', severity: 'error', word: bd.display, text: WORDS[bd.display].text, detail: `retires at frame ${iv[1].toFixed(0)}, before the bound word "${sw.text}" finishes (frame ${s1})`});
+    if (!board.readingIntervals?.[bd.display]) intervals.set(bd.display, [iv[0], Math.max(iv[1], Math.min(s1, endF))]);
     addPlan(sw.line, `relight: "${sw.text}" (${bd.sung}) sung on "${WORDS[bd.display].text}" (${bd.display}) from frame ${s0}`);
   }
   // Rule 81.7: a word sung on the start boundary or within 9 frames after it is read from 10 frames after the boundary,
   // and must stay readable for 10 frames from then (as rule 41 asks of a word sung during a rig move)
   const grace = new Map<number, number>();
   for (const i of L.order) {
+    if (board.readingIntervals?.[i]) continue;
     const g = handoffGraceEnd(board, i);
     if (g === -Infinity) continue;
     grace.set(i, g);
@@ -274,6 +285,7 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
   }
   // Words sung during a rig transit must still be read at its end plus 10 frames (rule 181.2)
   for (const tr of transits) for (const i of L.order) {
+    if (board.readingIntervals?.[i]) continue;
     const w = L.words.get(i)!, iv = intervals.get(i)!;
     const sungEnd = Math.round(WORDS[i].end_s * FPS);
     if (w.sf < tr.end && sungEnd > tr.start && iv[1] < Math.min(tr.end + 10, endF) - 0.5)
@@ -371,20 +383,32 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
       const b = L.blocks[w.block];
       const s = states.get(i)!;
       const bcam = camForBlock(board, w.block, f);
+      const protectedReading = !!board.readingIntervals?.[i];
+      const base: Violation = {board: name, rule: '', severity: 'error', word: i, text: WORDS[i].text, line: w.line, detail: ''};
+      if (protectedReading) {
+        const glyphOpacity = [...w.text].reduce((least, ch, k) => {
+          if (/\s/u.test(ch)) return least;
+          if (s.m.turn?.letters?.[k] === 'hidden') return 0;
+          return Math.min(least, s.m.letters?.[k]?.opacity ?? 1);
+        }, 1);
+        const opacity = boardActive(board, f) && !s.m.hidden ? s.m.opacity * glyphOpacity : 0;
+        if (opacity < VISIBLE_THRESHOLD) {
+          note(`vis${i}`, {...base, rule: 'visible', detail: `opacity ${opacity.toFixed(2)} (needs ${VISIBLE_THRESHOLD})`}, f, 1 - opacity);
+          continue;
+        }
+      }
       if (moving && b.def.pin !== 'screen') continue; // rule 181.2: checked when the transit ends
       // KIT 89: a word turning in 3D is in transit (edge-on is not a wipe); KIT 90: so is, under transitRules 'energy',
       // a word in its first 12 frames of motion. Both are checked again once they are still.
       if (s.m.turn || transitExempt(board, i, f)) continue;
       if (f < (grace.get(i) ?? -Infinity)) continue; // rule 81.7: checked from 10 frames after the start handoff
-      const base: Violation = {board: name, rule: '', severity: 'error', word: i, text: WORDS[i].text, line: w.line, detail: ''};
       // rule 58: a held morph source waits exempt from the readability rules, but nothing may touch its ink (Fable
       // item 30 overruled the overlap exemption of KIT 79.4)
       if (waiting(i, f)) { if (s.vis) overlapPass(i, w, s, f, base); continue; }
-      const threshold = f === w.sf && !replacedEnter(i) ? 0.9 : 0.45;
       // Fable item 38a: a word printed on a page that a page above uncovers by folding (a DOOR flip) may complete up to
       // PANEL_REVEAL_GRACE frames after its sung frame; after that, and for anything else, the visibility check applies
       if (!s.shown && b.def.on && f < w.sf + PANEL_REVEAL_GRACE && (board.panels ?? []).some((p) => p.id !== b.def.on && panelSwinging(p, f / FPS))) continue;
-      if (!s.shown || s.m.opacity < threshold) { note(`vis${i}`, {...base, rule: 'visible', detail: `opacity ${s.m.opacity.toFixed(2)} (needs ${threshold})`}, f, 1 - s.m.opacity); continue; }
+      if (!protectedReading && (!s.shown || s.m.opacity < VISIBLE_THRESHOLD)) { note(`vis${i}`, {...base, rule: 'visible', detail: `opacity ${s.m.opacity.toFixed(2)} (needs ${VISIBLE_THRESHOLD})`}, f, 1 - s.m.opacity); continue; }
       // KIT 90: frames read at rest (shown, still, outside any rig transit), for `energy-read`
       if (energy && !wordMoving(board, i, f)) restFrames.set(i, (restFrames.get(i) ?? 0) + step);
       const xs = s.quad.map((p) => p.x), ys = s.quad.map((p) => p.y);
@@ -521,8 +545,10 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
       const uncapped = L.blocks[w.block].def.emerge?.speedCap === false && f <= w.sf ? true : undefined;
       return {opacity: m.opacity, quad: screenQuad(board, w, m, f, cam), state: m.colour ?? '', relPrev, swing: (pp ? panelSwingExempt(pp, f / FPS) : undefined) || exemptType || uncapped};
     }, {word: i, abruptOk: gradualFor(i) || !!L.blocks[w.block].def.on, screen: {w: WIDTH, h: HEIGHT}, maxOpacityStep: 1 / MIN_TRANSITION_FRAMES,
+      // Legacy word motion treated retirement dimming as a continuous hold, separate from readability.
+      visibilityThreshold: board.readingIntervals?.[i] ? VISIBLE_THRESHOLD : 0.25,
       // KIT 90 (Fable amendment): under transitRules 'energy' type in any flight, whip or turn is exempt from the speed cap
-      ...(energy ? {exempt: ['speed' as const]} : {})});
+      exempt: [...(energy ? ['speed' as const] : []), ...(board.readingIntervals?.[i] ? ['min-visible' as const] : [])]});
     for (const v of viol) out.push({board: name, rule: v.rule, severity: 'error', word: i, text: WORDS[i].text, line: w.line, from: v.from, to: v.to, frames: v.frames, detail: v.detail});
   }
   // rules, panels and the tips of board paths are tracked automatically

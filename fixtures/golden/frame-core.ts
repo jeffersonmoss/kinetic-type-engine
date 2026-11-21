@@ -47,4 +47,26 @@ export function checkFrameCore() {
     throw new Error('the reserved open end handoff should pass');
   }
   console.log('126.4 unknown start and end handoffs rejected; open end accepted.');
+
+  const {words} = pureTypeConfig;
+  const start = Math.round(words[0].start_s * FPS) + 1;
+  const end = Math.round(words[0].end_s * FPS);
+  registerVerb('frame-core-opacity', {modify: (c) => ({
+    opacity: c.f >= start && c.f <= end && c.f !== c.cue.params?.dip ? 0.5 : 0.45,
+  }), gradual: true});
+  const visibilityAt = (dip: number) => {
+    const board: Board = {
+      ...pureTypeBoard, readingIntervals: {0: {start, end}},
+      blocks: [{...pureTypeBoard.blocks[0], verb: [{name: 'frame-core-opacity', word: 0, at: 0, params: {dip}}]}],
+    };
+    return validateBoard(board).violations.filter((v) => v.rule === 'visible' && v.word === 0);
+  };
+  if (visibilityAt(end + 1).length) throw new Error('0.5 must pass throughout protected reading, with 0.45 outside');
+  for (const frame of [start, end - 1, end]) {
+    const v = visibilityAt(frame);
+    if (v.length !== 1 || v[0].from !== frame || v[0].to !== frame) {
+      throw new Error(`expected 0.45 to fail on protected frame ${frame}: ${JSON.stringify(v)}`);
+    }
+  }
+  console.log(`126.5 0.5 accepted on frames ${start}–${end}; 0.45 rejected at ${start}, ${end - 1}, and ${end}, accepted outside.`);
 }

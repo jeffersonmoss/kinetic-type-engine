@@ -60,7 +60,8 @@ export type SmearWordPass = 'sharp' | 'blur' | 'none';
 export const smearWordPass = (board: Board, i: number, sf: number, f: number, state: (f: number) => WordMod = (x) => wordStateAt(board, i, x)): SmearWordPass => {
   // board.smearType false: no blur for type; a word shown at f is drawn once, sharp (grounds and graphics still blur)
   if (board.smearType === false) return shown(state(f)) ? 'sharp' : 'none';
-  if (f >= sf + 3 && f < retireFrame(board, i)) return 'sharp';
+  const reading = board.readingIntervals?.[i];
+  if (reading ? f >= reading.start && f <= reading.end : f >= sf + 3 && f < retireFrame(board, i)) return 'sharp';
   const now = state(f), early = state(f - SMEAR_SPAN);
   // a word in a 3D turn (in, out or turnSwap, KIT 89) is never smeared, whatever the board's smear settings (Fable
   // ruling, 18 November 2026: no motion blur on any 3D turn): drawn once, sharp, at the frame's own time, and no trail
