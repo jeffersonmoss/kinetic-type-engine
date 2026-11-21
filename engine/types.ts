@@ -3,6 +3,7 @@
 import type {PanelDef} from './panel';
 import type {ReactNode} from 'react';
 import type {TrackedElement} from './motionCheck';
+import type {VerbCtxBase, VerbWordCtx, WordMod} from './verbRegistry';
 /** A font named in configureEngine({fonts}). */
 export type FontKey = string;
 
@@ -35,15 +36,20 @@ export interface TurnSpec {
   /** What turns as one rigid plane: the whole 'block' (default), each 'row', or each 'word'. */
   unit?: 'block' | 'row' | 'word';
 }
-/** A block (or some of its words) leaving by a 3D turn at song seconds `at` (Block.exit). */
-export interface BlockExit {
-  style: 'turn';
-  /** Song seconds when the turn starts. */
+interface BlockExitTiming {
+  /** Song seconds when the exit starts. */
   at: number;
-  turn?: TurnSpec;
-  /** Inclusive global word range that turns out (default: the whole block). */
+  /** Legacy inclusive global word range. */
   words?: [number, number];
+  /** Explicit targets, for fates that leave some words in place. */
+  targets?: readonly number[];
 }
+/** A block-local exit, lowered to a verb cue. The original turn spelling remains supported. */
+export type BlockExit = BlockExitTiming & (
+  | {style: 'turn'; turn?: TurnSpec}
+  | {style: Exclude<ExitStyle, 'turn' | 'none'>}
+  | {style: 'effect'; name: VerbName; params?: Record<string, unknown>}
+);
 /** turnSwap (on the incoming block): `from` turns away to edge-on while this block turns in from edge-on on the same pivot. */
 export interface TurnSwap {
   /** The outgoing element: a word or a whole block (block index on this board). */
@@ -72,6 +78,58 @@ export interface VerbCue {
   /** Silence the validator's "effect starts under 10 frames after its word" check (storyboard exceptions). */
   allowEarly?: boolean;
 }
+
+export interface VerbDef {
+  /** Definition name before the compiler assigns a board-local cue name. */
+  effectName?: string;
+  /** Conservative ink bounds in block coordinates, if declared by the effect. */
+  ink?: (c: VerbWordCtx) => {x: number; y: number; width: number; height: number};
+  /** Words the cue acts on. Default: cue.words ?? [cue.word]. */
+  affects?: (cue: VerbCue, L: BoardLayout) => number[];
+  /** Default start (seconds) when the cue has no `at`. Default: word start + 10 frames. */
+  defaultAt?: (cue: VerbCue, L: BoardLayout) => number;
+  /** Frames before `at` from which modify() is already called (default 0). */
+  lead?: number;
+  /** The verb starts at or before its word's start by design (validator does not flag it). */
+  early?: boolean;
+  /** Minimum frames after the word's start before the verb may start (default 10; carry 8). */
+  minDelay?: number;
+  /** Pairs of words whose overlap the validator ignores while this cue is active (shove: incoming on outgoing). */
+  overlapExempt?: (cue: VerbCue, L: BoardLayout) => [number, number][];
+  /** The verb replaces the word's normal entrance (e.g. rush): true for every word it affects, or a function naming the
+   *  words whose entrance it replaces (SHOVE push: its new words, not the old block it pushes). */
+  replacesEnter?: boolean | ((cue: VerbCue, L: BoardLayout) => number[]);
+  /** Words of the cue that are hidden before it starts (like replacesEnter, for some of its words only: SHOVE push hides
+   *  its new words until they set off, and leaves the old block it pushes alone). */
+  hiddenBefore?: (cue: VerbCue, L: BoardLayout) => number[];
+  /** Frame (absolute) from which the word is gone for good, if the verb removes it; used by the validator. */
+  removesAt?: (c: VerbCtxBase & {i: number}) => number | null;
+  /** Per-word adjustment while active. Return null for no change. */
+  modify?: (c: VerbWordCtx) => Partial<WordMod> | null;
+  /** Room the camera frame must keep for the effect: the largest scale the affected words reach, about their
+   *  centres (stretch: {sx: amount}). Idea from kinetic-type-engine's "motion overhead" in getSafeZoom. */
+  reserve?: (cue: VerbCue, L: BoardLayout) => {sx?: number; sy?: number} | null;
+  /** World-space graphics drawn over the board's words while active (bursts, arms, strokes). */
+  overlay?: (c: VerbCtxBase) => ReactNode;
+  // ---------------------------------------------------------------- board hooks
+  /** The verb reveals or hides its words geometrically (a mask, a scale from a point, letters opening) at full
+   *  opacity, so the validator's 'abrupt' rule does not apply to them. */
+  gradual?: boolean;
+  /** Words this cue keeps on the board, unretired, until an absolute frame (a morph source until the morph is done). */
+  holds?: (cue: VerbCue, L: BoardLayout) => {word: number; until: number}[];
+  /** Later sung words this cue binds to a word already on the board (relight): the validator checks `display` for
+   *  readability while `sung` is sung, and `display` is not retired before `sung` is. */
+  binds?: (cue: VerbCue, L: BoardLayout) => {display: number; sung: number}[];
+  /** First frame a word counts as displayed (a morph's target: when its last new letter is fully open). */
+  displayFrom?: (cue: VerbCue, L: BoardLayout, i: number) => number | null;
+  /** Line-type marks this verb draws at the context's frame (seam hairlines, extrude strokes, hinge rules, skids), in
+   *  world px with their owners (ruling 198). The validator checks them for lingering and for crossing ink; draw them
+   *  from the same function (lines.ts drawLines) so the check and the render cannot drift apart. */
+  lines?: (c: VerbCtxBase) => import('./lines').LineSeg[] | null;
+}
+
+/** Immutable, board-local runtime definitions compiled from effect calls. */
+export type EffectTable = Readonly<Partial<Record<string, Readonly<VerbDef>>>>;
 
 /** A letter replaced by a drawing (a hole, a ring, or anything a video draws with a function: its own characters). */
 export interface LetterArt {
@@ -152,7 +210,7 @@ export interface Block {
     hang?: boolean};
   /** the emergence move this block comes out of the previous arrangement by, and its anchor (rules 54 to 68, 181.5). */
   emerge?: Emergence;
-  /** KIT 89: the block (or `words` of it) leaves by a 3D turn. */
+  /** Exit cue for this block or a subset of its words. */
   exit?: BlockExit;
   /** KIT 89: this block turns in while `from` turns away on the same pivot (a revolving sign). Counts as its emergence
    *  when `emerge` is not given. */
@@ -250,6 +308,7 @@ export type SlideSource = Exclude<AnchorRef, {point: Pt}> | {edge: FrameEdge} | 
 export type Emergence = EmergenceOptions & (
   | {move: 'slideFrom'; from: SlideSource}
   | {move: Exclude<EmergeMove, 'slideFrom'>; from: AnchorRef}
+  | {move: 'effect'; name: VerbName; from: SlideSource}
 );
 interface EmergenceOptions {
   /** Song seconds when the move starts; default: so that it ends on the block's first sung frame (or at `showFrom`). */
@@ -431,6 +490,7 @@ export interface Board {
   blocks: Block[];
   /** Protected reading bounds by word index. Split runs use the same bounds for their sung token. */
   readingIntervals?: Readonly<Partial<Record<number, ReadingInterval>>>;
+  readonly effects?: EffectTable;
   exit: ExitStyle;
   /** exit 'turn' (KIT 89): the turn every block leaves by at `end`. */
   turn?: TurnSpec;

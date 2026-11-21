@@ -2,10 +2,11 @@
 // core (wordState, BoardView, validateBoard) only ever talks to effects through this interface, so a new
 // effect (a morph, an emergence, a stacking repeat) is added by writing one file, never by editing the core.
 import type {ReactNode} from 'react';
-import type {BlockGeom, BoardLayout, CameraState, Pt, VerbCue, WordGeom} from './types';
+export type {VerbDef} from './types';
+import type {BlockGeom, BoardLayout, CameraState, EffectTable, Pt, SlideSource, TurnSpec, VerbCue, VerbDef, WordGeom} from './types';
 
 /** Per-letter adjustment (block-local px and degrees, about the letter's centre). */
-export interface LetterMod {dx: number; dy: number; rot: number; s: number; opacity: number; /** extra horizontal scale (hinge) */ sx?: number}
+export interface LetterMod {dx: number; dy: number; rot: number; s: number; opacity: number; /** extra horizontal scale (hinge) */ sx?: number; /** extra vertical scale */ sy?: number}
 
 /** A word's render adjustment. Translations are block-local px; rot/scale are about the word's centre. */
 export interface WordMod {
@@ -58,7 +59,8 @@ export const composeMod = (a: WordMod, b: Partial<WordMod> | null | undefined, n
   if (a.letters || b.letters) {
     out.letters = Array.from({length: nLetters}, (_, k) => {
       const x = a.letters?.[k] ?? letterIdentity(), y = b.letters?.[k] ?? letterIdentity();
-      return {dx: x.dx + y.dx, dy: x.dy + y.dy, rot: x.rot + y.rot, s: x.s * y.s, opacity: x.opacity * y.opacity, sx: (x.sx ?? 1) * (y.sx ?? 1)};
+      return {dx: x.dx + y.dx, dy: x.dy + y.dy, rot: x.rot + y.rot, s: x.s * y.s, opacity: x.opacity * y.opacity, sx: (x.sx ?? 1) * (y.sx ?? 1),
+        ...((x.sy !== undefined || y.sy !== undefined) ? {sy: (x.sy ?? 1) * (y.sy ?? 1)} : {})};
     });
   }
   return out;
@@ -86,50 +88,10 @@ export interface VerbWordCtx extends VerbCtxBase {
   block: BlockGeom;
   /** Unit vector, in this word's block frame, pointing screen-down at the cue start (gravity). */
   down: Pt;
-}
-export interface VerbDef {
-  /** Words the cue acts on. Default: cue.words ?? [cue.word]. */
-  affects?: (cue: VerbCue, L: BoardLayout) => number[];
-  /** Default start (seconds) when the cue has no `at`. Default: word start + 10 frames. */
-  defaultAt?: (cue: VerbCue, L: BoardLayout) => number;
-  /** Frames before `at` from which modify() is already called (default 0). */
-  lead?: number;
-  /** The verb starts at or before its word's start by design (validator does not flag it). */
-  early?: boolean;
-  /** Minimum frames after the word's start before the verb may start (default 10; carry 8). */
-  minDelay?: number;
-  /** Pairs of words whose overlap the validator ignores while this cue is active (shove: incoming on outgoing). */
-  overlapExempt?: (cue: VerbCue, L: BoardLayout) => [number, number][];
-  /** The verb replaces the word's normal entrance (e.g. rush): true for every word it affects, or a function naming the
-   *  words whose entrance it replaces (SHOVE push: its new words, not the old block it pushes). */
-  replacesEnter?: boolean | ((cue: VerbCue, L: BoardLayout) => number[]);
-  /** Words of the cue that are hidden before it starts (like replacesEnter, for some of its words only: SHOVE push hides
-   *  its new words until they set off, and leaves the old block it pushes alone). */
-  hiddenBefore?: (cue: VerbCue, L: BoardLayout) => number[];
-  /** Frame (absolute) from which the word is gone for good, if the verb removes it; used by the validator. */
-  removesAt?: (c: VerbCtxBase & {i: number}) => number | null;
-  /** Per-word adjustment while active. Return null for no change. */
-  modify?: (c: VerbWordCtx) => Partial<WordMod> | null;
-  /** Room the camera frame must keep for the effect: the largest scale the affected words reach, about their
-   *  centres (stretch: {sx: amount}). Idea from kinetic-type-engine's "motion overhead" in getSafeZoom. */
-  reserve?: (cue: VerbCue, L: BoardLayout) => {sx?: number; sy?: number} | null;
-  /** World-space graphics drawn over the board's words while active (bursts, arms, strokes). */
-  overlay?: (c: VerbCtxBase) => ReactNode;
-  // ---------------------------------------------------------------- board hooks
-  /** The verb reveals or hides its words geometrically (a mask, a scale from a point, letters opening) at full
-   *  opacity, so the validator's 'abrupt' rule does not apply to them. */
-  gradual?: boolean;
-  /** Words this cue keeps on the board, unretired, until an absolute frame (a morph source until the morph is done). */
-  holds?: (cue: VerbCue, L: BoardLayout) => {word: number; until: number}[];
-  /** Later sung words this cue binds to a word already on the board (relight): the validator checks `display` for
-   *  readability while `sung` is sung, and `display` is not retired before `sung` is. */
-  binds?: (cue: VerbCue, L: BoardLayout) => {display: number; sung: number}[];
-  /** First frame a word counts as displayed (a morph's target: when its last new letter is fully open). */
-  displayFrom?: (cue: VerbCue, L: BoardLayout, i: number) => number | null;
-  /** Line-type marks this verb draws at the context's frame (seam hairlines, extrude strokes, hinge rules, skids), in
-   *  world px with their owners (ruling 198). The validator checks them for lingering and for crossing ink; draw them
-   *  from the same function (lines.ts drawLines) so the check and the render cannot drift apart. */
-  lines?: (c: VerbCtxBase) => import('./lines').LineSeg[] | null;
+  /** Project this word using the same geometry as the legacy turn renderer. */
+  projectTurn?: (spec: TurnSpec, progress: number) => Partial<WordMod> | null;
+  /** Resolved source in this word's block coordinates, when the cue names an anchor. */
+  source?: (anchor: SlideSource, frame: number) => Pt;
 }
 
 const REGISTRY = new Map<string, VerbDef>();
@@ -147,3 +109,7 @@ export const extendVerb = (name: string, patch: Partial<VerbDef> | ((base: VerbD
 };
 export const getVerb = (name: string) => REGISTRY.get(name);
 export const verbNames = () => [...REGISTRY.keys()];
+
+/** The board owns its lowered effects. Legacy boards fall back to the registered verbs. */
+export const resolveVerb = (name: string, table?: EffectTable): VerbDef | undefined =>
+  table && Object.hasOwn(table, name) ? table[name] : getVerb(name);

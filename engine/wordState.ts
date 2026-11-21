@@ -3,17 +3,19 @@
 import {panelCover, panelWordMod} from './panels';
 import {HANDOFF_CLEAR_FRAMES, handoffClearFrame} from './handoffWords';
 import {CULL_DISTANCE, FPS, HEIGHT, LINES, WIDTH, WORDS} from './config';
-import {camForBlock, cameraAt, toScreen} from './camera';
+import {camForBlock, cameraAt, toScreen, toWorld} from './camera';
 import {carryClearOpacity} from './carry';
 import {rigTransits} from './rig';
 import {wipeFullAt} from './ground';
 import {MIN_VISIBLE_FRAMES} from './motion';
-import {blockToWorld, layoutBoard, wordCorners} from './layout';
-import type {Block, Board, BoardLayout, Emergence, Pt, VerbCue, WordGeom} from './types';
-import {boardTurnExitFrames, boardTurnExitMod} from './emergence/turn';
+import {blockToWorld, layoutBoard, wordCorners, worldToBlock} from './layout';
+import type {Block, Board, BoardLayout, Emergence, Pt, SlideSource, VerbCue, WordGeom} from './types';
+import {boardTurnExitFrames, boardTurnExitMod, turnWordMod} from './emergence/turn';
+import {resolveAnchor} from './letters';
+import {resolveTurn} from './turn3d';
 import {clamp, easeInQuad, easeOutCubic, rand, rot, sfOf} from './util';
 import {SPEED_CAP} from './motion';
-import {IDENTITY, composeMod, getVerb, type VerbCtxBase, type VerbDef, type WordMod} from './verbRegistry';
+import {IDENTITY, composeMod, resolveVerb, type VerbCtxBase, type VerbDef, type WordMod} from './verbRegistry';
 import './verbs';
 import './verbsSheet';
 import './wah';
@@ -53,24 +55,31 @@ export const emergeCue = (board: Board, k: number): VerbCue | null => {
   const turn = e.move === 'turn' ? (b.turnSwap ? {mode: 'swap', swapFrom: b.turnSwap.from, spec: {...(b.turnSwap.spec ?? {}), ...(e.turn ?? {})}} : {mode: 'in', spec: e.turn ?? {}}) : {};
   // KIT 91: speedCap false reaches the move's own frame count (capFrames) through its params
   const cap = e.speedCap === false ? {speedCap: false} : {};
-  return {name: e.move, word: b.words[0], words, at: e.at, params: {...mode, ...turn, ...(e.params ?? {}), ...cap, from: e.from, block: k, showFrom: b.showFrom, emerged: true}};
+  return {name: e.move === 'effect' ? e.name : e.move, word: b.words[0], words, at: e.at, params: {...mode, ...turn, ...(e.params ?? {}), ...cap, from: e.from, block: k, showFrom: b.showFrom, emerged: true}};
 };
 /** A block's emergence: its `emerge`, or (KIT 89) a 'turn' out of its turnSwap's outgoing element when it has none. */
 export const blockEmergence = (b: Block): Emergence | undefined =>
   b.emerge ?? (b.turnSwap ? {move: 'turn', from: b.turnSwap.from} : undefined);
-/** KIT 89: the cue of a block's `exit: {style: 'turn'}` (mode 'out'), or null. */
+/** Derive a runtime exit cue from either the legacy style or a lowered effect. */
 export const blockExitCue = (board: Board, k: number): VerbCue | null => {
   const b = board.blocks[k];
   const x = b?.exit;
-  if (!x || x.style !== 'turn') return null;
+  if (!x) return null;
   const [a, z] = x.words ?? b.words;
   const words: number[] = [];
-  for (let i = Math.max(a, b.words[0]); i <= Math.min(z, b.words[1]); i++) words.push(i);
+  for (let i = Math.max(a, b.words[0]); i <= Math.min(z, b.words[1]); i++) {
+    if (!x.targets || x.targets.includes(i)) words.push(i);
+  }
   if (!words.length) return null;
-  return {name: 'turn', word: words[0], words, at: x.at, params: {mode: 'out', spec: x.turn ?? {}, block: k}};
+  const params = x.style === 'turn' ? {mode: 'out', spec: x.turn ?? {}}
+    : x.style === 'effect' ? x.params : {mode: 'blockExit'};
+  // Direct scene styles retain a fallback for callers without an effect table.
+  const name = x.style === 'effect' ? x.name : x.style === 'turn' || Object.hasOwn(board.effects ?? {}, x.style)
+    ? x.style : '@block-exit/' + x.style;
+  return {name, word: words[0], words, at: x.at, params: {...params, block: k}};
 };
 const cueMemo = new WeakMap<Board, VerbCue[]>();
-/** All verb cues of a board (from every block, plus the cues derived from emergence declarations and turn exits). */
+/** All verb cues of a board (from every block, plus the cues derived from emergence declarations and block exits). */
 export const boardCues = (board: Board): VerbCue[] => {
   const hit = cueMemo.get(board);
   if (hit) return hit;
@@ -96,6 +105,27 @@ export const GONE_OPACITY = 0.05;
  *  timing is the render's own (per-letter delay and MIN_TRANSITION_FRAMES fade). */
 export const inkOpacity = (m: {hidden?: boolean; opacity: number; letters?: {opacity: number}[]}): number =>
   m.hidden ? 0 : m.opacity * (m.letters?.length ? Math.max(...m.letters.map((l) => l.opacity)) : 1);
+// Board-level cut/leave have a per-block equivalent. They conceal the word without moving the rest of the board.
+const blockExitVerbs = new Map<string, VerbDef>();
+for (const style of ['fade', 'fall', 'cut', 'leave'] as const) {
+  const duration = EXIT_FRAMES[style];
+  blockExitVerbs.set('@block-exit/' + style, {
+    gradual: true,
+    removesAt: (c) => c.at * FPS + duration,
+    modify: (c) => {
+      const u = clamp(c.df / duration);
+      if (style === 'cut') return {opacity: u < 1 ? 1 : 0};
+      if (style === 'fade') return {opacity: 1 - u};
+      const dist = style === 'fall' ? SPEED_CAP * duration / (2 * c.camAt(c.at * FPS).zoom) : c.geom.boxH * 2;
+      const travel = dist * (style === 'fall' ? u * u : u);
+      return {dx: c.down.x * travel, dy: c.down.y * travel, opacity: 1 - u};
+    },
+  });
+}
+/** Resolve board, legacy registry and block-only fallback definitions in priority order. */
+export const verbFor = (board: Board, name: string): VerbDef | undefined =>
+  resolveVerb(name, board.effects) ?? blockExitVerbs.get(name);
+
 /** A retired word is culled once its box is farther than one frame diagonal from the frame centre. */
 export {CULL_DISTANCE};
 const lineEndF = (lineId: number) => { const l = LINES[lineId]; return l ? WORDS[l.words[l.words.length - 1]].end_s * FPS : 0; };
@@ -119,7 +149,7 @@ export const retireFrame = (board: Board, i: number): number => {
   const ku = L.blocks[w.block].def.keepUntil;
   if (ku !== undefined) r = Math.max(r, ku * FPS);
   for (const cue of boardCues(board)) {
-    const def = getVerb(cue.name);
+    const def = verbFor(L.board, cue.name);
     for (const h of def?.holds?.(cue, L) ?? []) if (h.word === i) r = Math.max(r, h.until);
     for (const b of def?.binds?.(cue, L) ?? []) if (b.display === i) {
       const sw = WORDS[b.sung];
@@ -235,10 +265,25 @@ export const lifeStage = (board: Board, i: number, f: number): LifeStage => {
 export const downIn = (blockAngle: number, camRot: number): Pt => rot({x: 0, y: 1}, -(camRot + blockAngle));
 
 export const baseCtx = (cue: VerbCue, L: BoardLayout, f: number): VerbCtxBase => {
-  const def = getVerb(cue.name);
+  const def = verbFor(L.board, cue.name);
   const at = cueAt(cue, L, def);
   return {cue, at, f, t: f / FPS, df: f - at * FPS, L, affected: cueAffects(cue, L, def), camAt: (x: number) => cameraAt(L.board, x)};
 };
+
+function sourceInBlock(L: BoardLayout, block: number, anchor: SlideSource, frame: number): Pt {
+  const b = L.blocks[block];
+  const cam = camForBlock(L.board, block, frame);
+  if (!('edge' in anchor)) {
+    const source = resolveAnchor(L, anchor, frame / FPS);
+    const sourceCam = source.block === undefined ? cameraAt(L.board, frame) : camForBlock(L.board, source.block, frame);
+    return worldToBlock(b, toWorld(cam, toScreen(sourceCam, source.p)));
+  }
+  const centre = toScreen(cam, blockToWorld(b, {x: b.w / 2, y: b.h / 2}));
+  const point = anchor.edge === 'bottom' ? {...centre, y: HEIGHT}
+    : anchor.edge === 'top' ? {...centre, y: 0}
+    : {...centre, x: anchor.edge === 'left' ? 0 : WIDTH};
+  return worldToBlock(b, toWorld(cam, point));
+}
 
 /** Full render state of word i on a board at frame f (absolute, fractional allowed). */
 export const wordStateAt = (board: Board, i: number, f: number): WordMod => {
@@ -249,7 +294,7 @@ export const wordStateAt = (board: Board, i: number, f: number): WordMod => {
   const cues = boardCues(board);
   // a word a verb only holds (a morph's source) keeps its own entrance: only the verbs that bring the word in replace it
   const replacers = cues.filter((c) => {
-    const def = getVerb(c.name);
+    const def = verbFor(L.board, c.name);
     return !!def && replacesEnterOf(def, c, L, i) && !(def.holds?.(c, L) ?? []).some((h) => h.word === i);
   });
   const replaced = replacers.length > 0;
@@ -257,9 +302,9 @@ export const wordStateAt = (board: Board, i: number, f: number): WordMod => {
   // opacity from the board's start, vanish at the lead window, then enter: a blink).
   // (a verb may also hide only some of its words before it starts, `hiddenBefore`: SHOVE push hides its new words, not
   // the old block it pushes)
-  const hiders = cues.filter((c) => !replacers.includes(c) && getVerb(c.name)?.hiddenBefore?.(c, L).includes(i));
-  const hideBefore = replaced || hiders.length ? Math.min(...[...replacers, ...hiders].map((c) => baseCtx(c, L, 0).at * FPS - (getVerb(c.name)?.lead ?? 0))) : -Infinity;
-  if (f < hideBefore) return {...IDENTITY, hidden: true, opacity: 0};
+  const hiders = cues.filter((c) => !replacers.includes(c) && verbFor(L.board, c.name)?.hiddenBefore?.(c, L).includes(i));
+  const hideBefore = replaced || hiders.length ? Math.min(...[...replacers, ...hiders].map((c) => baseCtx(c, L, 0).at * FPS - (verbFor(L.board, c.name)?.lead ?? 0))) : -Infinity;
+  if (f < hideBefore - (board.effects ? 1e-6 : 0)) return {...IDENTITY, hidden: true, opacity: 0};
   // K2: a picture word is drawn by its graphic, never as type (its box keeps its place in the row)
   if (w.opts.picture !== undefined) return {...IDENTITY, hidden: true, opacity: 0};
   let m: WordMod = {...IDENTITY};
@@ -276,23 +321,32 @@ export const wordStateAt = (board: Board, i: number, f: number): WordMod => {
   m = composeMod(m, repeatMod(L, w, f), n);
   // verbs (collected first so a verb can ask to keep the word alive)
   let v: WordMod = {...IDENTITY};
+  let effectKeepsAlive = false;
   for (const cue of cues) {
-    const def = getVerb(cue.name);
+    const def = verbFor(L.board, cue.name);
     if (!def?.modify) continue;
     const base = baseCtx(cue, L, f);
     const k = base.affected.indexOf(i);
-    if (k < 0 || base.df < -(def.lead ?? 0)) continue;
+    if (k < 0 || base.df < -(def.lead ?? 0) - (board.effects ? 1e-6 : 0)) continue;
     const block = L.blocks[w.block];
     const down = downIn(block.angle, camForBlock(board, w.block, base.at * FPS).rot);
-    v = composeMod(v, def.modify({...base, i, k, geom: w, block, down}), n);
+    const mod = def.modify({...base, i, k, geom: w, block, down,
+      source: (anchor, frame) => sourceInBlock(L, w.block, anchor, frame),
+      projectTurn: (spec, progress) => {
+        const t = resolveTurn(spec);
+        return turnWordMod(L, i, base.at * FPS + progress * t.frames, 'in', base.at * FPS, t, base.affected);
+      },
+    });
+    if (mod?.keepAlive && Object.hasOwn(board.effects ?? {}, cue.name)) effectKeepsAlive = true;
+    v = composeMod(v, mod, n);
   }
   // retired 6 frames after its line ends, dims to 45 percent over 10 frames, stays on the board; culled far away
-  if (f >= cullFrame(board, i)) return {...IDENTITY, hidden: true, opacity: 0};
+  if (!effectKeepsAlive && f >= cullFrame(board, i)) return {...IDENTITY, hidden: true, opacity: 0};
   // an outgoing chunk carry with `clear` fades the board's type after its motion and then hides it (carry.ts)
   const cc = carryClearOpacity(board, f);
   if (cc <= 0) return {...IDENTITY, hidden: true, opacity: 0};
   const ret = retireFrame(board, i);
-  if (f > ret) m = composeMod(m, {opacity: 1 - (1 - RETIRE_OPACITY) * clamp((f - ret) / RETIRE_FRAMES)}, n);
+  if (f > ret && !effectKeepsAlive) m = composeMod(m, {opacity: 1 - (1 - RETIRE_OPACITY) * clamp((f - ret) / RETIRE_FRAMES)}, n);
   // the end handoff shows only its picture (rule 81.7): every other word fades out over the board's last frames
   const hc = handoffClearAt(board, i);
   if (f >= hc) m = composeMod(m, {opacity: 1 - clamp((f - hc) / HANDOFF_CLEAR_FRAMES)}, n);

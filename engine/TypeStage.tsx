@@ -12,9 +12,9 @@ import {Panel} from './panel';
 import {panelById} from './panels';
 import type {BlockGeom, Board, BoardCtx, BoardPanel, BoardLayout, CameraState, Pt, WordGeom, WorldWord} from './types';
 import {add, easeInOutCubic, len, polyPath, rad, rot, scale, sfOf} from './util';
-import {getVerb, type WordMod} from './verbRegistry';
+import type {WordMod} from './verbRegistry';
 import {drawGraphics} from './lines';
-import {EXIT_FRAMES, baseCtx, boardActive, boardCues, wordStateAt} from './wordState';
+import {verbFor, EXIT_FRAMES, baseCtx, boardActive, boardCues, wordStateAt} from './wordState';
 import {smearWordPass} from './smearSampling';
 import {TurnProjected} from './turn3d';
 
@@ -84,7 +84,7 @@ const WordView: React.FC<{board: Board; L: BoardLayout; b: BlockGeom; g: WordGeo
           if ((lm?.opacity ?? 1) <= 0.003 || ch === ' ') return null;
           const art = g.opts.replace?.find((r) => r.index === k);
           const lx = xs[k] + g.adv[k] / 2, ly = g.y + g.h / 2;
-          const ltf = lm ? `translate(${lx + lm.dx} ${ly + lm.dy}) rotate(${lm.rot}) scale(${lm.s * (lm.sx ?? 1)} ${lm.s}) translate(${-lx} ${-ly})` : undefined;
+          const ltf = lm ? `translate(${lx + lm.dx} ${ly + lm.dy}) rotate(${lm.rot}) scale(${lm.s * (lm.sx ?? 1)} ${lm.s * (lm.sy ?? 1)}) translate(${-lx} ${-ly})` : undefined;
           if (art) {
             if (key === 'sh') return null;
             const box = {x: xs[k], y: g.y, w: g.adv[k], h: g.h, cx: lx, cy: ly, size: g.size};
@@ -250,7 +250,7 @@ export const BoardView: React.FC<{board: Board; t: number; uid?: string; smearPa
   const sharpBlocks = sharpPass ? drawBlocks((b, g) => onBoard(b) && sharp(g), cam) : null;
   const pinned = !blurPass && L.blocks.some((b) => !onBoard(b)) ? drawBlocks((b) => !onBoard(b), carryCam(board, f, SCREEN_CAM)) : null;
   const overlays = boardCues(board).map((cue, k) => {
-    const def = getVerb(cue.name);
+    const def = verbFor(board, cue.name);
     if (!def?.overlay) return null;
     return <g key={k}>{def.overlay(baseCtx(cue, L, f))}</g>;
   });

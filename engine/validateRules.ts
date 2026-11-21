@@ -42,10 +42,10 @@ import {ruleAt} from './rules';
 import {transitExempt} from './transitRules';
 import type {Board, BoardLayout, Pt, WordGeom} from './types';
 import {normDeg, polysOverlap, rot} from './util';
-import {getVerb, type WordMod} from './verbRegistry';
+import type {WordMod} from './verbRegistry';
 import {LINGER_FRAMES, graphicLife, lineMarks, ruleOwners, type LineSeg} from './lines';
 import {panelGoneAt} from './panel';
-import {baseCtx, boardCues, emergeCue, inkOpacity, retireFrame, wordStateAt} from './wordState';
+import {verbFor, baseCtx, boardCues, emergeCue, inkOpacity, retireFrame, wordStateAt} from './wordState';
 import {separatingPanel} from './panels';
 import type {Violation} from './validate';
 
@@ -185,7 +185,7 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
   // word under a mask of several pieces or curves (door, behind, portal) is not measured, nor is a word still scaled
   // below 98 percent (a sprout or swell growing out of its anchor's edge). Pairs a verb exempts (a SHOVE's incoming on outgoing) and pairs with a panel between their layers are skipped.
   const entryExempt: [number, number][] = [];
-  for (const cue of boardCues(board)) { const def = getVerb(cue.name); if (def?.overlapExempt) entryExempt.push(...def.overlapExempt(cue, L)); }
+  for (const cue of boardCues(board)) { const def = verbFor(board, cue.name); if (def?.overlapExempt) entryExempt.push(...def.overlapExempt(cue, L)); }
   const entryPairOk = (a: number, b: number) => entryExempt.some(([x, y]) => (x === a && y === b) || (x === b && y === a))
     || !!separatingPanel(board, L, L.words.get(a)!.block, L.words.get(b)!.block);
   // a word growing out of a point (SPROUT, SWELL) starts on its anchor's edge by design and is checked once landed
@@ -353,7 +353,7 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
     }
     // SHOVE: the push must touch the old block (ruling 194.5)
     if (e.move === 'shove') {
-      const def = getVerb('shove');
+      const def = verbFor(board, 'shove');
       const affected = def?.affects?.(cue, L) ?? [];
       const mine = new Set(b.words.map((w) => w.i));
       const targets = affected.filter((i) => !mine.has(i));

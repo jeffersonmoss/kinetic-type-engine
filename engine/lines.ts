@@ -11,8 +11,7 @@ import {wordCorners} from './layout';
 import {ruleAt} from './rules';
 import type {Board, BoardCtx, BoardLayout, DecorGraphic, Pt} from './types';
 import {clamp} from './util';
-import {getVerb} from './verbRegistry';
-import {baseCtx, boardCues, retireFrame, wordStateAt} from './wordState';
+import {verbFor, baseCtx, boardCues, retireFrame, wordStateAt} from './wordState';
 import {blockToWorld, layoutBoard} from './layout';
 import {FONT_INFO} from './metrics';
 import {rot} from './util';
@@ -146,7 +145,7 @@ export const lineMarks = (board: Board, f: number): LineSeg[] => {
   }
   const L = layoutBoard(board);
   for (const cue of boardCues(board)) {
-    const def = getVerb(cue.name);
+    const def = verbFor(board, cue.name);
     if (!def?.lines) continue;
     for (const s of def.lines(baseCtx(cue, L, f)) ?? []) out.push(s);
   }

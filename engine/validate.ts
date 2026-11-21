@@ -19,7 +19,7 @@ import {carryReadEnd} from './carry';
 import {ruleTracks} from './rules';
 import type {Board, CameraState, HandoffId, Pt, Waiver, WordGeom} from './types';
 import {normDeg, polysOverlap, rot} from './util';
-import {getVerb, type WordMod} from './verbRegistry';
+import type {WordMod} from './verbRegistry';
 import {checkTrack, type TrackedElement} from './motionCheck';
 import {ENERGY_READ_FRAMES, energyRules, transitExempt, wordMoving} from './transitRules';
 import {panelTracks, separatingPanel} from './panels';
@@ -29,7 +29,7 @@ import {emptyTimeline, motionRuleChecks} from './validateMotion';
 import {groundClearSpan} from './groundClear';
 import {graphicLife} from './lines';
 import {morphKeptDrift} from './morphPin';
-import {EXIT_FRAMES, RETIRE_AFTER, handoffClearAt, baseCtx, boardActive, boardCues, cueAffects, cueAt, retireFrame, wordStateAt, inkOpacity, GONE_OPACITY, blockEmergence, exitFramesOf} from './wordState';
+import {verbFor, EXIT_FRAMES, RETIRE_AFTER, handoffClearAt, baseCtx, boardActive, boardCues, cueAffects, cueAt, retireFrame, wordStateAt, inkOpacity, GONE_OPACITY, blockEmergence, exitFramesOf} from './wordState';
 
 export const SAFE = 48;
 export type Severity = 'error' | 'warn';
@@ -106,7 +106,7 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
   const out: Violation[] = [];
   // Check slide sources before the validator evaluates cues or their word states.
   for (const cue of boardCues(board)) {
-    if (cue.name !== 'slideFrom') continue;
+    if (cue.name !== 'slideFrom' || Object.hasOwn(board.effects ?? {}, cue.name)) continue;
     try {
       slideSource(cue, L, cue.at ?? L.words.get(cue.word)?.start ?? board.start);
     } catch (error) {
@@ -132,8 +132,8 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
   const removal = new Map<number, number>();
   const exempt: [number, number][] = [];
   for (const cue of cues) {
-    const def = getVerb(cue.name);
-    if (!def) { out.push({board: name, rule: 'unknown-verb', severity: 'error', word: cue.word, detail: `no verb named "${cue.name}" is registered`}); continue; }
+    const def = verbFor(board, cue.name);
+    if (!def) { out.push({board: name, rule: 'unknown-verb', severity: 'error', word: cue.word, detail: `no board or legacy verb named "${cue.name}"`}); continue; }
     if (!L.words.has(cue.word)) out.push({board: name, rule: 'verb-word', severity: 'error', word: cue.word, detail: `${cue.name}: word ${cue.word} is not on this board`});
     const at = cueAt(cue, L, def);
     const w = L.words.get(cue.word);
@@ -190,12 +190,12 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
   for (const i of L.order) { const c = handoffClearAt(board, i); if (c < Infinity) clearAt.set(i, c); }
   exempt.push(...handoffPairsNested(board, L));
   const isExempt = (a: number, b: number) => exempt.some(([x, y]) => (x === a && y === b) || (x === b && y === a));
-  const gradualFor = (i: number) => cues.some((c) => getVerb(c.name)?.gradual && cueAffects(c, L, getVerb(c.name)).includes(i));
+  const gradualFor = (i: number) => cues.some((c) => verbFor(board, c.name)?.gradual && cueAffects(c, L, verbFor(board, c.name)).includes(i));
   // display frames (morph targets), relight binds
   const displayFrom = new Map<number, number>();
   const binds: {display: number; sung: number}[] = [];
   for (const cue of cues) {
-    const def = getVerb(cue.name);
+    const def = verbFor(board, cue.name);
     if (!def) continue;
     if (def.displayFrom) for (const i of cueAffects(cue, L, def)) { const d = def.displayFrom(cue, L, i); if (d !== null && d !== undefined) displayFrom.set(i, Math.max(displayFrom.get(i) ?? -Infinity, d)); }
     if (def.binds) binds.push(...def.binds(cue, L));
@@ -217,7 +217,7 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
         continue;
       }
       try { const r = resolveAnchor(L, e.from, (e.at ?? (first !== undefined ? L.words.get(first)!.sf / FPS : board.start))); desc = describeAnchor(L, e.from); if (r.estimated) out.push({board: name, rule: 'anchor-estimated', severity: 'warn', word: first, detail: `block ${b.index}: ${desc} has no counter in the font table; a central box was guessed`});
-        if (e.move === 'nest' && r.w !== undefined && b.w > 0.8 * r.w + 0.5) out.push({board: name, rule: 'nest-width', severity: 'error', word: first, detail: `block ${b.index} is ${b.w.toFixed(0)} px wide, more than 80 percent of the counter it nests in (${r.w.toFixed(0)} px)`});
+        if ((e.move === 'nest' || (e.move === 'effect' && verbFor(board, e.name)?.effectName === 'nest')) && r.w !== undefined && b.w > 0.8 * r.w + 0.5) out.push({board: name, rule: 'nest-width', severity: 'error', word: first, detail: `block ${b.index} is ${b.w.toFixed(0)} px wide, more than 80 percent of the counter it nests in (${r.w.toFixed(0)} px)`});
       } catch (err) { ok = false; out.push({board: name, rule: 'emerge-anchor', severity: 'error', word: first, detail: `block ${b.index} (${e.move}): ${(err as Error).message}`}); }
       if (ok && first !== undefined) addPlan(L.words.get(first)!.line, `block ${b.index} "${b.words.map((w) => w.text).join(' ')}": ${e.move.toUpperCase()} from ${desc}`);
     }
@@ -314,7 +314,7 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
   const morphWait = new Map<number, [number, number]>();
   for (const cue of cues) {
     if (cue.name !== 'morph') continue;
-    const def = getVerb(cue.name);
+    const def = verbFor(board, cue.name);
     const start = cueAt(cue, L, def!) * FPS;
     for (const h of def?.holds?.(cue, L) ?? []) {
       const lw = L.words.get(h.word);
@@ -408,7 +408,7 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
           if (s.m.turn?.letters?.[k] === 'hidden') return 0;
           return Math.min(least, s.m.letters?.[k]?.opacity ?? 1);
         }, 1);
-        const opacity = boardActive(board, f) && !s.m.hidden ? s.m.opacity * glyphOpacity : 0;
+        const opacity = boardActive(board, f) && !s.m.hidden && s.m.turn?.plane !== 'hidden' ? s.m.opacity * glyphOpacity : 0;
         if (opacity < VISIBLE_THRESHOLD) {
           note(`vis${i}`, {...base, rule: 'visible', detail: `opacity ${opacity.toFixed(2)} (needs ${VISIBLE_THRESHOLD})`}, f, 1 - opacity);
           continue;
