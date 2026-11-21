@@ -3,13 +3,14 @@ import {checkCommand} from './check';
 import {compileFolder, readFilm} from './film';
 import {ingest, ingestUsage} from './ingest';
 import {createFilm, newUsage} from './new';
-import {renderDraft, sectionFrames, sheet} from './render';
+import {renderFilm, sectionFrames, sheet} from './render';
 import type {Runtime} from './runtime';
 
 const usage = `${newUsage}
 ${ingestUsage}
 kte check [film-folder] [--format wide|portrait]
 kte render [film-folder] --draft [--section scene-id] [--format wide|portrait] [--output path]
+kte render [film-folder] --final [--format wide] [--output path]
 kte sheet [film-folder] [--format wide|portrait]
 kte where TIME [film-folder] [--format wide|portrait] [--section scene-id]`;
 
@@ -29,7 +30,7 @@ export async function run([command, ...args]: string[], runtime: Runtime) {
     const {values, positionals} = parseArgs({args, allowPositionals: true, options: {
       format: {type: 'string'}, help: {type: 'boolean', short: 'h'}, film: {type: 'string'},
       ...(command === 'render' || command === 'where' ? {section: {type: 'string' as const}} : {}),
-      ...(command === 'render' ? {draft: {type: 'boolean' as const}, output: {type: 'string' as const}} : {}),
+      ...(command === 'render' ? {draft: {type: 'boolean' as const}, final: {type: 'boolean' as const}, output: {type: 'string' as const}} : {}),
     }});
     if (values.help) {console.log(usage); return;}
     const where = command === 'where';
@@ -40,8 +41,11 @@ export async function run([command, ...args]: string[], runtime: Runtime) {
     if (command === 'check') await checkCommand(folder, format, runtime);
     else if (command === 'sheet') await sheet(folder, format, runtime);
     else if (command === 'render') {
-      if (!values.draft) throw new Error('The pilot render command requires --draft');
-      await renderDraft(folder, format, str('section'), str('output'), runtime);
+      if (Boolean(values.draft) === Boolean(values.final)) throw new Error('Choose exactly one of --draft and --final');
+      const section = str('section');
+      if (values.final && section !== undefined) throw new Error('--final renders the full film and does not accept --section');
+      if (values.final && format !== undefined && format !== 'wide') throw new Error('--final requires the wide format');
+      await renderFilm(folder, {mode: values.final ? 'final' : 'draft', format, section, output: str('output')}, runtime);
     } else {
       const input = readFilm(folder, format ?? 'wide');
       const [{film}] = await compileFolder(runtime, input);

@@ -70,16 +70,32 @@ async function withBrowser<T>(runtime: Runtime, folder: FilmFolder, action: (set
   });
 }
 
-export async function renderDraft(folder: string, format: string | undefined, section: string | undefined,
-  output: string | undefined, runtime: Runtime) {
+interface RenderOptions {
+  mode: 'draft' | 'final';
+  format?: string;
+  section?: string;
+  output?: string;
+}
+
+export async function renderFilm(folder: string, {mode, format, section, output}: RenderOptions, runtime: Runtime) {
+  const draft = mode === 'draft';
   const input = readFilm(folder, format ?? 'wide');
+  input.options.draft = draft;
   const [{film}] = await compileFolder(runtime, input);
-  const frameRange = sectionFrames(film, section);
-  const path = output ? resolve(output) : join(input.path, 'renders', `${section ?? 'Film'} - ${film.format} draft.mp4`);
-  const hard = film.diagnostics.filter(({severity}) => severity === 'error').length;
-  if (hard) console.warn(`${film.format}: ${hard} compiler errors across the film. This draft remains available for inspection. Run kte check for details.`);
+  const path = output ? resolve(output) : join(input.path, 'renders', `${section ?? 'Film'} - ${film.format} ${mode}.mp4`);
+  const errors = film.diagnostics.filter(({severity}) => severity === 'error');
+  if (errors.length) {
+    if (!draft) {
+      const first = errors[0];
+      const where = [first.line, first.token, first.frame === undefined ? undefined : `frame ${first.frame}`].filter(Boolean).join(' / ');
+      throw new Error(`${film.format}: ${errors.length} compiler errors. First: [${first.code}] ${where ? where + ': ' : ''}${first.message}. Run kte check for details.`);
+    }
+    console.warn(`${film.format}: ${errors.length} compiler errors across the film. This draft remains available for inspection. Run kte check for details.`);
+  }
+  const frameRange = draft ? sectionFrames(film, section) : undefined;
+  const id = draft ? `${film.format}-draft` : film.format;
   await withBrowser(runtime, input, async ({renderer, serveUrl, browser, cancelSignal}) => {
-    const composition = await renderer.selectComposition({serveUrl, id: `${film.format}-draft`, puppeteerInstance: browser, timeoutInMilliseconds: 120_000});
+    const composition = await renderer.selectComposition({serveUrl, id, puppeteerInstance: browser, timeoutInMilliseconds: 120_000});
     await renderer.renderMedia({serveUrl, composition, codec: 'h264', audioCodec: 'aac', enforceAudioTrack: true,
       frameRange, outputLocation: path, puppeteerInstance: browser, overwrite: true, cancelSignal, timeoutInMilliseconds: 120_000});
   });
