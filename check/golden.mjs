@@ -11,8 +11,8 @@ import * as esbuild from 'esbuild';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const baseline = new URL('../fixtures/golden/sha256.json', import.meta.url);
 const args = process.argv.slice(2);
-assert(args.length <= 1 && args.every((arg) => ['--update', '--self-test', '--print', '--frame-core', '--context-test'].includes(arg)),
-  'usage: node check/golden.mjs [--update | --self-test | --print | --frame-core | --context-test]');
+assert(args.length <= 1 && args.every((arg) => ['--update', '--self-test', '--print', '--frame-core', '--context-test', '--effects-test'].includes(arg)),
+  'usage: node check/golden.mjs [--update | --self-test | --print | --frame-core | --context-test | --effects-test]');
 
 const tmp = mkdtempSync(join(tmpdir(), 'kte-build-golden-'));
 const cleanup = () => rmSync(tmp, {recursive: true, force: true});
@@ -37,6 +37,9 @@ try {
         import {BOARDS} from './example/boards';
         import {configureEngine, FPS} from './engine/config';
         import {TypeStage} from './engine/TypeStage';
+        import {EngineScope} from './context';
+        import {effectsFixtures} from './fixtures/golden/effects';
+        export {checkEffects} from './fixtures/golden/effects-check';
         import {checkScopes as checkSSRScopes} from './fixtures/golden/contexts';
         export {checkPortraitGiant, interleavedContexts, soloContext} from './fixtures/golden/contexts';
         export const checkScopes = () => checkSSRScopes(renderToStaticMarkup);
@@ -63,14 +66,25 @@ try {
         export function renderSamples() {
           const example = BOARDS.flatMap((board) => sample(board, BOARDS, 'example'));
           configureEngine(pureTypeConfig);
-          return [...example, ...sample(pureTypeBoard, [pureTypeBoard], 'pure type')];
+          const pureType = sample(pureTypeBoard, [pureTypeBoard], 'pure type');
+          const effects = effectsFixtures().flatMap((entry) => entry.frames.map((frame) => {
+            const boards = entry.prior ? [entry.prior, entry.board] : [entry.board];
+            const markup = renderToStaticMarkup(<EngineScope ctx={entry.ctx}>
+              <TypeStage boards={boards} t={frame / entry.ctx.fps} />
+            </EngineScope>);
+            return {fixture: 'effects', board: entry.board.id, frame, markup};
+          }));
+          return [...example, ...pureType, ...effects];
         }
       `,
     },
     bundle: true, platform: 'node', format: 'cjs', jsx: 'automatic', outfile: bundle,
   });
   const checks = createRequire(import.meta.url)(bundle);
-  if (args.includes('--frame-core')) checks.checkFrameCore();
+  if (args.includes('--effects-test')) {
+    for (const result of checks.checkEffects(assert)) console.log(result);
+    checkGoldens(checks.renderSamples());
+  } else if (args.includes('--frame-core')) checks.checkFrameCore();
   else if (args.includes('--context-test')) {
     checks.checkScopes();
     const together = checks.interleavedContexts();

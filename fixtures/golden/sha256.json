@@ -504,6 +504,522 @@
       "board": "pure type",
       "frame": 59,
       "sha256": "23e66efc994551c0c075d7631ee23887f72f9cbbca90245062abd78b7326fd09"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook opening and retract",
+      "frame": 8,
+      "sha256": "b5c89228ea35f7ac64a6a244a8b2a3d38a2590bb9c6467aab8510628eb228bb4"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook opening and retract",
+      "frame": 14,
+      "sha256": "71290eaede5f57efa50d849399d5e77e18f8a613b0a5f13f782fe4547a5e1685"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook opening and retract",
+      "frame": 16,
+      "sha256": "b60644c493beb00f85f8a01445dcd25a4371ea9584e21fa7811d7502ac06809d"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook opening and retract",
+      "frame": 23,
+      "sha256": "4d22a93639b7c86b0f4f0c6945833fb82649f6add3abbcdf7fa6631a5e388d27"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook opening and retract",
+      "frame": 44,
+      "sha256": "5891c527c75b6c92b5f8121acc22f9126ee937421bdf6c02d94a4b1a6a4e6781"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook opening and retract",
+      "frame": 50,
+      "sha256": "4cbaee0218a77fba2c751ccae068e169c1b3758eaac1f9bd12a9f12537d72b49"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook opening and retract",
+      "frame": 60,
+      "sha256": "5891c527c75b6c92b5f8121acc22f9126ee937421bdf6c02d94a4b1a6a4e6781"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook opening and retract",
+      "frame": 65,
+      "sha256": "e926f55972b09cbd4fbfb241dd11a74ad3ae8f1a4c27f940526940dbde35d490"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook opening and retract",
+      "frame": 68,
+      "sha256": "378acaa2edc48d5f34cc511c9431ae9b90eeef25dbfc9c3aae083a82631c3076"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook opening and retract",
+      "frame": 69,
+      "sha256": "9069a65f65595aac7fc2581416dcc5cd8412e91302c18c6f5a789f1ce993c80b"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook opening and retract",
+      "frame": 74,
+      "sha256": "fa9b7c45aa5e488dd83bce9f5e975e1929bcc5be9caa05f1d067cdba211f498b"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook opening and retract",
+      "frame": 85,
+      "sha256": "984271033232e61ab7caa3c638ee9d215ead86cd92b55b6138c3c56e3af95cc5"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook opening and retract",
+      "frame": 108,
+      "sha256": "aed65a3dc40bf5cb0028cde503b56ca4dcd3b83fe55ef2c8376f51354a2e9bc5"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook opening and retract",
+      "frame": 118,
+      "sha256": "7d25466f3bd58a02e8bba2f12f7096f25541ac5ac52add3658789f6054f4c391"
+    },
+    {
+      "fixture": "effects",
+      "board": "turned still and slot roll",
+      "frame": 20,
+      "sha256": "4b0b8657d161cc7e1a040e84f7796059edc711f6f8380f54ea7dade2f9fdbd15"
+    },
+    {
+      "fixture": "effects",
+      "board": "turned still and slot roll",
+      "frame": 30,
+      "sha256": "fa89bb339cc4e5a43421650846c7b07b051578637bb9b7c7bc90b0e4016537ad"
+    },
+    {
+      "fixture": "effects",
+      "board": "turned still and slot roll",
+      "frame": 51,
+      "sha256": "a37afb5aed625fb369f3369d916df16d5c35785ebc9f24542a6d93ced3e27fbc"
+    },
+    {
+      "fixture": "effects",
+      "board": "turned still and slot roll",
+      "frame": 58,
+      "sha256": "72b0a61880300049150dd7fa8841ed33e904ef82a8129687dcab4831d4c8889c"
+    },
+    {
+      "fixture": "effects",
+      "board": "turned still and slot roll",
+      "frame": 62,
+      "sha256": "cbb24445c490e7e5cb0e5e3f71e4aa7de9bcf4f759003f8a7f39d0eb1ff0f8f6"
+    },
+    {
+      "fixture": "effects",
+      "board": "turned still and slot roll",
+      "frame": 65,
+      "sha256": "5690e7c1a518607e7de8ecc2d9ccec1dca7a22e4c5be0cb4d104f4e3292e17b0"
+    },
+    {
+      "fixture": "effects",
+      "board": "turned still and slot roll",
+      "frame": 66,
+      "sha256": "9a01c15a81db65be68e487b05b406e8188c92e897b8e5c2110c347eb64562782"
+    },
+    {
+      "fixture": "effects",
+      "board": "turned still and slot roll",
+      "frame": 69,
+      "sha256": "805e9378abecdc40c3118367c174bec3c43aae15757a0a1da6510058823ad270"
+    },
+    {
+      "fixture": "effects",
+      "board": "turned still and slot roll",
+      "frame": 81,
+      "sha256": "299bdeef55eacf28910cd02f69af73b770ebd2f1dbc83d8206139a0a73d62619"
+    },
+    {
+      "fixture": "effects",
+      "board": "turned still and slot roll",
+      "frame": 109,
+      "sha256": "1c50beb8debef606a6f965aaf573c05802946107f86db82bb0bb186a127459f4"
+    },
+    {
+      "fixture": "effects",
+      "board": "turned still and slot roll",
+      "frame": 112,
+      "sha256": "8813bdf60f9532b79ba35e949c3ba8cbb1ebd283ab6d550e037f3a39c21237d5"
+    },
+    {
+      "fixture": "effects",
+      "board": "turned still and slot roll",
+      "frame": 114,
+      "sha256": "ee44025f4d600f9b255eed36df4dea1d2566cbd1a7a985173cbbf00b62ee08df"
+    },
+    {
+      "fixture": "effects",
+      "board": "turned still and slot roll",
+      "frame": 115,
+      "sha256": "e06163c991dfb20b3f875b07b454d5cfec28c0480f6810be1270af7b285a9b63"
+    },
+    {
+      "fixture": "effects",
+      "board": "turned still and slot roll",
+      "frame": 118,
+      "sha256": "74179db65fff106f413810f8d2b0abfbb8c2e34e962f3b42fd027ac025d06b52"
+    },
+    {
+      "fixture": "effects",
+      "board": "turned still and slot roll",
+      "frame": 131,
+      "sha256": "56909e9927f2cf0db7ddbd134d7d0ddb0a7a8e15d6d343a0a6986939b2ef7277"
+    },
+    {
+      "fixture": "effects",
+      "board": "second king becomes ring",
+      "frame": 12,
+      "sha256": "d443319ff60dc85f5b08fb8ca2033af77f79b347319b8e26bf0314d0f348196d"
+    },
+    {
+      "fixture": "effects",
+      "board": "second king becomes ring",
+      "frame": 34,
+      "sha256": "cb1242f009d478a4f123a5e97c68fc9651cff1b7355a1954c0ec5dcc7bdcd7ab"
+    },
+    {
+      "fixture": "effects",
+      "board": "second king becomes ring",
+      "frame": 42,
+      "sha256": "d308eac23de9948db7b8fe8f132b31eec41243657a601d09c1860f54ac3bb2a4"
+    },
+    {
+      "fixture": "effects",
+      "board": "second king becomes ring",
+      "frame": 59,
+      "sha256": "4a3dfcc73544ca90a1dd458c6627ffe4ee354fa3c6a56c1e99e713feac6a3376"
+    },
+    {
+      "fixture": "effects",
+      "board": "second king becomes ring",
+      "frame": 78,
+      "sha256": "9100369b85db21c2e3ac97900e69c4d7e495f1408ec4566880d596e33254a47d"
+    },
+    {
+      "fixture": "effects",
+      "board": "second king becomes ring",
+      "frame": 84,
+      "sha256": "0c5210c3da99d89b5277a617dc0304b21766e5d5bda057e7f2999b3b75099764"
+    },
+    {
+      "fixture": "effects",
+      "board": "second king becomes ring",
+      "frame": 87,
+      "sha256": "1b62bedff22fe32505e64104d7d79839f66f7d4915a637bfdfc9d4bc94681352"
+    },
+    {
+      "fixture": "effects",
+      "board": "second king becomes ring",
+      "frame": 88,
+      "sha256": "25be71b155f1c74efe0bd4c5ba919d260429e2c9440c05c123d5f277cea28bd7"
+    },
+    {
+      "fixture": "effects",
+      "board": "second king becomes ring",
+      "frame": 92,
+      "sha256": "f7cd968e91ef6371dd9371699683daf268d8f382039a9126fc327e36552e4547"
+    },
+    {
+      "fixture": "effects",
+      "board": "second king becomes ring",
+      "frame": 97,
+      "sha256": "cefde03f587733b7b0e17fc44127e48b43780c348cd516a2a919d40898ac5bf1"
+    },
+    {
+      "fixture": "effects",
+      "board": "second king becomes ring",
+      "frame": 112,
+      "sha256": "1ebcb88b61212f0283f5885e332f0ee55a3a7785b6ff5d6771e575f82cf2fba5"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook to verse wide",
+      "frame": 16,
+      "sha256": "03338de67a8debc43edf04b0edf9d73a60fd86d7fee59faf08c25e263e5eb7dc"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook to verse wide",
+      "frame": 23,
+      "sha256": "03338de67a8debc43edf04b0edf9d73a60fd86d7fee59faf08c25e263e5eb7dc"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook to verse wide",
+      "frame": 28,
+      "sha256": "03338de67a8debc43edf04b0edf9d73a60fd86d7fee59faf08c25e263e5eb7dc"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook to verse wide",
+      "frame": 31,
+      "sha256": "03338de67a8debc43edf04b0edf9d73a60fd86d7fee59faf08c25e263e5eb7dc"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook to verse wide",
+      "frame": 32,
+      "sha256": "6dccabba39a83156c384d599795033d5fa0a887e882e380b26186539bed7d250"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook to verse wide",
+      "frame": 35,
+      "sha256": "6dccabba39a83156c384d599795033d5fa0a887e882e380b26186539bed7d250"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook to verse wide",
+      "frame": 38,
+      "sha256": "6dccabba39a83156c384d599795033d5fa0a887e882e380b26186539bed7d250"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook to verse wide",
+      "frame": 41,
+      "sha256": "ad3538b0243e69ff82fe68835b43677093be7232c6771ed3af1bae3166d9bb24"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook to verse wide",
+      "frame": 44,
+      "sha256": "a86c176a9e903a0e70fcaafdf3c7c4eccc3dab409e2fa565a6c32cc1f4a1271f"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook to verse wide",
+      "frame": 60,
+      "sha256": "a86c176a9e903a0e70fcaafdf3c7c4eccc3dab409e2fa565a6c32cc1f4a1271f"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook to verse short-9-16",
+      "frame": 16,
+      "sha256": "a0b399b4020345ad79615fbec3b340e4d1ff14ed89449bd6708bc6c3e88e4456"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook to verse short-9-16",
+      "frame": 23,
+      "sha256": "a0b399b4020345ad79615fbec3b340e4d1ff14ed89449bd6708bc6c3e88e4456"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook to verse short-9-16",
+      "frame": 28,
+      "sha256": "a0b399b4020345ad79615fbec3b340e4d1ff14ed89449bd6708bc6c3e88e4456"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook to verse short-9-16",
+      "frame": 31,
+      "sha256": "a0b399b4020345ad79615fbec3b340e4d1ff14ed89449bd6708bc6c3e88e4456"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook to verse short-9-16",
+      "frame": 32,
+      "sha256": "4aeb15f7987aa00a289dc644623d2e700206522fba3a141e5145b9b743026ede"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook to verse short-9-16",
+      "frame": 35,
+      "sha256": "4aeb15f7987aa00a289dc644623d2e700206522fba3a141e5145b9b743026ede"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook to verse short-9-16",
+      "frame": 38,
+      "sha256": "4aeb15f7987aa00a289dc644623d2e700206522fba3a141e5145b9b743026ede"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook to verse short-9-16",
+      "frame": 41,
+      "sha256": "7161f489cc8d88809ecec3093355df8403b04f72b30553bf5c0568204b5d7c71"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook to verse short-9-16",
+      "frame": 44,
+      "sha256": "0d51474e8cc3b3c22724712d0dad5d8e6bac2aeca7e2db7bb85c84097a39bb61"
+    },
+    {
+      "fixture": "effects",
+      "board": "hook to verse short-9-16",
+      "frame": 60,
+      "sha256": "0d51474e8cc3b3c22724712d0dad5d8e6bac2aeca7e2db7bb85c84097a39bb61"
+    },
+    {
+      "fixture": "effects",
+      "board": "edge turn dock fall and ladder",
+      "frame": 8,
+      "sha256": "76de99dbf1fe8a813e961e1533ce88c32d0e1d72d3edca82981466fea7317297"
+    },
+    {
+      "fixture": "effects",
+      "board": "edge turn dock fall and ladder",
+      "frame": 11,
+      "sha256": "8236b2fe234c3303759356eeeccb3298c7937f28a5fdaf2b3311e3f000cce42e"
+    },
+    {
+      "fixture": "effects",
+      "board": "edge turn dock fall and ladder",
+      "frame": 15,
+      "sha256": "668072b5f611e469d6e156dfe24cf79aa494bbd5da23ec910fef311bf48ce80c"
+    },
+    {
+      "fixture": "effects",
+      "board": "edge turn dock fall and ladder",
+      "frame": 21,
+      "sha256": "dad91e774f7281a134bd93c6dd2a00d3a0f524b1e3c338de131a6969d3a1dd47"
+    },
+    {
+      "fixture": "effects",
+      "board": "edge turn dock fall and ladder",
+      "frame": 30,
+      "sha256": "f470b5f3b3c1e11f55d2125b72619721d23051f8c31322e4fd74dd1a042263bb"
+    },
+    {
+      "fixture": "effects",
+      "board": "edge turn dock fall and ladder",
+      "frame": 51,
+      "sha256": "8ad5dc9515acc5a6be1ce5e73a133b5743a538b8cc8996ffaf96126707df96d8"
+    },
+    {
+      "fixture": "effects",
+      "board": "edge turn dock fall and ladder",
+      "frame": 58,
+      "sha256": "ae5fdf608ca56c7b88c3e0ae36b475043434fb020563962dd26b63212adc65ec"
+    },
+    {
+      "fixture": "effects",
+      "board": "edge turn dock fall and ladder",
+      "frame": 69,
+      "sha256": "20e7a3d4b2b31829ca6d84d8ec871ea42397ebbce3cd160dba560484839b3675"
+    },
+    {
+      "fixture": "effects",
+      "board": "edge turn dock fall and ladder",
+      "frame": 78,
+      "sha256": "d3adced5adde4e53f4cea7f3134563ee0ee3d50cb5c93b952ec700deba8df206"
+    },
+    {
+      "fixture": "effects",
+      "board": "edge turn dock fall and ladder",
+      "frame": 92,
+      "sha256": "7674d6ea3eeea11963f15f3f11a73badc291e5bddb8396c26b11c8d52fdce16f"
+    },
+    {
+      "fixture": "effects",
+      "board": "edge turn dock fall and ladder",
+      "frame": 103,
+      "sha256": "5a0cf3dd9149b282766ce9f1e9529f531307ee0ba073a6e7c184aea53da9584a"
+    },
+    {
+      "fixture": "effects",
+      "board": "edge turn dock fall and ladder",
+      "frame": 108,
+      "sha256": "ba48519183c13893b95b1565cbf418ded4bca9d6a67edfd8e286e77bfc29c315"
+    },
+    {
+      "fixture": "effects",
+      "board": "edge turn dock fall and ladder",
+      "frame": 128,
+      "sha256": "55b437094147f87ee64af5f8d95d446e0b5113a75888d9c6d35be17b3c37f59d"
+    },
+    {
+      "fixture": "effects",
+      "board": "nested glyph and film local cascade",
+      "frame": 14,
+      "sha256": "d0d47d66a32bd8e20b746018b1ca8149120226e5e1abae7032e9bbaa75c544ad"
+    },
+    {
+      "fixture": "effects",
+      "board": "nested glyph and film local cascade",
+      "frame": 22,
+      "sha256": "2b15ce02cd539c44112d872fe75f7718218894988f1ded60169fd332ed40d5e5"
+    },
+    {
+      "fixture": "effects",
+      "board": "nested glyph and film local cascade",
+      "frame": 27,
+      "sha256": "2723625875c9c88bc16a839871d38a406b9853c414f2b8eec221de32c0bf7d74"
+    },
+    {
+      "fixture": "effects",
+      "board": "nested glyph and film local cascade",
+      "frame": 29,
+      "sha256": "29e716e1e0cf8100a798c426abf6188720978cdb07fb58aa5e4b4791647b8290"
+    },
+    {
+      "fixture": "effects",
+      "board": "nested glyph and film local cascade",
+      "frame": 45,
+      "sha256": "29e716e1e0cf8100a798c426abf6188720978cdb07fb58aa5e4b4791647b8290"
+    },
+    {
+      "fixture": "effects",
+      "board": "nested glyph and film local cascade",
+      "frame": 50,
+      "sha256": "25e87ad7b49900ae34cdbd1bc392c31a7d7ded05aba614a64b1e678dd26f4b2b"
+    },
+    {
+      "fixture": "effects",
+      "board": "nested glyph and film local cascade",
+      "frame": 52,
+      "sha256": "28e555c414406a4ab7fa0cc32fbf85afa059a13d67f7d3d3bf93ca555887fa58"
+    },
+    {
+      "fixture": "effects",
+      "board": "nested glyph and film local cascade",
+      "frame": 55,
+      "sha256": "700aec10a59a0ea3ae7fed887534d873350d81f8ff986503428ce3e4d586201d"
+    },
+    {
+      "fixture": "effects",
+      "board": "nested glyph and film local cascade",
+      "frame": 58,
+      "sha256": "e628cd914c8cd28c0b4c0eb7f07dca8865e683d9241f44da7cea733396e6031c"
+    },
+    {
+      "fixture": "effects",
+      "board": "nested glyph and film local cascade",
+      "frame": 61,
+      "sha256": "92de6e8e97c8c6a94383ac653bcccfb24de280ecd9a55dc062a6f1e87ae229ec"
+    },
+    {
+      "fixture": "effects",
+      "board": "nested glyph and film local cascade",
+      "frame": 64,
+      "sha256": "eb82351986f87ffb505fa5e1b99c98aa22fc9db50893fcf648617423f60e8aaf"
+    },
+    {
+      "fixture": "effects",
+      "board": "nested glyph and film local cascade",
+      "frame": 100,
+      "sha256": "fdd6d8b77fe063f497e7b46e655af274f56e6a83ed1af3ba2e6fbe2166cedba9"
+    },
+    {
+      "fixture": "effects",
+      "board": "nested glyph and film local cascade",
+      "frame": 106,
+      "sha256": "0314a1668769e01d45f35fb790f9112860d054351ab888af30421d4e7eb35185"
     }
   ]
 }
