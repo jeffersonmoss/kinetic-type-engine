@@ -1,0 +1,306 @@
+diff --git a/compile/bind.ts b/compile/bind.ts
+index 886ac5f..7fa9e8f 100644
+--- a/compile/bind.ts
++++ b/compile/bind.ts
+@@ -182,7 +182,7 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly
+     seenScenes.add(entry.id);
+     if (entry.kind === 'raw') continue;
+     if (entry.kind !== 'scene' || !entry.lines?.length) fail(entry.id, 'scene needs at least one line');
+-    const resolved = {...entry, exit: entry.exit ?? (index < film.scenes.length - 1 ? fallback(entry.id, 'exit', fade()) : undefined)};
++    const resolved = {...entry, exit: entry.exit ?? (index < film.scenes.length - 1 && !entry.stage ? fallback(entry.id, 'exit', fade()) : undefined)};
+     const bound: BoundLine[] = [];
+     for (const [n, item] of entry.lines.entries()) {
+       const id = item.id;
+@@ -207,7 +207,7 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly
+         if (previous?.lead.start !== undefined && start <= previous.lead.start) fail(id, 'interlude starts must advance in scene order');
+         if (!previous && card.old) fail(id, 'a scene opener cannot declare old');
+         if (previous && from.kind === 'opening') fail(id, 'opening() requires a scene opener');
+-        if (previous && !card.old && !(isPair(enter) && enter.def.dismissesOld)) card.old = fallback(id, 'old', clear(fade()));
++        if (previous && !entry.stage && !card.old && !(isPair(enter) && enter.def.dismissesOld)) card.old = fallback(id, 'old', clear(fade()));
+         const lead = block(id, {...card, from, enter}, [], false, undefined, start)!;
+         lead.camera = card.camera;
+         bound.push({id, card, lead, blocks: [lead]});
+@@ -237,7 +237,7 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly
+         sceneOpener ? opening() : row(previous!.lead.id, -1)));
+       const enter = card.enter ?? fallback(id, 'enter', sceneOpener ? cascade(typeOn(), {by: 'word', clock: 'sung'}) : draftRise());
+       if (sceneOpener && card.old) fail(id, 'a scene opener cannot declare old');
+-      if (!sceneOpener && !card.old && !(isPair(enter) && enter.def.dismissesOld)) card.old = fallback(id, 'old', clear(fade()));
++      if (!sceneOpener && !entry.stage && !card.old && !(isPair(enter) && enter.def.dismissesOld)) card.old = fallback(id, 'old', clear(fade()));
+       if (!sceneOpener && from.kind === 'opening') fail(id, 'opening() requires a scene opener');
+       const parts = card.parts ?? [];
+       if (!Array.isArray(parts) || parts.length > 2 || [...parts].some((part) => !part)) fail(id, 'expected at most two ordered lead parts');
+diff --git a/compile/index.ts b/compile/index.ts
+index 042c734..0a223c6 100644
+--- a/compile/index.ts
++++ b/compile/index.ts
+@@ -7,6 +7,8 @@ import {lowerFates} from './fates';
+ import {placeBlock, sourceOf, type Located} from './place';
+ import {checkSource, inspect, readBoard} from './read';
+ import {editClock, mapVocal, type EditRange, type SongMap} from '../song';
++import {layoutBoard} from '../engine/layout';
++import {fade, lowerUnit} from '../effects';
+ import type {Board} from '../engine/types';
+ import type {Film, Format, Ink} from '../score';
+ import type {CompiledFilm, LineIndex, TokenReading, Transition} from './types';
+@@ -98,14 +100,27 @@ export function compileScore(base: EngineContext, film: Film, song: SongMap, opt
+           if (source.origin?.board === board && work.blocks.length === 0) throw new Error(`${item.id}: opener cannot reference its own scene`);
+           if (item.card.from.kind === 'free') diagnostics.push({severity: 'warn', code: 'free-placement', line: item.id, message: item.card.from.reason});
+           const index = board.blocks.length;
+-          board.blocks.push(placeBlock(ctx, board, item, source, ink));
++          board.blocks.push(placeBlock(ctx, board, item, source, ink, scene.rowWidth));
+           const block: BlockWork = {board, index, item, source, scene: work, authored, start: 0, landing: 0, release: 0,
+             targets: [], landingByWord: new Map()};
+           work.blocks.push(block);
+           byId.set(item.id, block);
+         }
+       }
+-      setCamera(ctx, work, draft);
++      const stage = scenes[i].scene.stage;
++      const stagePlan = stage?.(board, layoutBoard({...board}), work.blocks.map(({item, index}) => ({
++        id: item.id, index, start: item.start,
++        words: item.runs.map(({i, vocal}) => ({index: i, onset: vocal?.onset ?? item.start!,
++          end: vocal?.end ?? item.start!, sung: !!vocal})),
++      })), ctx);
++      if (!stage) setCamera(ctx, work, draft);
++      if (board.scaleStyle === 'lockup') {
++        const firstOnset = new Map(work.lines.filter(({lead}) => lead.start === undefined).map((line) => [
++          line.id, Math.min(...line.lead.runs.flatMap(({vocal}) => vocal ? [vocal.onset] : [])),
++        ]));
++        board.scoreStyleGroups = Object.fromEntries(work.blocks.filter(({item}) => item.start === undefined)
++          .map(({index, authored}) => [index, firstOnset.get(authored.id)!]));
++      }
+       for (const block of work.blocks) {
+         if (block.item.start !== undefined && block.item.start >= end) {
+           throw new Error(`${block.item.id}: interlude start frame ${block.item.start} is outside scene ${scene.id}`);
+@@ -116,6 +131,17 @@ export function compileScore(base: EngineContext, film: Film, song: SongMap, opt
+           edge: item.card.from.kind === 'edge', handoff: isPair(item.card.enter), interlude: item.start !== undefined});
+       }
+       for (const authored of lines) lowerAccents(ctx, work, authored, diagnostics, accents);
++      for (const [word, {start, frames}] of stagePlan?.retire ?? []) {
++        const block = board.blocks.find(({words: [lo, hi]}) => word >= lo && word <= hi);
++        if (!block || !Number.isInteger(start) || !Number.isInteger(frames) || frames < 0) {
++          throw new Error(`${board.id}: invalid staged retirement for word ${word}`);
++        }
++        const name = `staged retirement · ${word}`;
++        const at = start / ctx.fps;
++        (block.verb ??= []).push({name, word, at});
++        work.entries.push([name, frames === 0 ? {removesAt: () => at, modify: () => ({hidden: true})}
++          : lowerUnit(fade(), ctx, {schedule: [{word, span: {start, end: start + frames}}]})]);
++      }
+       finalizeEffects(work);
+       if (i) transitions.push({line: work.blocks[0].item.id, board: scene.id, start, landing: start, release: start,
+         cut: true, handoff: works[i - 1].board.screenHandoffOut?.frame === start});
+diff --git a/compile/place.ts b/compile/place.ts
+index 347cefa..1ed4b59 100644
+--- a/compile/place.ts
++++ b/compile/place.ts
+@@ -35,20 +35,24 @@ function wrap(row: BoundRow, cap: number, max: number): BoundRow[] {
+ }
+ 
+ function measureBlock(ctx: EngineContext, board: Board, item: BoundBlock,
+-  ink: Readonly<Record<Ink, string>>, counter?: Source['counter']): Block {
++  ink: Readonly<Record<Ink, string>>, counter?: Source['counter'], rowWidthLimit?: number): Block {
+   const floor = ctx.limits.sungMinCap;
+-  const max = counter ? counter.width * 0.8 : ctx.safeBox.width;
++  if (rowWidthLimit !== undefined && (!Number.isFinite(rowWidthLimit) || rowWidthLimit <= 0)) {
++    throw new Error(`${item.id}: rowWidth must be a positive finite width`);
++  }
++  const max = Math.min(counter ? counter.width * 0.8 : ctx.safeBox.width, rowWidthLimit ?? Infinity);
+   for (const run of item.runs) {
+     if (!FONT_INFO[run.font]) throw new Error(`${item.id}: unknown font "${run.font}"`);
+     const missing = [...run.text].find((ch) => !/\s/u.test(ch) && !Object.hasOwn(FONT_INFO[run.font].table, ch));
+     if (missing) throw new Error(`${item.id}: font ${run.font} has no measured glyph "${missing}" in "${run.text}"`);
+   }
+-  const rows = item.auto && !counter ? item.rows.flatMap((row) => wrap(row, ctx.limits.capTiers[row.size], max)) : item.rows;
++  const capFor = (size: BoundRow['size']) => typeof size === 'number' ? size : ctx.limits.capTiers[size];
++  const rows = item.auto && !counter ? item.rows.flatMap((row) => wrap(row, capFor(row.size), max)) : item.rows;
+   const def: Block = {words: [item.runs[0].i, item.runs.at(-1)!.i], attach: 'FREE', cap: floor,
+     rowGap: 0.04, align: 'left', rows: rows.map(({runs}) => runs.length), style: {}};
+   for (const row of rows) {
+-    const tier = ctx.limits.capTiers[row.size];
+-    if (!tier) throw new Error(`${item.id}: unknown size tier "${row.size}"`);
++    const tier = capFor(row.size);
++    if (!Number.isFinite(tier) || tier < floor) throw new Error(`${item.id}: unknown size tier "${row.size}"`);
+     const required = rowWidth(row.runs, floor);
+     if (required > max + 0.001) {
+       const label = counter ? '80% of the measured counter' : `${ctx.format.id} safe width`;
+@@ -135,7 +139,7 @@ export function sourceOf(board: Board, from: Landmark, byId: ReadonlyMap<string,
+     angle: block.angle, counter};
+ }
+ 
+-export function placeBlock(ctx: EngineContext, board: Board, item: BoundBlock, source: Source, ink: Readonly<Record<Ink, string>>): Block {
++export function placeBlock(ctx: EngineContext, board: Board, item: BoundBlock, source: Source, ink: Readonly<Record<Ink, string>>, rowWidthLimit?: number): Block {
+   const entrance = item.card.enter;
+   const transformOverlay = isPair(entrance) && ['matchCut', 'slotRoll'].includes(entrance.name);
+   const place = item.card.place ?? (transformOverlay ? 'overlay' : 'below');
+@@ -143,7 +147,7 @@ export function placeBlock(ctx: EngineContext, board: Board, item: BoundBlock, s
+   if (!['below', 'above', 'right', 'left', 'inside', 'overlay', 'turnCW', 'turnCCW'].includes(place)) {
+     throw new Error(`${item.id}: unknown placement "${place}"`);
+   }
+-  const block = measureBlock(ctx, board, item, ink, place === 'inside' ? source.counter : undefined);
++  const block = measureBlock(ctx, board, item, ink, place === 'inside' ? source.counter : undefined, rowWidthLimit);
+   const shape = layoutBlock(block, board.blocks.length, board);
+   const b = source.box;
+   const gap = ctx.limits.sungMinCap * 0.16;
+diff --git a/engine/ground.tsx b/engine/ground.tsx
+index 95614b2..3fb1b47 100644
+--- a/engine/ground.tsx
++++ b/engine/ground.tsx
+@@ -8,7 +8,7 @@ import {FPS, HEIGHT, PALETTE, WIDTH} from './config';
+ import {cameraAt, cameraTransform} from './camera';
+ import {SPEED_CAP} from './motion';
+ import type {Board, GroundWipe, Pt} from './types';
+-import {clamp, easeInOutSine} from './util';
++import {clamp, easeInOutSine, mixHex} from './util';
+ 
+ /** Height of the flame tongues (screen px). */
+ export const FLAME_TONGUE = 90;
+@@ -41,6 +41,8 @@ export const groundAt = (board: Board, t: number): GroundState => {
+     if (t >= wipeFullAt(board, w)) { full = w.colour; partial = []; continue; }
+     partial.push({w, p: easeInOutSine(((t - w.t0) * FPS) / wipeFrames(board, w))});
+   }
++  const fade = board.fadeToBlack;
++  if (fade && t >= fade.from) full = mixHex(full, '#000000', clamp((t - fade.from) / (fade.to - fade.from)));
+   return {full, partial};
+ };
+ 
+diff --git a/engine/types.ts b/engine/types.ts
+index 97f1093..33bd696 100644
+--- a/engine/types.ts
++++ b/engine/types.ts
+@@ -491,6 +491,12 @@ export interface Board {
+   /** Absolute song seconds when the board's exit begins. */
+   end: number;
+   bg: string;
++  /** Ground-only fade. Score staging times the type's retirement independently. */
++  fadeToBlack?: {from: number; to: number};
++  /** Alternative measured giant rest for frame-filling score lockups. */
++  scaleStyle?: 'lockup';
++  /** Blocks belonging to the same sung line share a style group. Echoes have no group. */
++  scoreStyleGroups?: Readonly<Partial<Record<number, number>>>;
+   blocks: Block[];
+   /** Protected reading bounds by word index. Split runs use the same bounds for their sung token. */
+   readingIntervals?: Readonly<Partial<Record<number, ReadingInterval>>>;
+diff --git a/engine/validateRules.ts b/engine/validateRules.ts
+index a322108..739a0c8 100644
+--- a/engine/validateRules.ts
++++ b/engine/validateRules.ts
+@@ -199,7 +199,16 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
+   };
+   const inMove = (f: number) => moves.some((m) => f >= m.start && f < m.start + m.dur);
+   const giantAt = new Map<number, number>(); // line -> frames at rest with a giant word in frame
+-  const lineOfFrame = (f: number) => { let l = -1; for (const i of L.order) if (L.words.get(i)!.sf <= f) l = L.words.get(i)!.line; return l; };
++  const group = (w: WordGeom) => board.scoreStyleGroups ? board.scoreStyleGroups[w.block] ?? -1 : w.line;
++  const styleWords = new Map<number, number[]>();
++  for (const i of L.order) {
++    const l = group(L.words.get(i)!);
++    if (l < 0) continue;
++    const words = styleWords.get(l) ?? [];
++    words.push(i);
++    styleWords.set(l, words);
++  }
++  const lineOfFrame = (f: number) => { let l = -1; for (const i of L.order) if (L.words.get(i)!.sf <= f) l = group(L.words.get(i)!); return l; };
+   for (let f = startF; f <= endF; f += step) {
+     const shown = L.order.map((i) => ({i, w: L.words.get(i)!, m: st(i, f)})).filter((x) => inkVis(x.m));
+     const inks = new Map<number, Pt[]>();
+@@ -246,7 +255,21 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
+     if (inMove(f) && !shown.some((x) => x.m.opacity > 0.3 && onScreen(inks.get(x.i)!)) && !typeGraphicInFrame(f))
+       note('empty', {board: name, rule: 'empty-frame', severity: 'error', detail: 'a frame of a rig move has no type in it (bare ground)'}, f, 1);
+     // giant-level rests (rule 49): at rest (not in a transit), a word in frame at the format's giant cap and span (with a vertical span for quarter stances)
+-    if (!inTransit(f)) {
++    if (!inTransit(f) && board.scaleStyle === 'lockup') {
++      const bright = shown.filter(({i, w, m}) => m.opacity >= 0.8 && group(w) >= 0 && onScreen(inks.get(i)!));
++      for (const l of new Set(bright.map(({w}) => group(w)))) {
++        const own = bright.filter(({w}) => group(w) === l);
++        const wide = own.flatMap(({i}) => inks.get(i)!);
++        const width = Math.max(...wide.map(({x}) => x)) - Math.min(...wide.map(({x}) => x));
++        const height = Math.max(...wide.map(({y}) => y)) - Math.min(...wide.map(({y}) => y));
++        const hero = own.some(({w, m}) => {
++          const row = L.blocks[w.block].rows[w.row];
++          const cap = w.h * Math.abs(m.sy) * camForBlock(board, w.block, f).zoom;
++          return cap >= HEIGHT * (row.words.length === 1 ? 0.30 : 0.22) - 0.5;
++        });
++        if (hero || width >= WIDTH * 0.75 || height >= HEIGHT * 0.65) giantAt.set(l, (giantAt.get(l) ?? 0) + step);
++      }
++    } else if (!inTransit(f)) {
+       const l = lineOfFrame(f);
+       if (l >= 0) for (const x of shown) {
+         if (x.m.opacity < 0.3) continue;
+@@ -259,11 +282,11 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
+       }
+     }
+   }
+-  const lines = [...new Set(L.order.map((i) => L.words.get(i)!.line))].sort((a, b) => a - b);
++  const lines = [...styleWords.keys()].sort((a, b) => a - b);
+   for (const l of lines) c.addPlan(l, (giantAt.get(l) ?? 0) >= 10 ? `scale: rests at the giant level for ${giantAt.get(l)} frames` : 'scale: no rest at the giant level');
+   for (let k = 1; k < lines.length; k++) {
+     if ((giantAt.get(lines[k - 1]) ?? 0) < 10 && (giantAt.get(lines[k]) ?? 0) < 10)
+-      out.push({board: name, rule: 'two-scales', severity: 'error', line: lines[k], detail: `lines L${lines[k - 1]} and L${lines[k]} both lack a rest of at least 10 frames with a word at the giant level (cap ${LIMITS.giantCap} px or more spanning ${LIMITS.giantSpan} px; rule 49)`});
++      out.push({board: name, rule: 'two-scales', severity: 'error', line: lines[k], detail: board.scaleStyle === 'lockup' ? 'adjacent sung lines both lack a ten-frame hero or frame-filling lockup' : `lines L${lines[k - 1]} and L${lines[k]} both lack a rest of at least 10 frames with a word at the giant level (cap ${LIMITS.giantCap} px or more spanning ${LIMITS.giantSpan} px; rule 49)`});
+   }
+ 
+   // ---------------------------------------------------------------- arrivals (Fable item 39: no word arrives by opacity)
+@@ -364,7 +387,7 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
+   });
+ 
+   // ---------------------------------------------------------------- variety (rule 48)
+-  const lineFirst = (l: number) => Math.min(...L.order.filter((i) => L.words.get(i)!.line === l).map((i) => L.words.get(i)!.sf));
++  const lineFirst = (l: number) => Math.min(...styleWords.get(l)!.map((i) => L.words.get(i)!.sf));
+   const restR = (l: number) => {
+     let f = lineFirst(l);
+     for (const tr of transits) if (f >= tr.start && f < tr.end) f = tr.end;
+@@ -490,10 +513,11 @@ export const boardRuleChecks = (board: Board, c: BoardRuleCtx): Violation[] => {
+     const angOf = (i: number, f: number) => { const w = L.words.get(i)!; return Math.abs(normDeg(L.blocks[w.block].angle + st(i, f).rot + camForBlock(board, w.block, f).rot)); };
+     const flat = new Map<number, boolean>();
+     for (const l of lines) {
+-      const ws = L.order.filter((i) => L.words.get(i)!.line === l);
++      const ws = styleWords.get(l)!;
+       const f0 = Math.min(...ws.map((i) => L.words.get(i)!.sf));
+       const lw = LINES[l]?.words ?? [];
+-      const f1 = Math.min(endF, lw.length ? Math.round(WORDS[lw[lw.length - 1]].end_s * FPS) : f0);
++      const f1 = Math.min(endF, board.scoreStyleGroups ? Math.round(Math.max(...ws.map((i) => L.words.get(i)!.end)) * FPS)
++        : lw.length ? Math.round(WORDS[lw[lw.length - 1]].end_s * FPS) : f0);
+       let rest = 0, level = 0;
+       for (let f = f0; f <= f1; f += step) {
+         if (inTransit(f)) continue;
+diff --git a/score/index.ts b/score/index.ts
+index a958fe2..020bfe6 100644
+--- a/score/index.ts
++++ b/score/index.ts
+@@ -1,8 +1,8 @@
+ import type {CameraCall, LegacyCall, PairCall, UnitCall} from '../effects';
+ import type {EngineContext} from '../context';
+-import type {Board, LetterPart, RuleDef} from '../engine/types';
++import type {Board, BoardLayout, LetterPart, RuleDef} from '../engine/types';
+ 
+-export type Size = 'hero' | 'body' | 'second';
++export type Size = 'hero' | 'body' | 'second' | number;
+ export type Placement = 'below' | 'above' | 'right' | 'left' | 'inside' | 'overlay' | 'turnCW' | 'turnCCW';
+ export type Landmark =
+   | {kind: 'word'; line: string; text: string; nth?: number}
+@@ -76,9 +76,25 @@ export interface Interlude {kind: 'interlude'; id: string; start: InterludeStart
+ /** Start the echo entrance on a song-clock second or a zero-based beat index from the song map. */
+ export const interlude = (id: string, timing: {start: InterludeStart}, card: InterludeCard): Interlude =>
+   ({kind: 'interlude', id, start: timing.start, card});
++export interface StageBlock {
++  readonly id: string;
++  readonly index: number;
++  readonly start?: number;
++  readonly words: readonly {index: number; onset: number; end: number; sung: boolean}[];
++}
++export interface StagePlan {
++  /** First frame of a staged retirement. Omit a word to leave it under its entrance or transform. */
++  retire?: ReadonlyMap<number, {start: number; frames: number}>;
++}
++export type Stage = (board: Board, layout: BoardLayout, blocks: readonly StageBlock[], context: EngineContext) => StagePlan | void;
++
+ export interface Scene {
+   kind: 'scene'; id: string; ground?: string; lines: readonly (Line | Interlude)[];
+   exit?: Exit; rules?: readonly RuleDef[];
++  /** Upper bound on a row's measured width in logical pixels. */
++  rowWidth?: number;
++  /** Explicit layout, rig and retirement for choreography beyond the automatic scene staging. */
++  stage?: Stage;
+ }
+ export const scene = (id: string, card: Omit<Scene, 'kind' | 'id'>): Scene => ({kind: 'scene', id, ...card});
+ export interface Raw {kind: 'raw'; id: string; build: (ctx: EngineContext) => Board[]}
