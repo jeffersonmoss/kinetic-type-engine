@@ -44,6 +44,8 @@ export interface Env {
   readonly edge?: FrameEdge;
   readonly down?: Pt;
   readonly zoom?: number;
+  /** True when a unit pose is evaluated on one glyph of a staggered run. */
+  readonly glyph?: boolean;
   readonly projectTurn?: (spec: TurnSpec, progress: number) => Pose | null;
   /** Cross-scene carrier, already drawn by the incoming board at its first frame. */
   readonly carryIn?: boolean;

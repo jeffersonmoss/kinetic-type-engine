@@ -11,7 +11,8 @@ const result = await build({
   entryPoints: [fixture('../../song/index.ts')], bundle: true, platform: 'node', format: 'esm', write: false,
 });
 stop();
-const {importSong} = await import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].contents).toString('base64')}`);
+const {importSong, parseCmuDictionary, seedScansion, timeScansion} =
+  await import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].contents).toString('base64')}`);
 const unavailable = {status: 'unavailable', duration_s: null, tempo_bpm: null, downbeat_phase: null, beats: [], reason: 'Unit fixture'};
 const words = (...rows) => rows.map(([word, start_s, end_s]) => ({word, start_s, end_s}));
 const ingest = (alignment, config = {}, earChecks = []) => importSong({
@@ -86,6 +87,42 @@ test('spelling and same-voice merges retain source, stable IDs and corrected mem
   assert.equal(earChecks[0], correction);
 });
 
+test('maps known stresses and beat agreement within exact vocal bounds', () => {
+  const pronunciations = parseCmuDictionary([
+    ';;; CMU pronunciation fixture', 'TWENTY T W EH1 N T IY0', 'four F AO2 R',
+    'chasing CH EY1 S IH0 NG # base pronunciation', 'chasing(2) CH EY0 S IH1 NG',
+  ].join('\n'));
+  const beats = [1, 1.25, 1.4, 2.02, 2.26, 3.156].map((t, index) =>
+    ({t, index, bar: 1, beat_in_bar: index === 0 ? 1 : 2, energy: 0.5}));
+  const {map, scansion} = importSong({
+    alignment: {words: words(['TWENTY-FOUR!', 1, 1.6], ['\nCHASING?', 2, 2.5], ['\nEMBIID', 3, 3.4])},
+    config: {song: 'Scansion fixture'}, audio: 'fixture.mp3', earChecks: [], pronunciations,
+    analysis: {status: 'measured', tempo_bpm: 120, duration_s: 4, downbeat_phase: 0, beats},
+  });
+  const [twentyFour, chasing, embiid] = map.tokens;
+  assert.deepEqual(map.tokens.map(token => token.syllables.map(({text, stress}) => [text, stress])),
+    [[['TWEN', 1], ['TY-', 0], ['FOUR!', 2]], [['CHAS', 1], ['ING?', 0]], [['EM', 0], ['BIID', 1]]]);
+  assert.deepEqual(Object.values(scansion).map(({source, verified}) => [source, verified]),
+    [['cmudict', false], ['cmudict', false], ['heuristic', false]]);
+  assert.deepEqual(twentyFour.syllables.map(({beat, downbeat}) => [beat, downbeat]), [[true, true], [false, false], [true, false]]);
+  assert.deepEqual(chasing.syllables.map(({beat}) => beat), [true, true]);
+  assert.deepEqual(embiid.syllables.map(({beat}) => beat), [false, false]);
+  assert.deepEqual(map.lines.map(({uncertain}) => uncertain), [false, true, true]);
+  for (const token of map.tokens) {
+    assert.equal(token.syllables[0].start_s, token.start_s);
+    assert.equal(token.syllables.at(-1).end_s, token.end_s);
+    token.syllables.slice(1).forEach(({start_s}, i) => assert.equal(start_s, token.syllables[i].end_s));
+  }
+  assert.equal(twentyFour.syllables[1].start_s, 1.2);
+  assert.equal(twentyFour.syllables[2].start_s, 1.4);
+  const template = seedScansion(map, scansion, [[0, 1, 2], [1, 0], [1, 0]]);
+  const seeded = timeScansion(map, template);
+  assert.equal(template[embiid.id].source, 'template');
+  assert.deepEqual(seeded.tokens[0].syllables.map(syllable => syllable.sungStress), [0, 1, 2]);
+  assert.deepEqual(seeded.tokens[0].syllables.map(syllable => syllable.stress), [1, 0, 2]);
+  assert.throws(() => seedScansion(map, scansion, [[0, 1], [1, 0], [1, 0]]), /line-1: needs 3 syllables/u);
+});
+
 const room = process.env.KTE_ROOM_FOR_ONE;
 const tempRoot = '/private/tmp';
 const tempPrefix = 'kte-build-room-for-one-';
@@ -142,6 +179,7 @@ test('Room for One and a re-ingest with author decisions', {skip: !room}, async 
   try {
     const read = (dir, name) => JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8'));
     const earPath = path.join(scratch, 'ear-check.json');
+    const scansionPath = path.join(scratch, 'scansion.json');
     const readme = path.join(scratch, 'TEMP_README.md');
     const label = [
       ownerLine, 'shared: no', 'purpose: verify real song ingest and timing persistence',
@@ -150,11 +188,16 @@ test('Room for One and a re-ingest with author decisions', {skip: !room}, async 
     ].join('\n');
     fs.writeFileSync(readme, label);
     fs.copyFileSync(fixture('Room for One Ear Check Estimates.json'), earPath);
+    const templatePath = path.join(scratch, 'Tune template.json');
+    const seededId = 'line-1.token-1';
+    const seed = {source: 'template', verified: false,
+      syllables: [{text: 'Four', stress: 1, sungStress: 2}]};
+    fs.writeFileSync(templatePath, JSON.stringify({[seededId]: seed}));
 
-    const run = async (python = process.env.KTE_PYTHON) => {
+    const run = async (python = process.env.KTE_PYTHON, options = []) => {
       const profile = '(version 1) (allow default) (deny file-write*) (allow file-write* (subpath (param "SCRATCH")) (literal "/dev/null"))';
       const cli = fixture('../../bin/kte');
-      const args = ['ingest', room, '--out', scratch];
+      const args = ['ingest', room, '--out', scratch, ...options];
       // Delegates with an existing write sandbox cannot nest macOS sandbox-exec.
       const useExistingSandbox = process.env.KTE_TEST_USE_EXISTING_SANDBOX === '1';
       const executable = useExistingSandbox ? cli : 'sandbox-exec';
@@ -185,7 +228,7 @@ test('Room for One and a re-ingest with author decisions', {skip: !room}, async 
       return read(scratch, 'song-map.json');
     };
 
-    const map = await run();
+    const map = await run(process.env.KTE_PYTHON, ['--scansion', templatePath]);
     const old = read(room, 'analysis/Song map.json');
     const ear = read(scratch, 'ear-check.json');
     const config = read(room, 'song.json');
@@ -203,6 +246,17 @@ test('Room for One and a re-ingest with author decisions', {skip: !room}, async 
     assert.deepEqual(map.analysis.beats, old.beats);
     assert.equal(map.analysis.tempo_bpm, old.tempo_bpm);
     assert.equal(map.analysis.duration_s, old.duration_s);
+    const scansion = read(scratch, 'scansion.json');
+    assert.deepEqual(Object.keys(scansion), map.tokens.map(token => token.id));
+    assert.deepEqual(scansion[seededId], seed);
+    assert.equal(map.tokens[0].syllables[0].sungStress, 2);
+    for (const token of map.tokens) {
+      assert(token.syllables.length > 0);
+      assert.equal(scansion[token.id].syllables.map(({text}) => text).join(''), token.text);
+      assert.equal(token.syllables[0].start_s, token.start_s);
+      assert.equal(token.syllables.at(-1).end_s, token.end_s);
+    }
+    console.log(`Scansion for ${Object.keys(scansion).length} tokens and ${map.tokens.flatMap(token => token.syllables).length} syllables; ${map.lines.filter(line => line.uncertain).length} uncertain lines.`);
 
     const count = ear.filter(entry => entry.issue === 'glued-chant');
     assert.deepEqual(count.map(entry => [entry.start, entry.status]), [[118.5, 'open'], [118.82, 'open'], [119.12, 'open']]);
@@ -221,13 +275,22 @@ test('Room for One and a re-ingest with author decisions', {skip: !room}, async 
     }
     const edited = JSON.stringify(ear) + '\n';
     fs.writeFileSync(earPath, edited);
+    const corrected = scansion[target.tokenId];
+    corrected.syllables[0].sungStress = 2;
+    corrected.source = 'author';
+    corrected.verified = true;
+    const editedScansion = JSON.stringify(scansion) + '\n';
+    fs.writeFileSync(scansionPath, editedScansion);
 
-    const updated = await run();
+    const updated = await run(process.env.KTE_PYTHON, ['--scansion', path.join(scratch, 'Unused template.json')]);
     assert.deepEqual(updated.lines.map(line => line.id), map.lines.map(line => line.id));
     assert.deepEqual(updated.tokens.map(token => token.id), map.tokens.map(token => token.id));
     assert.equal(fs.readFileSync(earPath, 'utf8'), edited);
     const token = updated.tokens.find(token => token.id === target.tokenId);
     assert.deepEqual([token.start_s, token.end_s], [118.5, 118.8]);
+    assert.equal(fs.readFileSync(scansionPath, 'utf8'), editedScansion);
+    assert.equal(token.syllables[0].sungStress, 2);
+    assert.equal(token.syllables[0].start_s, 118.5);
     assert.deepEqual(token.raw, {start_s: 119.742, end_s: 120.413});
     const line = updated.lines.find(line => line.id === token.lineId);
     assert.equal(line.start_s, 118.5);
@@ -235,7 +298,7 @@ test('Room for One and a re-ingest with author decisions', {skip: !room}, async 
     const list = fs.readFileSync(path.join(scratch, 'Ear check list.md'), 'utf8');
     assert.match(list, /\*\*corrected\*\*.*line-34.token-1/);
     assert.match(list, /\*\*verified\*\*.*line-4.token-6/);
-    console.log('Correction applied; line and token IDs, raw time, and author file bytes persisted.');
+    console.log('Correction applied; IDs, raw time, and both edited author files persisted byte-for-byte.');
 
     const fallback = await run(path.join(scratch, 'missing-python'));
     assert.equal(fallback.analysis.status, 'measured');

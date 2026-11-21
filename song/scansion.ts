@@ -61,7 +61,7 @@ function parts(text: string, cuts: number[]): string[] {
 function estimate(token: SongToken, dictionary: Pronunciations): TokenScansion {
   const spoken = ascii(token.rawText).match(/[\p{L}\p{N}]+(?:'[\p{L}]+)*/gu) ?? [];
   let fromDictionary = spoken.length > 0;
-  const explicitEmphasis = spoken.some(word => /[a-z]/u.test(word)) && spoken.length > 1;
+  const explicitEmphasis = spoken.some(word => /[a-z]/u.test(word)) && spoken.some(word => /^[A-Z]+$/u.test(word));
   const pronunciation = spoken.map((word, i): readonly Stress[] => {
     const lower = word.toLowerCase();
     const known = dictionary.get(lower);

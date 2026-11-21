@@ -174,7 +174,7 @@ export function lowerUnit<P extends object>(call: UnitCall<P>, ctx: EngineContex
       source: dockPoint ?? (anchor && c.source?.(anchor, sourceFrame ?? span.start)),
       blockCentre: {x: c.block.w / 2, y: c.block.h / 2},
       edge: anchor && 'edge' in anchor ? anchor.edge : undefined,
-      down: c.down, zoom: c.camAt(span.start).zoom, projectTurn: glyph ? undefined : c.projectTurn,
+      down: c.down, zoom: c.camAt(span.start).zoom, glyph, projectTurn: glyph ? undefined : c.projectTurn,
     });
     const progress = (span: Span) => (frame - span.start) / (span.end - span.start);
     if (whole.has(c.i)) {

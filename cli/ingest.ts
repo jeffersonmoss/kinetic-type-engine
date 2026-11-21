@@ -1,5 +1,5 @@
 import {spawnSync} from 'node:child_process';
-import {mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync} from 'node:fs';
+import {linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync} from 'node:fs';
 import {homedir, tmpdir} from 'node:os';
 import {dirname, join, relative, resolve} from 'node:path';
 import {parseArgs} from 'node:util';
@@ -147,6 +147,10 @@ export function ingest(args: string[], beatWorker: string) {
     const author = currentScansion === undefined
       ? Array.isArray(template) ? seedScansion(map, scansion, template) : template ?? {}
       : parseSaved(currentScansion);
+    if (template && !Array.isArray(template)) {
+      const unknown = Object.keys(template).filter(id => !Object.hasOwn(scansion, id));
+      if (unknown.length) throw new Error(`Scansion template has unknown token IDs: ${unknown.join(', ')}`);
+    }
     const combined = {...scansion, ...author};
     const timed = timeScansion(map, combined);
     const writes = [
@@ -169,7 +173,14 @@ export function ingest(args: string[], beatWorker: string) {
     }
     if (optionalFile(earPath) !== current) throw new Error('ear-check.json changed during ingest. Re-run to use the latest edits.');
     if (optionalFile(scansionPath) !== currentScansion) throw new Error('scansion.json changed during ingest. Re-run to use the latest edits.');
-    for (const {name} of writes) renameSync(join(scratch, name), join(out, name));
+    for (const {name} of writes) {
+      if (name === 'scansion.json' && currentScansion === undefined) {
+        // Publish a completed first seed without replacing a concurrently created author file.
+        linkSync(join(scratch, name), scansionPath);
+      } else {
+        renameSync(join(scratch, name), join(out, name));
+      }
+    }
     const open = earChecks.filter(entry => entry.status === 'open').length;
     console.log(`${map.lines.length} lines, ${map.tokens.length} tokens, ${analysis.beats.length} beats, ${open} open ear checks`);
     console.log(out);

@@ -164,8 +164,8 @@ const punch = unitEffect<Punch>({
   name: 'beatPunch', kind: 'accent', source: 'none', hit: 0.5,
   params: {word: {...nonempty, required: false}, scale: numberIn(1, 1.35), frames: frames(6)},
   duration: (p) => p.frames ?? 8,
-  pose(u, _unit, p) {
-    if (u >= 1) return {};
+  pose(u, unit, p, env) {
+    if (u >= 1 || (p.word !== undefined && !env.glyph && unit.text !== p.word)) return {};
     const s = 1 + ((p.scale ?? 1.12) - 1) * Math.sin(Math.PI * u) ** 2;
     return {sx: s, sy: s};
   },
