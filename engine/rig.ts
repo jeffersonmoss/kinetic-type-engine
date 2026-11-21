@@ -14,9 +14,9 @@ export const DRIFT_ZOOM = 0.015; // fraction per second
 /** Half the frame diagonal: a counter of this radius on screen covers the whole frame. */
 export {HALF_DIAGONAL};
 /** Default frames per kind (rule 46). */
-export const RIG_DEFAULT_FRAMES: Record<RigKind, number> = {roll: 12, tilt: 10, whip: 8, step: 7, dive: 10, soar: 10, track: 30, crane: 30, hold: 0};
+export const RIG_DEFAULT_FRAMES: Record<RigKind, number> = {roll: 12, tilt: 10, whip: 8, step: 7, dive: 10, soar: 10, track: 30, crane: 30, hold: 0, cut: 0};
 /** Frames range the style bible gives each kind; outside it the validator warns (slow rolls 24 to 36 also pass). */
-export const RIG_FRAME_RANGE: Record<RigKind, [number, number] | null> = {roll: [9, 14], tilt: [8, 12], whip: [6, 9], step: [6, 8], dive: [8, 12], soar: [8, 12], track: null, crane: null, hold: null};
+export const RIG_FRAME_RANGE: Record<RigKind, [number, number] | null> = {roll: [9, 14], tilt: [8, 12], whip: [6, 9], step: [6, 8], dive: [8, 12], soar: [8, 12], track: null, crane: null, hold: null, cut: null};
 /** Kinds that are transits: a word sung during one is checked when it ends (rule 181.2) instead of during it. */
 export const TRANSIT_KINDS = new Set<RigKind>(['roll', 'tilt', 'whip', 'step', 'dive', 'soar']);
 /** Kit pass 21: a SOAR of SLOW_SOAR_MIN to SLOW_SOAR_MAX frames is a slow soar, a pull-back the words are read through:

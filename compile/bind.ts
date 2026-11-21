@@ -1,8 +1,11 @@
 import {cascade, fade, rise, type as typeOn} from '../effects';
 import {CONNECTIVES, type SongLine as EngineLine, type SongWord} from '../engine/config';
 import {clear, echo, opening, portraitCard, row, type Entrance, type Film, type Format, type Ink,
-  type Interlude, type LineCard, type ReplyCard, type RowCard, type Scene, type Size} from '../score';
+  type Interlude, type LineCard, type ReplyCard, type RowCard, type Scene, type Size, type WorldInterlude} from '../score';
 import {mapVocal, type OutputRange, type SongMap, type SongToken, type TimedSyllable} from '../song';
+
+const WORLD_FORBIDDEN_SCENE_FIELDS = ['exit', 'stage', 'fadeToBlack', 'scaleStyle'] as const;
+const WORLD_FORBIDDEN_CARD_FIELDS = ['enter', 'old', 'from', 'place', 'camera', 'accents', 'portrait'] as const;
 
 export interface Diagnostic {
   severity: 'error' | 'warn' | 'info'; code: string; message: string;
@@ -20,6 +23,8 @@ export interface BoundBlock {
   camera?: LineCard['camera'];
   /** Output frame of an instrumental entrance. */
   start?: number;
+  /** Per-row output frames for world interludes using explicit gap/beats/times. */
+  echoFrames?: readonly number[];
 }
 export interface BoundLine {id: string; card: LineCard; lead: BoundBlock; blocks: BoundBlock[]}
 export interface BoundScene {scene: Scene; lines: BoundLine[]}
@@ -150,7 +155,7 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly 
     return {id, card, runs, rows: boundRows, auto, reply, start: echoStart};
   }
 
-  function echoRows(item: Interlude): RowCard[] {
+  function echoRows(item: Interlude | WorldInterlude): RowCard[] {
     if (!Array.isArray(item.card.rows) || !item.card.rows.length) fail(item.id, 'an interlude needs echo rows');
     return item.card.rows.map((entry) => {
       if (!entry || typeof entry !== 'object') return fail(item.id, 'interlude rows must contain only echo()');
@@ -166,7 +171,7 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly 
     });
   }
 
-  function echoFrame(item: Interlude) {
+  function echoFrame(item: Interlude | WorldInterlude) {
     const {beat, seconds} = item.start ?? {};
     if ((beat === undefined) === (seconds === undefined)) fail(item.id, 'choose one interlude start: beat or seconds');
     if (beat !== undefined && (!Number.isSafeInteger(beat) || beat < 0)) fail(item.id, 'beat must be a zero-based song-map index');
@@ -177,12 +182,69 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly 
     return mapVocal({start_s: time, end_s: time}, clock, fps)?.onset;
   }
 
+  function worldInterludeFrames(item: WorldInterlude, rowCount: number, startFrame: number): number[] | undefined {
+    const timing = item.timing;
+    if (!timing) return undefined;
+    const modes = [timing.gap !== undefined, timing.beats !== undefined, timing.times !== undefined].filter(Boolean).length;
+    if (modes > 1) fail(item.id, '[world-interlude-timing] specify at most one of gap, beats, or times');
+    if (timing.gap !== undefined) {
+      if (!Number.isFinite(timing.gap) || timing.gap <= 0) fail(item.id, '[world-interlude-timing] gap must be positive seconds');
+      const step = Math.max(1, Math.round(timing.gap * fps));
+      return Array.from({length: rowCount}, (_, k) => startFrame + k * step);
+    }
+    if (timing.beats !== undefined) {
+      if (!Array.isArray(timing.beats) || timing.beats.length !== rowCount) {
+        fail(item.id, `[world-interlude-timing] beats must have ${rowCount} entries (one per echo row)`);
+      }
+      return timing.beats.map((b, k) => {
+        if (!Number.isSafeInteger(b) || b < 0) fail(item.id, `[world-interlude-timing] invalid beat index at ${k}`);
+        const t = song.analysis.beats.find(({index}) => index === b)?.t;
+        if (t === undefined) fail(item.id, `[world-interlude-timing] unknown song-map beat ${b}`);
+        const mapped = mapVocal({start_s: t!, end_s: t!}, clock, fps)?.onset;
+        if (mapped === undefined) fail(item.id, `[world-interlude-timing] beat ${b} falls outside the active edit`);
+        return mapped!;
+      });
+    }
+    if (timing.times !== undefined) {
+      if (!Array.isArray(timing.times) || timing.times.length !== rowCount) {
+        fail(item.id, `[world-interlude-timing] times must have ${rowCount} entries (one per echo row)`);
+      }
+      return timing.times.map((t, k) => {
+        if (!Number.isFinite(t) || t < 0) fail(item.id, `[world-interlude-timing] invalid time at ${k}`);
+        const mapped = mapVocal({start_s: t, end_s: t}, clock, fps)?.onset;
+        if (mapped === undefined) fail(item.id, `[world-interlude-timing] time ${t}s falls outside the active edit`);
+        return mapped!;
+      });
+    }
+    return undefined;
+  }
+
+  function forbidWorldCardFields(scope: string, obj: Record<string, unknown> | undefined) {
+    if (!obj) return;
+    for (const field of WORLD_FORBIDDEN_CARD_FIELDS) {
+      if (obj[field] !== undefined) {
+        fail(scope, `[world-forbidden-field] "${field}" is not expressible in world mode; use world.words overrides instead`);
+      }
+    }
+  }
+
   for (const [index, entry] of film.scenes.entries()) {
     if (!entry.id?.trim() || seenScenes.has(entry.id)) fail(entry.id, 'missing or duplicate scene ID');
     seenScenes.add(entry.id);
     if (entry.kind === 'raw') continue;
     if (entry.kind !== 'scene' || !entry.lines?.length) fail(entry.id, 'scene needs at least one line');
-    const resolved = {...entry, exit: entry.exit ?? (index < film.scenes.length - 1 && !entry.stage && !entry.world ? fallback(entry.id, 'exit', fade()) : undefined)};
+    if (entry.world) {
+      const rawEntry = entry as unknown as Record<string, unknown>;
+      for (const field of WORLD_FORBIDDEN_SCENE_FIELDS) {
+        if (rawEntry[field] !== undefined) {
+          fail(entry.id, `[world-forbidden-field] scene field "${field}" is not expressible in world mode`);
+        }
+      }
+      if (rawEntry.motionStyle !== undefined && rawEntry.motionStyle !== 'crisp') {
+        fail(entry.id, `[world-forbidden-field] scene motionStyle "${String(rawEntry.motionStyle)}" is forbidden in world mode (holds must be crisp)`);
+      }
+    }
+    const resolved = {...entry, exit: entry.exit ?? (index < film.scenes.length - 1 && !entry.stage && !entry.world ? fallback(entry.id, 'exit', fade()) : undefined)} as Scene;
     const worldDefault = <T>(id: string, field: string, value: T) => entry.world ? value : fallback(id, field, value);
     const bound: BoundLine[] = [];
     for (const [n, item] of entry.lines.entries()) {
@@ -194,11 +256,13 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly 
         if (['parts', 'reply', 'preset', 'omit', 'syllables'].some((field) => Object.hasOwn(item.card, field))) {
           fail(id, 'an interlude cannot declare sung-voice fields');
         }
+        if (entry.world) forbidWorldCardFields(`${entry.id} / ${id}`, item.card as unknown as Record<string, unknown>);
         const rows = echoRows(item);
         const start = echoFrame(item);
         if (start === undefined) continue;
+        const echoFrames = entry.world && 'timing' in item ? worldInterludeFrames(item as WorldInterlude, rows.length, start) : undefined;
         const previous = bound.at(-1);
-        const card: LineCard = {...item.card, rows};
+        const card: LineCard = {...(item.card as LineCard), rows};
         const from = card.from ?? (!previous && index === 0 ? opening() :
           worldDefault(id, 'from', previous ? row(previous.lead.id, -1) : opening()));
         const enter = card.enter ?? worldDefault(id, 'enter', typeOn({gap: 0, fade: 1}));
@@ -211,12 +275,21 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly 
         if (previous && !entry.stage && !entry.world && !card.old && !(isPair(enter) && enter.def.dismissesOld)) card.old = fallback(id, 'old', clear(fade()));
         const lead = block(id, {...card, from, enter}, [], false, undefined, start)!;
         lead.camera = card.camera;
+        if (echoFrames) lead.echoFrames = echoFrames;
         bound.push({id, card, lead, blocks: [lead]});
         continue;
       }
       if (item.kind !== 'line') fail(id, 'invalid score card');
       const record = songLines.get(id) ?? fail(id, 'no corresponding song-map line');
-      const card = format === 'portrait' ? portraitCard(item.card) : {...item.card};
+      if (entry.world) {
+        const rawCard = item.card as unknown as Record<string, unknown>;
+        forbidWorldCardFields(`${entry.id} / ${id}`, rawCard);
+        if (rawCard.reply) forbidWorldCardFields(`${entry.id} / ${id}.reply`, rawCard.reply as Record<string, unknown>);
+        if (Array.isArray(rawCard.parts)) {
+          rawCard.parts.forEach((p, pi) => forbidWorldCardFields(`${entry.id} / ${id}.p${pi + 1}`, p as Record<string, unknown>));
+        }
+      }
+      const card = format === 'portrait' ? portraitCard(item.card as LineCard) : {...(item.card as LineCard)};
       const tokens = record.tokenIds.map((tokenId) => songTokens.get(tokenId) ?? fail(id, `unknown token ${tokenId}`));
       const vocals = tokens.flatMap((token): Vocal[] => {
         const range = clock.find(({start, end}) => token.start_s >= start && token.start_s < end);

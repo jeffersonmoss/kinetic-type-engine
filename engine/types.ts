@@ -329,8 +329,8 @@ interface EmergenceOptions {
   speedCap?: false;
 }
 
-/** Rig move kinds (rule 166.2). */
-export type RigKind = 'roll' | 'tilt' | 'whip' | 'step' | 'dive' | 'soar' | 'track' | 'crane' | 'hold';
+/** Rig move kinds (rule 166.2). 'cut' is a 0-frame hard cut used in world mode. */
+export type RigKind = 'roll' | 'tilt' | 'whip' | 'step' | 'dive' | 'soar' | 'track' | 'crane' | 'hold' | 'cut';
 /** What a rig move frames: a word, words, a block, an anchor or a point. */
 export type RigFrameRef = {word: number} | {words: number[]} | {block: number} | {blocks: number[]} | {anchor: AnchorRef} | {point: Pt};
 /** Target pose of a rig move: absolute fields, or a framed target (with a cap height or fill) placed at a screen point. */
@@ -479,15 +479,25 @@ export interface ReadingInterval {readonly start: number; readonly end: number}
 export interface CanvasWord {
   readonly set: number;
   readonly sung: boolean;
+  readonly arrival: 'pop' | 'preset';
   readonly burst?: number;
   readonly line: string;
   readonly parent?: number;
-  readonly attachment: 'root' | 'baseline' | 'stack' | 'edge' | 'letter';
+  readonly attachment: 'root' | 'baseline' | 'stack' | 'edge' | 'letter' | 'counter' | 'anchor';
   readonly letter?: number;
+  readonly readAngle?: -90 | -45 | 0 | 45 | 90;
+  readonly macro?: boolean;
+}
+export interface WorldBoardMeta {
+  readonly wMed_s: number;
+  readonly phraseThreshold_s: number;
+  readonly seed?: string | number;
 }
 export interface Board {
   /** Canvas words are revealed at their set frame and stay fixed for the life of the board. */
   world?: Readonly<Partial<Record<number, CanvasWord>>>;
+  /** Tempo and provenance metadata recorded by the world-canvas compiler. */
+  worldMeta?: WorldBoardMeta;
   /** Optional label for validator output. */
   id?: string;
   /** Motion blur for this board's type during rig transits (default true). false: every word is drawn once, sharp, at

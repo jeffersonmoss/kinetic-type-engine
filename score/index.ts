@@ -1,6 +1,9 @@
 import type {CameraCall, LegacyCall, PairCall, UnitCall} from '../effects';
 import type {EngineContext} from '../context';
 import type {Board, BoardLayout, LetterPart, RuleDef} from '../engine/types';
+import type {WorldArrival, WorldCameraMove, WorldNonZeroTurn, WorldReadAngle, WorldScaleTier, WorldTurn} from '../engine/worldSettings';
+
+export {WORLD_DEFAULTS, type WorldArrival, type WorldCameraMove, type WorldNonZeroTurn, type WorldReadAngle, type WorldScaleTier, type WorldTurn} from '../engine/worldSettings';
 
 export type Size = 'hero' | 'body' | 'second' | number;
 export type Placement = 'below' | 'above' | 'right' | 'left' | 'inside' | 'overlay' | 'turnCW' | 'turnCCW';
@@ -97,43 +100,133 @@ export interface StagePlan {
 }
 export type Stage = (board: Board, layout: BoardLayout, blocks: readonly StageBlock[], context: EngineContext) => StagePlan | void;
 
-export interface WorldAttachment {
-  kind: 'baseline' | 'stack' | 'edge' | 'letter';
-  /** Earlier song token ID. With no target, the solver chooses one. */
-  to?: string;
-  /** Right/left edge for a turn, or below/above for a stack or letter. */
-  side?: 'right' | 'left' | 'below' | 'above';
-  /** Zero-based glyph index on the host for a letter attachment. */
-  letter?: number;
+/** Spatial attachment in world mode. Every kind is justified from the Pulp Fiction reference survey. */
+export type WorldAttachment =
+  | {kind: 'baseline'; /** Earlier token/echo ID; omit for solver default. */ to?: string}
+  | {kind: 'stack'; to?: string; side?: 'below' | 'above'; align?: 'left' | 'right' | 'center'}
+  | {kind: 'edge'; to?: string; side?: 'right' | 'left' | 'top' | 'bottom'; /** Orientation turn in exact multiples of 45°. */ turn?: WorldNonZeroTurn}
+  | {kind: 'letter'; to?: string; /** Zero-based glyph index on the host. */ letter?: number; side?: 'below' | 'above'}
+  | {kind: 'counter'; to?: string; /** Zero-based glyph index of a measured counter (e.g. O, D, R, A) on the host. */ letter?: number}
+  | {kind: 'anchor'; /** Standalone fresh block orientation in exact multiples of 45°. */ turn?: WorldTurn; direction?: 'right' | 'below' | 'above' | 'diagonal'};
+
+export interface WorldPullBack {
+  /** Reveal the recent phrase cluster ('cluster') or the full canvas ('world'). */
+  scope?: 'cluster' | 'world';
+  /** Target crisp hold duration after the pull-back lands, in seconds (>= 0.25s). */
+  hold?: number;
+  /** Transition style into the reveal. */
+  move?: 'pull' | 'whip' | 'cut';
 }
-export interface WorldWordOverride {
+
+export interface WorldCameraBeat {
+  /** Decisive camera move into this beat, or 'hold' to stay dead-still on the current framing. */
+  move?: WorldCameraMove;
+  /** Explicit settled camera rotation in exact multiples of 45° (overrides readAngle). */
+  angle?: WorldTurn;
+  /** Active screen reading angle for this word: 0 (upright), ±45 (diagonal), or ±90 (vertical). Never upside-down or small tilt. */
+  readAngle?: WorldReadAngle;
+  /** Named voice scale tier or explicit fraction of frame width (0.10 to 4.60). */
+  scale?: WorldScaleTier | number;
+  /** Frame just this word, its whole phrase block, or an explicit list of token/echo IDs. */
+  frame?: 'word' | 'phrase' | readonly string[];
+  /** Requested move duration in seconds (0 for 'cut'; physical bounds enforced for whips/rolls/tracks). */
+  duration?: number;
+  /** Request or suppress a readable reveal pull-back after this beat finishes. */
+  pullBack?: boolean | WorldPullBack;
+}
+
+export interface WorldBurst {
+  /** Delay in seconds after the word's vocal end before its fragment burst exit begins (>= 0). */
+  after?: number;
+}
+
+export interface WorldWordOverride extends Emphasis {
   attachment?: WorldAttachment;
   /** Cap height in world pixels. */
   cap?: number;
-  /** Deliberately tumble the word's letters after its vocal ends. Delay is in seconds. */
-  burst?: {after?: number};
-  camera?: {
-    /** Target fraction of frame width, subject to the height limit. */
-    width?: number;
-    /** Horizontal scan distance as a fraction of frame width. */
-    pan?: number;
-    /** Requested duration of the incoming move in frames, fitted to available time. */
-    frames?: number;
-    /** Request or suppress a reveal after this token, time permitting. */
-    pullBack?: boolean;
-  };
+  /** Beat-timed pop-in ('pop') or camera-revealed pre-set ('preset'). Fades/slides/type-on are not expressible. */
+  arrival?: WorldArrival;
+  /** Deliberate fragment-burst exit after the word's protected reading ends. */
+  burst?: WorldBurst;
+  /** Decisive camera beat specification. */
+  camera?: WorldCameraBeat;
+  ink?: Ink;
 }
+
 export interface WorldOptions {
   seed?: string | number;
-  /** Keys are stable song token IDs. */
+  /** Normal orthogonal-first turn tempo or higher-energy climax turn tempo (rates still scale per spoken word). */
+  mode?: 'normal' | 'climax';
+  /** Keys are stable song token IDs or interlude echo IDs (`<interludeId>.echo-<1-based index>`). */
   words?: Readonly<Record<string, WorldWordOverride>>;
 }
 
-export interface Scene {
+/** Forbidden legacy animation fields: set to `never` so TypeScript rejects fades, slots, drift, and arbitrary entrances in world mode. */
+interface WorldForbiddenCardFields {
+  enter?: never;
+  old?: never;
+  from?: never;
+  place?: never;
+  camera?: never;
+  accents?: never;
+  portrait?: never;
+}
+
+export interface WorldReplyCard extends Emphasis, WorldForbiddenCardFields {
+  rows?: Rows;
+  size?: Size;
+  ink?: Ink;
+  omit?: readonly string[];
+  /** Keys are display text or stable sung token IDs. A token ID takes precedence. */
+  words?: Readonly<Record<string, WordStyle>>;
+}
+
+export interface WorldPartCard extends Omit<WorldReplyCard, 'rows' | 'omit'> {
+  rows: Exclude<Rows, 'auto'>;
+}
+
+export interface WorldLineCard extends WorldReplyCard {
+  reply?: WorldReplyCard;
+  parts?: readonly [] | readonly [WorldPartCard] | readonly [WorldPartCard, WorldPartCard];
+  repeat?: 'intended';
+}
+
+export interface WorldLine {kind: 'line'; id: string; card: WorldLineCard}
+export const worldLine = (id: string, card: WorldLineCard = {}): WorldLine => ({kind: 'line', id, card});
+
+export interface WorldInterludeTiming {
+  start: InterludeStart;
+  /** Gap in seconds between echo rows/words when neither beats nor times is given. */
+  gap?: number;
+  /** Explicit zero-based song-map beat indices for each echo row. */
+  beats?: readonly number[];
+  /** Explicit song-clock seconds for each echo row. */
+  times?: readonly number[];
+}
+
+export interface WorldInterludeCard extends WorldForbiddenCardFields {
+  rows: readonly EchoRow[];
+  size?: Size;
+  ink?: Ink;
+  font?: string;
+}
+
+export interface WorldInterlude {
+  kind: 'interlude';
+  id: string;
+  start: InterludeStart;
+  timing?: Omit<WorldInterludeTiming, 'start'>;
+  card: WorldInterludeCard;
+}
+export const worldInterlude = (id: string, timing: WorldInterludeTiming, card: WorldInterludeCard): WorldInterlude => {
+  const {start, ...rest} = timing;
+  return {kind: 'interlude', id, start, ...(Object.keys(rest).length ? {timing: rest} : {}), card};
+};
+
+export interface LegacyScene {
   kind: 'scene'; id: string; ground?: string; lines: readonly (Line | Interlude)[];
+  world?: false | undefined;
   exit?: Exit; rules?: readonly RuleDef[];
-  /** Set each word once on a continuous canvas and generate the camera path. */
-  world?: true | WorldOptions;
   /** Upper bound on a row's measured width in logical pixels. */
   rowWidth?: number;
   /** Motion style for the compiled board (e.g. 'crisp' for exact holds and discrete moves). */
@@ -145,7 +238,30 @@ export interface Scene {
   /** Explicit layout, rig and retirement for choreography beyond the automatic scene staging. */
   stage?: Stage;
 }
-export const scene = (id: string, card: Omit<Scene, 'kind' | 'id'>): Scene => ({kind: 'scene', id, ...card});
+
+export interface WorldScene {
+  kind: 'scene'; id: string; ground?: string;
+  lines: readonly (WorldLine | WorldInterlude)[];
+  /** World-canvas mode: set-once words, 45°-multiple orientation grid, decisive camera moves and exact holds. */
+  world: true | WorldOptions;
+  rules?: readonly RuleDef[];
+  rowWidth?: number;
+  /** Forbidden in world mode: no scene fades, legacy exits, ambient drift, or custom stage escapes. */
+  exit?: never;
+  stage?: never;
+  motionStyle?: never;
+  scaleStyle?: never;
+  fadeToBlack?: never;
+}
+
+export type Scene = LegacyScene | WorldScene;
+export function scene(id: string, card: Omit<WorldScene, 'kind' | 'id'>): WorldScene;
+export function scene(id: string, card: Omit<LegacyScene, 'kind' | 'id'>): LegacyScene;
+export function scene(id: string, card: Omit<LegacyScene, 'kind' | 'id'> | Omit<WorldScene, 'kind' | 'id'>): Scene {
+  return {kind: 'scene', id, ...card} as Scene;
+}
+export const worldScene = (id: string, card: Omit<WorldScene, 'kind' | 'id' | 'world'> & {world?: true | WorldOptions}): WorldScene =>
+  ({kind: 'scene', id, ...card, world: card.world ?? true});
 export interface Raw {kind: 'raw'; id: string; build: (ctx: EngineContext) => Board[]}
 export const raw = (id: string, build: Raw['build']): Raw => ({kind: 'raw', id, build});
 

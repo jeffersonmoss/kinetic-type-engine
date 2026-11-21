@@ -12,8 +12,160 @@ import {editClock, mapVocal, type EditRange, type SongMap} from '../song';
 import {layoutBoard} from '../engine/layout';
 import {fade, lowerUnit} from '../effects';
 import type {Board} from '../engine/types';
-import type {Film, Format, Ink} from '../score';
+import {WORLD_ARRIVALS, WORLD_ATTACHMENTS, WORLD_CAMERA_MOVES, WORLD_DEFAULTS, WORLD_SCALE_TIERS, isWorldAngle, isWorldReadAngle} from '../engine/worldSettings';
+import type {Film, Format, Ink, WorldOptions, WorldWordOverride} from '../score';
 import type {CompiledFilm, LineIndex, TokenReading, Transition} from './types';
+
+function checkAllowedKeys(scope: string, obj: Record<string, unknown>, allowed: readonly string[]) {
+  for (const k of Object.keys(obj)) {
+    if (!allowed.includes(k)) {
+      throw new Error(`${scope}: [world-unknown-option] "${k}" is not part of the world-mode vocabulary`);
+    }
+  }
+}
+
+function validateWorldOptions(sceneId: string, options: WorldOptions, knownIds: ReadonlySet<string>) {
+  checkAllowedKeys(sceneId, options as unknown as Record<string, unknown>, ['seed', 'mode', 'words']);
+  if (options.mode !== undefined && options.mode !== 'normal' && options.mode !== 'climax') {
+    throw new Error(`${sceneId}: [world-mode] mode must be "normal" or "climax" (got ${String(options.mode)})`);
+  }
+  const hb = WORLD_DEFAULTS.hardBudgets;
+  for (const [id, rawOverride] of Object.entries(options.words ?? {})) {
+    if (!knownIds.has(id)) throw new Error(`${sceneId}: [world-token] unknown world word ID "${id}"`);
+    const override = rawOverride as WorldWordOverride;
+    const scope = `${sceneId} / ${id}`;
+    checkAllowedKeys(scope, override as unknown as Record<string, unknown>, ['attachment', 'cap', 'arrival', 'burst', 'camera', 'ink', 'font', 'case', 'reason']);
+    if (override.cap !== undefined && (!Number.isFinite(override.cap) || override.cap <= 0)) {
+      throw new Error(`${scope}: [world-cap] cap must be a positive finite number`);
+    }
+    if (override.arrival !== undefined && !(WORLD_ARRIVALS as readonly string[]).includes(override.arrival)) {
+      throw new Error(`${scope}: [world-arrival] arrival "${String(override.arrival)}" is not expressible (allowed: pop, preset)`);
+    }
+    if (override.ink !== undefined && !['call', 'reply', 'hit'].includes(override.ink)) {
+      throw new Error(`${scope}: [world-ink] unknown ink role "${String(override.ink)}"`);
+    }
+    if (override.attachment) {
+      const att = override.attachment as Record<string, unknown>;
+      if (!(WORLD_ATTACHMENTS as readonly string[]).includes(String(att.kind))) {
+        throw new Error(`${scope}: [world-attachment] unknown attachment kind "${String(att.kind)}"`);
+      }
+      if (att.kind === 'baseline') checkAllowedKeys(scope, att, ['kind', 'to']);
+      else if (att.kind === 'stack') {
+        checkAllowedKeys(scope, att, ['kind', 'to', 'side', 'align']);
+        if (att.side !== undefined && att.side !== 'below' && att.side !== 'above') {
+          throw new Error(`${scope}: [world-attachment] stack side must be "below" or "above"`);
+        }
+        if (att.align !== undefined && att.align !== 'left' && att.align !== 'right' && att.align !== 'center') {
+          throw new Error(`${scope}: [world-attachment] stack align must be "left", "right", or "center"`);
+        }
+      } else if (att.kind === 'edge') {
+        checkAllowedKeys(scope, att, ['kind', 'to', 'side', 'turn']);
+        if (att.side !== undefined && !['right', 'left', 'top', 'bottom'].includes(String(att.side))) {
+          throw new Error(`${scope}: [world-attachment] edge side must be right, left, top, or bottom`);
+        }
+        if (att.turn !== undefined) {
+          const turn = Number(att.turn);
+          if (!isWorldAngle(turn) || Math.abs(turn) < 1e-6) {
+            throw new Error(`${scope}: [world-angle] edge turn ${String(att.turn)}° must be a non-zero multiple of 45°`);
+          }
+        }
+      } else if (att.kind === 'letter') {
+        checkAllowedKeys(scope, att, ['kind', 'to', 'letter', 'side']);
+        if (att.side !== undefined && att.side !== 'below' && att.side !== 'above') {
+          throw new Error(`${scope}: [world-attachment] letter side must be "below" or "above"`);
+        }
+        if (att.letter !== undefined && (!Number.isSafeInteger(att.letter) || (att.letter as number) < 0)) {
+          throw new Error(`${scope}: [world-attachment] letter index must be a non-negative integer`);
+        }
+      } else if (att.kind === 'counter') {
+        checkAllowedKeys(scope, att, ['kind', 'to', 'letter']);
+        if (att.letter !== undefined && (!Number.isSafeInteger(att.letter) || (att.letter as number) < 0)) {
+          throw new Error(`${scope}: [world-attachment] counter letter index must be a non-negative integer`);
+        }
+      } else if (att.kind === 'anchor') {
+        checkAllowedKeys(scope, att, ['kind', 'turn', 'direction']);
+        if (att.turn !== undefined && !isWorldAngle(Number(att.turn))) {
+          throw new Error(`${scope}: [world-angle] anchor turn ${String(att.turn)}° must be a multiple of 45°`);
+        }
+        if (att.direction !== undefined && !['right', 'below', 'above', 'diagonal'].includes(String(att.direction))) {
+          throw new Error(`${scope}: [world-attachment] anchor direction must be right, below, above, or diagonal`);
+        }
+      }
+      if (typeof att.to === 'string' && !knownIds.has(att.to)) {
+        throw new Error(`${scope}: [world-attachment] unknown attachment host "${att.to}"`);
+      }
+    }
+    if (override.burst) {
+      checkAllowedKeys(scope, override.burst as unknown as Record<string, unknown>, ['after']);
+      if (override.burst.after !== undefined && (!Number.isFinite(override.burst.after) || override.burst.after < 0)) {
+        throw new Error(`${scope}: [world-burst] burst.after must be non-negative seconds`);
+      }
+    }
+    if (override.camera) {
+      const cam = override.camera as Record<string, unknown>;
+      checkAllowedKeys(scope, cam, ['move', 'angle', 'readAngle', 'scale', 'frame', 'duration', 'pullBack']);
+      if (cam.move !== undefined && !(WORLD_CAMERA_MOVES as readonly string[]).includes(String(cam.move))) {
+        throw new Error(`${scope}: [world-camera-move] "${String(cam.move)}" is not an allowed camera move`);
+      }
+      if (cam.angle !== undefined && !isWorldAngle(Number(cam.angle))) {
+        throw new Error(`${scope}: [world-angle] camera.angle ${String(cam.angle)}° must be a multiple of 45°`);
+      }
+      if (cam.readAngle !== undefined && !isWorldReadAngle(Number(cam.readAngle))) {
+        throw new Error(`${scope}: [world-read-angle] camera.readAngle ${String(cam.readAngle)}° must be 0, ±45, or ±90`);
+      }
+      if (cam.scale !== undefined) {
+        if (typeof cam.scale === 'string') {
+          if (!(WORLD_SCALE_TIERS as readonly string[]).includes(cam.scale)) {
+            throw new Error(`${scope}: [world-scale] unknown scale tier "${cam.scale}"`);
+          }
+        } else if (typeof cam.scale === 'number') {
+          const [lo, hi] = WORLD_DEFAULTS.scale.fullRange;
+          if (!Number.isFinite(cam.scale) || cam.scale < lo || cam.scale > hi) {
+            throw new Error(`${scope}: [world-scale] numeric scale ${cam.scale} must be within [${lo}, ${hi}]`);
+          }
+        } else {
+          throw new Error(`${scope}: [world-scale] scale must be a tier name or number`);
+        }
+      }
+      if (cam.frame !== undefined && cam.frame !== 'word' && cam.frame !== 'phrase') {
+        if (!Array.isArray(cam.frame) || !cam.frame.length || cam.frame.some((ref) => typeof ref !== 'string' || !knownIds.has(ref))) {
+          throw new Error(`${scope}: [world-camera-frame] camera.frame must be "word", "phrase", or a non-empty list of known word IDs`);
+        }
+      }
+      if (cam.duration !== undefined) {
+        const d = Number(cam.duration);
+        if (!Number.isFinite(d) || d < 0 || d > hb.moveMax_s) {
+          throw new Error(`${scope}: [world-camera-duration] duration ${String(cam.duration)}s is outside [0, ${hb.moveMax_s}]`);
+        }
+        if (cam.move === 'cut' && d !== 0) {
+          throw new Error(`${scope}: [world-camera-duration] hard cut must have duration 0`);
+        }
+        if (cam.move === 'whip' && (d < hb.whipMin_s || d > hb.whipMax_s)) {
+          throw new Error(`${scope}: [world-camera-duration] whip duration ${d}s must be within [${hb.whipMin_s}, ${hb.whipMax_s}]`);
+        }
+        if (cam.move === 'roll' && (d < hb.rollMin_s || d > hb.rollMax_s)) {
+          throw new Error(`${scope}: [world-camera-duration] roll duration ${d}s must be within [${hb.rollMin_s}, ${hb.rollMax_s}]`);
+        }
+      }
+      if (cam.pullBack !== undefined && typeof cam.pullBack !== 'boolean') {
+        if (!cam.pullBack || typeof cam.pullBack !== 'object') {
+          throw new Error(`${scope}: [world-pullback] pullBack must be boolean or pullBack object`);
+        }
+        const pb = cam.pullBack as Record<string, unknown>;
+        checkAllowedKeys(scope, pb, ['scope', 'hold', 'move']);
+        if (pb.scope !== undefined && pb.scope !== 'cluster' && pb.scope !== 'world') {
+          throw new Error(`${scope}: [world-pullback] pullBack.scope must be "cluster" or "world"`);
+        }
+        if (pb.move !== undefined && pb.move !== 'pull' && pb.move !== 'whip' && pb.move !== 'cut') {
+          throw new Error(`${scope}: [world-pullback] pullBack.move must be "pull", "whip", or "cut"`);
+        }
+        if (pb.hold !== undefined && (!Number.isFinite(pb.hold) || Number(pb.hold) < WORLD_DEFAULTS.physicalConstants.minReadableHold_s)) {
+          throw new Error(`${scope}: [world-pullback] pullBack.hold must be at least ${WORLD_DEFAULTS.physicalConstants.minReadableHold_s}s`);
+        }
+      }
+    }
+  }
+}
 
 export {defaultLook, formatFor, scoreContext} from './defaults';
 export type {CompiledFilm, InspectionFrame, LineIndex, TokenReading, Transition} from './types';
@@ -104,18 +256,27 @@ export function compileScore(base: EngineContext, film: Film, song: SongMap, opt
       const work: SceneWork = {board, lines, blocks: [], entries: []};
       works.push(work);
       if (scene.world) {
-        if (scene.stage || scene.exit) throw new Error(`${scene.id}: world scenes use their own staging and cut`);
-        const options = scene.world === true ? {} : scene.world;
+        const rawScene = scene as unknown as Record<string, unknown>;
+        if (rawScene.stage || rawScene.exit) throw new Error(`${scene.id}: [world-forbidden-field] world scenes use their own staging and cut`);
+        const options: WorldOptions = scene.world === true ? {} : scene.world;
         const authoredLines = new Set(scene.lines.map(({id}) => id));
-        for (const [id, override] of Object.entries(options.words ?? {})) {
-          if (!authoredLines.has(knownTokens.get(id)!)) throw new Error(`${scene.id}: unknown world token "${id}"`);
-          if (override.attachment?.to && !authoredLines.has(knownTokens.get(override.attachment.to)!)) {
-            throw new Error(`${scene.id}: unknown world attachment host "${override.attachment.to}"`);
+        const knownWorldIds = new Set<string>();
+        for (const [tokenId, lineId] of knownTokens) {
+          if (authoredLines.has(lineId)) knownWorldIds.add(tokenId);
+        }
+        for (const boundLine of lines) for (const item of boundLine.blocks) {
+          if (item.start === undefined) continue;
+          let tick = 0;
+          for (const row of item.rows) for (const _run of row.runs) {
+            tick++;
+            knownWorldIds.add(`${item.id}.echo-${tick}`);
           }
         }
+        validateWorldOptions(scene.id, options, knownWorldIds);
         board.motionStyle = 'crisp';
-        const placed = layoutWorld(ctx, board, lines, ink, options);
-        const tokens = worldCamera(ctx, board, placed);
+        const {placed, rate} = layoutWorld(ctx, board, lines, ink, options);
+        board.worldMeta = {wMed_s: rate.wMed_s, phraseThreshold_s: rate.phraseThreshold_s, seed: options.seed};
+        const tokens = worldCamera(ctx, board, placed, rate, options);
         worldReadings.set(board, tokens);
         const firstBlocks = new Map<import('./bind').BoundBlock, typeof placed[number]>();
         for (const cue of placed) if (!firstBlocks.has(cue.item)) firstBlocks.set(cue.item, cue);

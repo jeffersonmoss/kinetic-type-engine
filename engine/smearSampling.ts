@@ -18,6 +18,7 @@ import {carrySpan} from './carry';
 import type {Board, Pt} from './types';
 import type {WordMod} from './verbRegistry';
 import {boardActive, retireFrame, wordStateAt} from './wordState';
+import {WORLD_DEFAULTS} from './worldSettings';
 
 export const SMEAR_SHUTTER = 180;
 export const SMEAR_PX = 8;
@@ -45,11 +46,14 @@ export const rigDisplacementAt = (boards: Board[], f: number): number => {
   }
   return worst;
 };
-/** Samples the smear uses at frame f (1: drawn once, sharp). */
+/** Samples the smear uses at frame f (1: drawn once, sharp). World boards use higher temporal supersampling to prevent stepped whip echoes. */
 export const smearSamplesAt = (boards: Board[], f: number): number => {
   const d = rigDisplacementAt(boards, f);
-  if (d < SMEAR_PX) return 1;
-  return Math.max(SMEAR_MIN, Math.min(SMEAR_MAX, Math.ceil(d / SMEAR_PX)));
+  const worldTransit = boards.some((b) => !!b.world && boardActive(b, f) && inRigTransit(b, f));
+  const stepPx = worldTransit ? WORLD_DEFAULTS.physicalConstants.worldSmearStepPx : SMEAR_PX;
+  const maxSamples = worldTransit ? WORLD_DEFAULTS.physicalConstants.worldSmearMaxSamples : SMEAR_MAX;
+  if (d < stepPx) return 1;
+  return Math.max(SMEAR_MIN, Math.min(maxSamples, Math.ceil(d / stepPx)));
 };
 /** Frame times of the n samples at frame f (the first is f itself). */
 export const smearSampleFrames = (f: number, n: number): number[] => Array.from({length: n}, (_, k) => f - (SMEAR_SPAN * k) / n);
