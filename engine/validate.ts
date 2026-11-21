@@ -1,3 +1,4 @@
+import {readingSampler} from './reading';
 // validateBoard (rule 181): checks every frame of every word's reading interval. Pure; runs in node through
 // tools/validate-boards.mjs. Words are read from their display frame to their retire frame (retired text is exempt from
 // readability); rig transits are exempt and the words sung during one are checked when it ends; speed is the smaller
@@ -250,6 +251,7 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
   for (const i of L.order) {
     const w = L.words.get(i)!;
     const reading = board.readingIntervals?.[i];
+    if (board.scoreLife && !reading) {intervals.set(i, [Infinity, -Infinity]); continue;}
     if (reading) {
       if (!Number.isSafeInteger(reading.start) || !Number.isSafeInteger(reading.end) || reading.end - reading.start + 1 < MIN_VISIBLE_FRAMES) {
         out.push({board: name, rule: 'reading-interval', severity: 'error', word: i, text: w.text, line: w.line,
@@ -341,6 +343,7 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
     const ps = inFrame.map((p) => (p.x - q[0].x) * u.x + (p.y - q[0].y) * u.y);
     return (Math.max(...ps) - Math.min(...ps)) / H;
   };
+  const scoredReading = board.scoreLife ? readingSampler(board, LIMITS.sungMinCap) : undefined;
   // Per-frame pass
   const lineStats = new Map<number, LineReport>();
   const fStart = Math.min(...[...intervals.values()].map((x) => x[0]));
@@ -402,6 +405,12 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
       const bcam = camForBlock(board, w.block, f);
       const protectedReading = !!board.readingIntervals?.[i];
       const base: Violation = {board: name, rule: '', severity: 'error', word: i, text: WORDS[i].text, line: w.line, detail: ''};
+      if (protectedReading && scoredReading) {
+        const problem = scoredReading.issue(i, f);
+        if (problem) note(`score${problem.rule}${i}`, {...base, ...problem}, f, 1);
+        if (energy && !wordMoving(board, i, f)) restFrames.set(i, (restFrames.get(i) ?? 0) + step);
+        continue;
+      }
       if (protectedReading) {
         const glyphOpacity = [...w.text].reduce((least, ch, k) => {
           if (/\s/u.test(ch)) return least;
@@ -509,9 +518,9 @@ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardRe
   // KIT 90 (brief item 10.3): under transitRules 'energy' every word reads at rest for 8 frames of its reading interval
   if (energy) for (const i of L.order) {
     const w = L.words.get(i)!;
-    if (w.opts.picture !== undefined) continue;
+    if (w.opts.picture !== undefined || (board.scoreLife && !board.readingIntervals?.[i])) continue;
     const got = restFrames.get(i) ?? 0;
-    if (got < ENERGY_READ_FRAMES) out.push({board: name, rule: 'energy-read', severity: 'error', word: i, text: w.text, line: w.line, detail: `read at rest (shown, still, outside rig transits) for ${got} frames of its reading interval (needs ${ENERGY_READ_FRAMES}; transitRules 'energy')`});
+    if (got < ENERGY_READ_FRAMES) out.push({board: name, rule: 'energy-read', severity: board.scoreLife ? 'warn' : 'error', word: i, text: w.text, line: w.line, detail: `read at rest (shown, still, outside rig transits) for ${got} frames of its reading interval (needs ${ENERGY_READ_FRAMES}; transitRules 'energy')`});
   }
   for (const [i, q] of quarterRun) quarterDone.push({i, start: q.start, len: q.len});
   for (const q of quarterDone) if (q.len < QUARTER_HOLD) {

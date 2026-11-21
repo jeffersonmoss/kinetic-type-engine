@@ -20,7 +20,7 @@ const hasDescender = (text: string) => /[gjpqy]/.test(text);
 export const displayText = (i: number, font: FontKey, opts?: WordOpts) => {
   if (opts?.text !== undefined) return guardDisplay(opts.text);
   const raw = WORDS[i].text.replace(/["“”]/g, '');
-  return guardDisplay(FONTS[font]?.upper ? raw.toUpperCase() : raw);
+  return guardDisplay(FONTS[font]?.upper && !opts?.preserveCase ? raw.toUpperCase() : raw);
 };
 
 /** K1: a word's text without round brackets (left as it is if nothing else would be left). */
@@ -199,7 +199,7 @@ const layoutFixed = (def: Block, index: number, items: Item[], blockFont: FontKe
     // leading between the rows' ink (ruling 194.11): the row above's box already holds its descenders, and this row's
     // ascenders and apostrophes above the cap line are added, so rows never touch. STACK keeps 8 percent of the cap
     // height (rule 62); other wrapped fixed-size blocks 20 percent.
-    const lead = def.stack ? (def.stack.leading ?? 0.08) : 0.2;
+    const lead = def.stack ? (def.stack.leading ?? 0.08) : (def.rowGap ?? 0.2);
     const ascExtra = Math.max(0, ...row.map((it, k) => (/[bdfhklt'’]/.test(it.text) || FONT_INFO[it.font].upper ? Math.max(0, FONT_INFO[it.font].asc - FONT_INFO[it.font].cap) * sizes[k] : 0)));
     if (r > 0) y += lead * Math.max(prevCap, capH) + ascExtra;
     const baseline = y + capH;

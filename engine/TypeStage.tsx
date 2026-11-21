@@ -256,7 +256,7 @@ export const BoardView: React.FC<{board: Board; t: number; uid?: string; smearPa
   });
   const sid = `${uid}-${sfOf(board.start)}`;
   // an outgoing carry's board rides over the incoming board from B: no ground of its own, no second vignette (item 72)
-  const bare = carriedOff(board, f);
+  const bare = carriedOff(board, f) || (!!board.scoreLife && f >= endF);
   const vig = board.vignette !== false && !bare;
   let inner = sharpPass ? (
     <g>

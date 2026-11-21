@@ -25,7 +25,7 @@ import {groundClearClip, groundClearSpan} from './groundClear';
 /** Board exit durations (all at least MIN_TRANSITION_FRAMES; leave and fall also respect the speed cap). */
 export const EXIT_FRAMES: Record<Board['exit'], number> = {cut: 12, fall: 24, fade: 8, leave: 16, none: 0, turn: 10};
 /** Frames of a board's exit: EXIT_FRAMES, except 'turn', whose length is its spec's (KIT 89). */
-export const exitFramesOf = (board: Board) => (board.exit === 'turn' ? boardTurnExitFrames(board) : EXIT_FRAMES[board.exit]);
+export const exitFramesOf = (board: Board) => (board.scoreExitFrames ?? (board.exit === 'turn' ? boardTurnExitFrames(board) : EXIT_FRAMES[board.exit]));
 /** Is the board drawn at frame f (from its start until its exit has finished)? */
 export const boardActive = (board: Board, f: number) => f >= board.start * FPS - 0.001 && f < board.end * FPS + exitFramesOf(board);
 
@@ -142,7 +142,7 @@ export const retireFrame = (board: Board, i: number): number => {
   const w = L.words.get(i);
   if (!w) return Infinity;
   memo.set(i, Infinity); // guard against cycles through binds
-  let r = Math.max(lineEndF(w.line) + RETIRE_AFTER, w.sf + Math.max(20, MIN_VISIBLE_FRAMES));
+  let r = board.scoreLife ? Infinity : Math.max(lineEndF(w.line) + RETIRE_AFTER, w.sf + Math.max(20, MIN_VISIBLE_FRAMES));
   // A legacy hold may outlast protected reading. Never let implicit retirement dim a protected word.
   const reading = board.readingIntervals?.[i];
   if (reading) r = Math.max(r, reading.end + 1);
@@ -376,6 +376,13 @@ export const wordStateAt = (board: Board, i: number, f: number): WordMod => {
   }
   // a word printed on a board panel takes the panel's transform (and is hidden while the panel is)
   let out = composeMod(m, v, n);
+  const handoff = board.screenHandoffOut;
+  if (handoff && f >= handoff.frame) {
+    const kept = handoff.glyphs.filter((ref) => ref.word === i);
+    if (kept.length) out = composeMod(out, {letters: Array.from({length: n}, (_, index) => ({
+      dx: 0, dy: 0, rot: 0, s: 1, opacity: kept.some((ref) => ref.index === index) ? 0 : 1,
+    }))}, n);
+  }
   if (L.blocks[w.block].def.on) {
     const pm = panelWordMod(board, L, w, f);
     if (pm?.hidden) return {...IDENTITY, hidden: true, opacity: 0};

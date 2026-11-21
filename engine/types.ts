@@ -148,6 +148,8 @@ export interface WordOpts {
   tier?: Tier;
   /** Replace the displayed text (e.g. strip punctuation). */
   text?: string;
+  /** Use explicitly authored case even when the font role normally uppercases. */
+  preserveCase?: boolean;
   /** Solid plate drawn behind the word (road sign, slab). Pad is a fraction of word size (default 0.18). Shadow follows the look unless set here. */
   plate?: {fill: string; pad?: number; shadow?: boolean};
   replace?: LetterArt[];
@@ -221,6 +223,8 @@ export interface Block {
   keepUntil?: number;
   /** fixed cap height in world px for every row (no justification, no tier caps, connectives not halved). */
   cap?: number;
+  /** Gap between rows as a fraction of the larger adjacent cap. */
+  rowGap?: number;
   /** STACK layout (rule 62): one word per row, every row justified to `measure` world px, leading 8 percent of cap
    *  height (or `leading` as a fraction), building upward or downward from the first word. */
   stack?: {measure: number; dir?: 'up' | 'down'; leading?: number};
@@ -490,6 +494,12 @@ export interface Board {
   blocks: Block[];
   /** Protected reading bounds by word index. Split runs use the same bounds for their sung token. */
   readingIntervals?: Readonly<Partial<Record<number, ReadingInterval>>>;
+  /** Score-authored life replaces legacy implicit retirement. */
+  scoreLife?: boolean;
+  /** Length of a score-authored scene exit that continues drawing after the cut. */
+  scoreExitFrames?: number;
+  /** Words whose ownership passes to the next board at its first frame. */
+  screenHandoffOut?: {frame: number; glyphs: readonly {word: number; index: number}[]};
   readonly effects?: EffectTable;
   exit: ExitStyle;
   /** exit 'turn' (KIT 89): the turn every block leaves by at `end`. */

@@ -33,8 +33,9 @@ function allowed(owner, file, target, typeOnly, names) {
         || (path === 'engine/config' && file === 'context/legacyBridge.ts' && names?.join() === 'configureEngine');
     }
   }
+  if (file === 'compile/defaults.ts' && target === 'fonts/anton-dmserif-barlow.metrics.json') return true;
   if (owner === 'effects' && module === 'engine') return typeOnly;
-  if (owner === 'score' && module === 'song') return typeOnly;
+  if (owner === 'score' && ['song', 'context', 'engine'].includes(module)) return typeOnly;
   if (file === 'check/golden.mjs' && (target === 'esbuild' || isBuiltin(target))) return true;
   return dependencies[owner].includes(Object.hasOwn(dependencies, module) ? module : target);
 }
