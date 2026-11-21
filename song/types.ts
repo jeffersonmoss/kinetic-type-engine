@@ -48,6 +48,28 @@ export interface SourceFragment extends SongTime {
 
 export type SongRepair = 'glued-chant' | 'glued-closing-punctuation';
 
+/** CMU convention: 0 unstressed, 1 primary, 2 secondary. */
+export type Stress = 0 | 1 | 2;
+
+export interface Syllable {
+  text: string;
+  stress: Stress;
+  sungStress: Stress | null;
+}
+
+export interface TokenScansion {
+  syllables: Syllable[];
+  source: 'cmudict' | 'heuristic' | 'template' | 'author';
+  verified: boolean;
+}
+
+export type Scansion = Record<string, TokenScansion>;
+
+export interface TimedSyllable extends Syllable, SongTime {
+  beat: boolean;
+  downbeat: boolean;
+}
+
 export interface SongToken extends SongTime {
   id: string;
   lineId: string;
@@ -61,6 +83,8 @@ export interface SongToken extends SongTime {
   repairs: SongRepair[];
   reviewIds: string[];
   reviewStatus: ReviewStatus | null;
+  /** Absent on song maps imported before scansion was added. */
+  syllables?: TimedSyllable[];
 }
 
 export interface SongLine extends SongTime {
@@ -71,6 +95,7 @@ export interface SongLine extends SongTime {
   tokenIds: string[];
   /** Zero-based index of the first tracked beat at or after onset minus 50 ms. */
   start_beat: number | null;
+  uncertain?: boolean;
 }
 
 export interface SongSection extends SongTime {

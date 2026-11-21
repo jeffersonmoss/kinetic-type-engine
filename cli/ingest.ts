@@ -3,7 +3,7 @@ import {mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, s
 import {homedir, tmpdir} from 'node:os';
 import {dirname, join, relative, resolve} from 'node:path';
 import {parseArgs} from 'node:util';
-import {formatEarCheckList, importSong} from '../song/index';
+import {formatEarCheckList, importSong, parseCmuDictionary} from '../song/index';
 import type {BeatAnalysis, EarCheck} from '../song/index';
 import {readAlignment, readConfig, readEarChecks} from './inputs';
 
@@ -38,34 +38,59 @@ function experimentPythons(experiments: string) {
   }
 }
 
-function audioAnalysis(worker: string, audio: string, bpm: number, scratch: string): BeatAnalysis {
+// Locate data from the selected interpreter without importing packages that might fetch corpora.
+const pythonProbe = `
+import importlib.util, json, pathlib, sys
+import librosa
+spec = importlib.util.find_spec("cmudict")
+data = pathlib.Path(spec.origin).parent / "data" / "cmudict.dict" if spec and spec.origin else None
+print(json.dumps({"executable": sys.executable, "dictionary": str(data) if data and data.is_file() else None}))
+`;
+
+function pronunciations(worker: string, pythonDictionary?: string | null) {
+  const root = dirname(dirname(worker));
+  const paths = ['song/cmudict.dict', 'song/cmudict-0.7b', 'cmudict.dict', 'cmudict-0.7b',
+    'node_modules/cmudict/lib/cmudict.0.7a'].map(path => join(root, path));
+  if (pythonDictionary) paths.push(pythonDictionary);
+  for (const path of paths) {
+    const source = optionalFile(path);
+    if (source === undefined) continue;
+    const dictionary = parseCmuDictionary(source);
+    if (dictionary.size) return dictionary;
+  }
+  return undefined;
+}
+
+function audioAnalysis(worker: string, audio: string, bpm: number, scratch: string): {
+  analysis: BeatAnalysis; dictionary?: string | null;
+} {
   const experiments = join(homedir(), 'Experiments');
   const candidates = [...new Set([process.env.KTE_PYTHON, 'python3', ...experimentPythons(experiments)].filter((item): item is string => !!item))];
   const env = {...process.env, PYTHONDONTWRITEBYTECODE: '1', NUMBA_CACHE_DIR: join(scratch, 'Numba cache')};
   let python: string | undefined;
-  let executable: string | undefined;
+  let probeData: {executable: string; dictionary: string | null} | undefined;
   for (const candidate of candidates) {
-    const probe = spawnSync(candidate, ['-c', 'import librosa, sys; print(sys.executable)'],
+    const probe = spawnSync(candidate, ['-c', pythonProbe],
       {encoding: 'utf8', timeout: 15_000, env});
     if (!probe.error && probe.status === 0) {
       python = candidate;
-      executable = probe.stdout.trim();
+      probeData = JSON.parse(probe.stdout.trim().split('\n').at(-1)!);
       break;
     }
   }
   if (!python) {
     const reason = `librosa beat analysis unavailable. Tried ${candidates.join(', ')}.`;
     console.warn(reason);
-    return {status: 'unavailable', reason, beats: [], duration_s: null, tempo_bpm: null, downbeat_phase: null};
+    return {analysis: {status: 'unavailable', reason, beats: [], duration_s: null, tempo_bpm: null, downbeat_phase: null}};
   }
-  console.log(`librosa Python: ${executable || python}`);
+  console.log(`librosa Python: ${probeData?.executable || python}`);
   const result = spawnSync(python, [worker, audio, String(bpm)], {
     encoding: 'utf8', timeout: 180_000, maxBuffer: 4 * 1024 * 1024, env,
   });
   if (result.error || result.status !== 0) {
     throw new Error(`Beat analysis failed: ${result.error?.message || result.stderr.trim() || result.signal || result.status}`);
   }
-  return JSON.parse(result.stdout) as BeatAnalysis;
+  return {analysis: JSON.parse(result.stdout) as BeatAnalysis, dictionary: probeData?.dictionary};
 }
 
 const json = (value: unknown) => JSON.stringify(value, null, 2) + '\n';
@@ -97,7 +122,7 @@ export function ingest(args: string[], beatWorker: string) {
   try {
     writeFileSync(join(scratch, 'TEMP_README.md'),
       `owner: kte ingest\nshared: no\npurpose: stage song map and cache beat analysis\ncreated by: kte ingest on ${process.platform}\ndate: ${new Date().toISOString()}\nneeded until: this ingest exits\nexpensive to recreate: no\n`);
-    const analysis = audioAnalysis(beatWorker, audio, config.start_bpm ?? 100, scratch);
+    const {analysis, dictionary} = audioAnalysis(beatWorker, audio, config.start_bpm ?? 100, scratch);
     const earPath = join(out, 'ear-check.json');
     // Read the author-owned file after the slow analysis, immediately before publishing.
     const current = optionalFile(earPath);
@@ -109,7 +134,8 @@ export function ingest(args: string[], beatWorker: string) {
         throw new Error(`${earPath}: ${error instanceof Error ? error.message : error}`);
       }
     }
-    const {map, earChecks} = importSong({alignment, config, audio: relative(film, audio), analysis, earChecks: saved});
+    const {map, earChecks} = importSong({alignment, config, audio: relative(film, audio), analysis, earChecks: saved,
+      pronunciations: pronunciations(beatWorker, dictionary)});
     const writes = [
       {name: 'song-map.json', contents: json(map)},
       {name: 'Ear check list.md', contents: formatEarCheckList(map, earChecks)},

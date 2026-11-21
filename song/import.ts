@@ -1,4 +1,5 @@
 import {tokenizeAlignment} from './alignment';
+import {estimateScansion, timeScansion, type Pronunciations} from './scansion';
 import type {Alignment, BeatAnalysis, EarCheck, SongConfig, SongLine, SongMap, SongToken, Voice} from './types';
 
 interface SongInput {
@@ -7,9 +8,10 @@ interface SongInput {
   audio: string;
   analysis: BeatAnalysis;
   earChecks: EarCheck[];
+  pronunciations?: Pronunciations;
 }
 
-export function importSong({alignment, config, audio, analysis, earChecks}: SongInput) {
+export function importSong({alignment, config, audio, analysis, earChecks, pronunciations}: SongInput) {
   const {lines: alignedLines, sections: alignedSections} = tokenizeAlignment(alignment);
   if (alignedLines.length === 0) throw new Error('Alignment contains no lyrics');
 
@@ -192,5 +194,6 @@ export function importSong({alignment, config, audio, analysis, earChecks}: Song
     schema: 2, song: config.song, suno_id: alignment.audio_id ?? null, audio, analysis,
     sections, lines, tokens: mapTokens,
   };
-  return {map, earChecks: [...entries.values()]};
+  const scansion = estimateScansion(map, pronunciations);
+  return {map: timeScansion(map, scansion), earChecks: [...entries.values()], scansion};
 }
