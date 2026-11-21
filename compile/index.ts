@@ -69,6 +69,7 @@ export function compileScore(base: EngineContext, film: Film, song: SongMap, opt
       blocks.flatMap(({runs}) => runs.flatMap(({vocal}) => vocal ? [vocal.end, vocal.onset + 14] : []))));
     const starts = scenes.map((scene, index) => {
       const item = scene.lines[0].lead;
+      if (item.start !== undefined) return index === 0 && !('line' in item.card.from) ? 0 : item.start;
       const earliest = firstOf(scene);
       const enter = item.card.enter;
       const cross = 'line' in item.card.from;
@@ -105,10 +106,13 @@ export function compileScore(base: EngineContext, film: Film, song: SongMap, opt
       }
       setCamera(ctx, work, draft);
       for (const block of work.blocks) {
+        if (block.item.start !== undefined && block.item.start >= end) {
+          throw new Error(`${block.item.id}: interlude start frame ${block.item.start} is outside scene ${scene.id}`);
+        }
         lowerEntrance(ctx, block, works[i - 1]);
         const {item} = block;
         transitions.push({line: item.id, board: scene.id, start: block.start, landing: block.landing, release: block.release,
-          edge: item.card.from.kind === 'edge', handoff: isPair(item.card.enter)});
+          edge: item.card.from.kind === 'edge', handoff: isPair(item.card.enter), interlude: item.start !== undefined});
       }
       for (const authored of lines) {
         const owners = work.blocks.filter((block) => block.authored === authored);
@@ -124,7 +128,7 @@ export function compileScore(base: EngineContext, film: Film, song: SongMap, opt
           for (const {block, targets} of matches) {
             if (!targets.length) continue;
             const name = `${call.name} · ${block.item.id} · ${n + 1}`;
-            const start = Math.min(...targets.map(({sungFrame}) => sungFrame!));
+            const start = block.item.start !== undefined ? block.landing : Math.min(...targets.map(({sungFrame}) => sungFrame!));
             const schedule = scheduleUnit(call, ctx, targets, start);
             work.entries.push([name, lowerUnit(call, ctx, {schedule})]);
             (board.blocks[block.index].verb ??= []).push(...unitCues(name, schedule, ctx.fps));

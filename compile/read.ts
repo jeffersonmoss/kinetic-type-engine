@@ -97,15 +97,23 @@ export function inspect(ctx: EngineContext, format: Format, duration: number, bo
     mark(reading.landing, `${label} · landing`);
   }
   for (const transition of transitions) {
-    const {line, board, start, landing, release, cut, handoff, edge} = transition;
+    const {line, board, start, landing, release, cut, handoff, edge, interlude} = transition;
     if (cut) {
       for (const offset of [-1, 0, 1]) mark(start + offset, `${board} · ${handoff ? 'screen handoff' : 'scene cut'} ${offset === -1 ? 'before' : offset === 1 ? 'after' : 'at'}`);
       continue;
     }
     mark(Math.floor((start + landing) / 2), `${line} · transition midpoint`);
+    const work = blocks.find((block) => block.item.id === line)!;
+    if (interlude) {
+      mark(start, `${line} · interlude entrance`);
+      mark(landing, `${line} · interlude landing`);
+      for (const [index, row] of layoutBoard(boards.get(board)!).blocks[work.index].rows.entries()) {
+        const rowLanding = Math.max(...row.words.map((word) => work.landingByWord.get(word) ?? landing));
+        mark(rowLanding, `${line} · echo row ${index + 1} landing`);
+      }
+    }
     if (handoff) for (const offset of [-1, 0, 1]) mark(release + offset, `${line} · kept glyph transfer`);
     if (!edge) continue;
-    const work = blocks.find((work) => work.item.id === line)!;
     const picture = boards.get(board)!;
     const runs = work.item.runs.map(({i}) => i);
     const first = Math.min(...readings.filter((reading) => reading.line === line).map((reading) => reading.interval?.start ?? reading.onset + 2));

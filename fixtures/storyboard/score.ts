@@ -1,5 +1,5 @@
-import {cascade, follow, legacy, rise, stamp, type as typeOn} from '../../effects';
-import {film, line, motif, opening, row, scene, stay, word, type LineCard} from '../../score';
+import {beatPunch, cascade, fade, follow, legacy, matchCut, rise, slotRoll, stamp, turnIn, type as typeOn} from '../../effects';
+import {clear, echo, edge, film, interlude, line, motif, opening, row, scene, stay, word, type LineCard} from '../../score';
 import {fixtureSong} from '../step-seven/score';
 
 const typeWords = cascade(typeOn({gap: 0, fade: 1}), {by: 'word', clock: 'sung'});
@@ -65,3 +65,44 @@ export const inkScore = (ground: string, markHit = true) => film({
     reply: {from: row('inks.p1', 2), enter: typeWords, size: 'body'}}),
   ]})],
 });
+
+export const interludeMap = fixtureSong([
+  ['hook', [['FOUR', 103, 112], ['RING!', 124, 181, 'adlib']]],
+  ['out', [['PHILLY', 495, 505], ['ONE', 520, 531, 'adlib']]],
+]);
+interludeMap.analysis = {status: 'measured', duration_s: 630 / 30, tempo_bpm: 1800 / 19, downbeat_phase: 0,
+  beats: Array.from({length: 32}, (_, index) => ({t: (18 + 19 * index) / 30, index, bar: Math.floor(index / 4), beat_in_bar: index % 4 + 1, energy: 1}))};
+const rings = Array.from({length: 4}, () => echo('ring'));
+const yearNumbers = [1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20, 24];
+export const interludeScore = film({scenes: [
+  scene('first', {exit: fade(), lines: [
+    interlude('open', {start: {beat: 0}}, {rows: rings, enter: cascade(stamp({frames: 8}), {by: 'row', gap: 19})}),
+    line('hook', {from: row('open', 4), enter: typeWords, old: stay(),
+      reply: {from: row('hook', 1), enter: typeWords, size: 'body'}}),
+    ...yearNumbers.map((number, i) => interlude(`year-${number}`, {start: {beat: i + 7}}, {
+      rows: [{text: echo(`year ${number}`), size: 'body'}],
+      ...(i ? {from: row(`year-${yearNumbers[i - 1]}`, 1), enter: slotRoll({keep: 'YEAR'}), place: 'overlay' as const}
+        : {from: word('hook.reply', 'RING!'), enter: typeOn({gap: 0, fade: 1}), old: stay()}),
+    })),
+  ]}),
+  scene('final', {lines: [
+    interlude('last', {start: {beat: 20}}, {rows: rings, from: opening(), enter: cascade(stamp({frames: 8}), {by: 'row', clock: 19})}),
+    line('out', {from: row('last', 1), place: 'left', enter: typeWords, old: stay(),
+      reply: {from: row('out', 1), enter: typeWords, size: 'body'}}),
+    interlude('title', {start: {seconds: 560 / 30}}, {rows: [{text: echo('Room for One'), size: 'hero'}],
+      from: word('out.reply', 'ONE'), enter: matchCut({keep: 'ONE', pin: 'board'}), old: clear(fade()), ink: 'reply',
+      accents: [beatPunch('ONE')]}),
+  ]}),
+]});
+export const standingScore = film({scenes: [scene('stands', {lines: [
+  interlude('stand', {start: {beat: 1}}, {rows: rings, from: edge('B'), enter: turnIn({axis: 'x', pivot: 'bottom', frames: 14})}),
+]})]});
+export const echoCrossMap = fixtureSong([['sung', [['ONE', 84, 92]]]]);
+export const echoCrossScore = film({scenes: [
+  scene('echo', {exit: fade(), lines: [
+    interlude('one', {start: {seconds: 1}}, {rows: [echo('one')], enter: stamp({frames: 8})}),
+  ]}),
+  scene('vocal', {lines: [
+    line('sung', {from: word('one', 'ONE'), enter: matchCut({keep: 'ONE', pin: 'screen'}), preset: true}),
+  ]}),
+]});

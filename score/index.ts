@@ -67,8 +67,17 @@ export interface LineCard extends ReplyCard {
 }
 export interface Line {kind: 'line'; id: string; card: LineCard}
 export const line = (id: string, card: LineCard): Line => ({kind: 'line', id, card});
+export type InterludeStart = {beat: number; seconds?: never} | {seconds: number; beat?: never};
+export type EchoRow = Echo | (Omit<RowCard, 'text'> & {text: Echo | readonly Echo[]});
+export interface InterludeCard extends Pick<LineCard, 'from' | 'enter' | 'place' | 'size' | 'ink' | 'old' | 'camera' | 'accents'> {
+  rows: readonly EchoRow[];
+}
+export interface Interlude {kind: 'interlude'; id: string; start: InterludeStart; card: InterludeCard}
+/** Start the echo entrance on a song-clock second or a zero-based beat index from the song map. */
+export const interlude = (id: string, timing: {start: InterludeStart}, card: InterludeCard): Interlude =>
+  ({kind: 'interlude', id, start: timing.start, card});
 export interface Scene {
-  kind: 'scene'; id: string; ground?: string; lines: readonly Line[];
+  kind: 'scene'; id: string; ground?: string; lines: readonly (Line | Interlude)[];
   exit?: Exit; rules?: readonly RuleDef[];
 }
 export const scene = (id: string, card: Omit<Scene, 'kind' | 'id'>): Scene => ({kind: 'scene', id, ...card});

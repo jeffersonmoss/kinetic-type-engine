@@ -31,6 +31,7 @@ export interface Transition {
   readonly edge?: boolean;
   readonly cut?: boolean;
   readonly handoff?: boolean;
+  readonly interlude?: boolean;
 }
 export interface InspectionFrame {format: Format; frame: number; reason: string}
 export interface CompiledFilm {

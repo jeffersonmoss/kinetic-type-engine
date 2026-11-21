@@ -1,7 +1,7 @@
 import {cascade, fade, rise, type as typeOn} from '../effects';
 import {CONNECTIVES, type SongLine as EngineLine, type SongWord} from '../engine/config';
-import {clear, opening, portraitCard, row, type Entrance, type Film, type Format, type Ink, type LineCard,
-  type ReplyCard, type RowCard, type Scene, type Size} from '../score';
+import {clear, echo, opening, portraitCard, row, type Entrance, type Film, type Format, type Ink,
+  type Interlude, type LineCard, type ReplyCard, type RowCard, type Scene, type Size} from '../score';
 import {mapVocal, type OutputRange, type SongMap, type SongToken} from '../song';
 
 export interface Diagnostic {
@@ -15,6 +15,8 @@ export interface BoundBlock {
   id: string; card: ReplyCard & {from: NonNullable<ReplyCard['from']>; enter: Entrance};
   runs: Run[]; rows: BoundRow[]; auto: boolean; reply: boolean;
   camera?: LineCard['camera'];
+  /** Output frame of an instrumental entrance. */
+  start?: number;
 }
 export interface BoundLine {id: string; card: LineCard; lead: BoundBlock; blocks: BoundBlock[]}
 export interface BoundScene {scene: Scene; lines: BoundLine[]}
@@ -63,7 +65,7 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly 
     return ordered;
   }
 
-  function block(id: string, card: BoundBlock['card'], tokens: Vocal[], reply: boolean, phrase?: PhraseBinding): BoundBlock | undefined {
+  function block(id: string, card: BoundBlock['card'], tokens: Vocal[], reply: boolean, phrase?: PhraseBinding, echoStart?: number): BoundBlock | undefined {
     const auto = card.rows === undefined || card.rows === 'auto';
     const omitted = new Set<Vocal>();
     for (const ref of card.omit ?? []) {
@@ -131,7 +133,7 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly 
         }
         const run = {i: words.length, text, vocal, font, ink, emphasis: font !== 'anton' && font !== 'barlow',
           mixed: style.case === 'mixed', reason: style.reason};
-        const timing = vocal ?? active[0] ?? tokens[0];
+        const timing = echoStart === undefined ? vocal ?? active[0] ?? tokens[0] : {onset: echoStart, end: echoStart};
         if (!timing) fail(id, 'visual echoes require a sung line');
         words.push({text, start_s: timing.onset / fps, end_s: timing.end / fps, line: lines.length});
         runs.push(run);
@@ -142,7 +144,34 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly 
     const indices = runs.map(({i}) => i);
     lines.push({id: lines.length, text: runs.map(({text}) => text).join(' '), words: indices,
       start_s: Math.min(...indices.map((i) => words[i].start_s)), end_s: Math.max(...indices.map((i) => words[i].end_s))});
-    return {id, card, runs, rows: boundRows, auto, reply};
+    return {id, card, runs, rows: boundRows, auto, reply, start: echoStart};
+  }
+
+  function echoRows(item: Interlude): RowCard[] {
+    if (!Array.isArray(item.card.rows) || !item.card.rows.length) fail(item.id, 'an interlude needs echo rows');
+    return item.card.rows.map((entry) => {
+      if (!entry || typeof entry !== 'object') return fail(item.id, 'interlude rows must contain only echo()');
+      const spec = 'kind' in entry ? {text: entry} : entry;
+      const items = Array.isArray(spec.text) ? spec.text : [spec.text];
+      if (!items.length) fail(item.id, 'an interlude row needs echo text');
+      return {...spec, text: items.flatMap((itemText) => {
+        if (itemText?.kind !== 'echo' || typeof itemText.text !== 'string' || !itemText.text.trim()) {
+          return fail(item.id, 'interlude rows must contain only nonempty echo() text');
+        }
+        return itemText.text.trim().split(/\s+/u).map(echo);
+      })};
+    });
+  }
+
+  function echoFrame(item: Interlude) {
+    const {beat, seconds} = item.start ?? {};
+    if ((beat === undefined) === (seconds === undefined)) fail(item.id, 'choose one interlude start: beat or seconds');
+    if (beat !== undefined && (!Number.isSafeInteger(beat) || beat < 0)) fail(item.id, 'beat must be a zero-based song-map index');
+    const time = beat === undefined ? seconds : song.analysis.beats.find(({index}) => index === beat)?.t;
+    if (time === undefined || !Number.isFinite(time) || time < 0) {
+      return fail(item.id, beat === undefined ? 'start seconds must be finite and nonnegative' : `unknown song-map beat ${beat}`);
+    }
+    return mapVocal({start_s: time, end_s: time}, clock, fps)?.onset;
   }
 
   for (const [index, entry] of film.scenes.entries()) {
@@ -154,8 +183,34 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly 
     const bound: BoundLine[] = [];
     for (const [n, item] of entry.lines.entries()) {
       const id = item.id;
-      if (item.kind !== 'line' || seenLines.has(id)) fail(id, 'invalid or duplicate line ID');
+      if (!id?.trim() || seenLines.has(id)) fail(id, 'missing or duplicate score card ID');
       seenLines.add(id);
+      if (item.kind === 'interlude') {
+        if (songLines.has(id)) fail(id, 'an interlude ID must be distinct from sung line IDs');
+        if (['parts', 'reply', 'preset', 'omit', 'syllables'].some((field) => Object.hasOwn(item.card, field))) {
+          fail(id, 'an interlude cannot declare sung-voice fields');
+        }
+        const rows = echoRows(item);
+        const start = echoFrame(item);
+        if (start === undefined) continue;
+        const previous = bound.at(-1);
+        const card: LineCard = {...item.card, rows};
+        const from = card.from ?? (!previous && index === 0 ? opening() :
+          fallback(id, 'from', previous ? row(previous.lead.id, -1) : opening()));
+        const enter = card.enter ?? fallback(id, 'enter', typeOn({gap: 0, fade: 1}));
+        if (isUnit(enter) && (enter.cascade?.clock === 'sung' || enter.def.bindsRepeats)) {
+          fail(id, 'an interlude entrance cannot use sung timing or bind sung repeats');
+        }
+        if (previous?.lead.start !== undefined && start <= previous.lead.start) fail(id, 'interlude starts must advance in scene order');
+        if (!previous && card.old) fail(id, 'a scene opener cannot declare old');
+        if (previous && from.kind === 'opening') fail(id, 'opening() requires a scene opener');
+        if (previous && !card.old && !(isPair(enter) && enter.def.dismissesOld)) card.old = fallback(id, 'old', clear(fade()));
+        const lead = block(id, {...card, from, enter}, [], false, undefined, start)!;
+        lead.camera = card.camera;
+        bound.push({id, card, lead, blocks: [lead]});
+        continue;
+      }
+      if (item.kind !== 'line') fail(id, 'invalid score card');
       const record = songLines.get(id) ?? fail(id, 'no corresponding song-map line');
       const card = format === 'portrait' ? portraitCard(item.card) : {...item.card};
       const tokens = record.tokenIds.map((tokenId) => songTokens.get(tokenId) ?? fail(id, `unknown token ${tokenId}`));
@@ -171,7 +226,7 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly 
       const previous = bound.at(-1);
       const sceneOpener = n === 0 || !previous;
       const from = card.from ?? (sceneOpener && index === 0 ? opening() : fallback(id, 'from',
-        sceneOpener ? opening() : row(previous!.id, -1)));
+        sceneOpener ? opening() : row(previous!.lead.id, -1)));
       const enter = card.enter ?? fallback(id, 'enter', sceneOpener ? cascade(typeOn(), {by: 'word', clock: 'sung'}) : draftRise());
       if (sceneOpener && card.old) fail(id, 'a scene opener cannot declare old');
       if (!sceneOpener && !card.old && !(isPair(enter) && enter.def.dismissesOld)) card.old = fallback(id, 'old', clear(fade()));

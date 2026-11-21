@@ -80,7 +80,7 @@ export function lowerFates(ctx: EngineContext, scene: SceneWork, works: readonly
     const dismisses = isPair(enter) && enter.def.dismissesOld;
     const parts = scene.blocks.filter((work) => work.authored === old);
     const pastReading = Math.max(...parts.flatMap((work) => wordsOf(work).map((word) =>
-      intervals[word]?.end ?? (work.landingByWord.get(word) ?? work.landing) + 14))) + 1;
+      intervals[word]?.end ?? (work.landingByWord.get(word) ?? work.landing) + (work.item.start === undefined ? 14 : 0)))) + 1;
     for (const work of parts) {
       const kept = works.filter((using) => using.board === work.board && using.source.origin?.item === work.item)
         .flatMap((using) => using.kept ?? []);

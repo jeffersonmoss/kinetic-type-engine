@@ -31,7 +31,7 @@ export interface BlockWork extends Located {
 }
 
 export const spans = (schedule: readonly WordSchedule[]) => schedule.flatMap((w) => w.span ? [w.span] : w.glyphs!);
-export function targetsFor(work: BlockWork, fps: number): EffectTarget[] {
+export function targetsFor(work: BlockWork): EffectTarget[] {
   const layout = layoutBoard(work.board);
   const syllables = work.item.card.syllables;
   return work.item.runs.map(({i, text, vocal}) => {
@@ -41,6 +41,7 @@ export function targetsFor(work: BlockWork, fps: number): EffectTarget[] {
     let index = 0;
     const offset = split?.slice(0, split.findIndex((run) => run.i === i)).reduce((sum, run) => sum + [...run.text].length, 0) ?? 0;
     const count = [...text].length;
+    if (work.item.start !== undefined) return {word: i, row: g.row, glyphs: count};
     const sungFrame = vocal?.onset ?? g.sf;
     if (parts && key(parts.map((part) => part.text).join('')) !== key(vocal!.token.text)) {
       throw new Error(`${work.item.id}: syllables must spell ${vocal!.token.text}`);
@@ -114,7 +115,8 @@ export function setCamera(ctx: EngineContext, work: SceneWork, draft: boolean) {
   });
   const firstCall = first.item.camera;
   const hasAuthoredCamera = blocks.some((block) => block.item.camera);
-  const draftBoard = draft && !hasAuthoredCamera && blocks.every((block) => block.authored.blocks.filter((item) => !item.reply).length === 1) &&
+  const draftBoard = draft && !hasAuthoredCamera && blocks.every((block) => block.item.start === undefined &&
+    block.authored.blocks.filter((item) => !item.reply).length === 1) &&
     blocks.every((block) => block.item.card.from.kind === 'opening' || block.item.card.from.kind === 'row');
   board.rig = [];
   if (draftBoard) {
@@ -143,13 +145,14 @@ export function setCamera(ctx: EngineContext, work: SceneWork, draft: boolean) {
   const focus = firstReply ? {blocks: [first.index, firstReply.index]} : {block: first.index};
   board.rigStart = {frame: focus, rot: -firstAngle, zoom: 1};
   board.rig.push({t: board.start, kind: 'hold', still: true, frames: 0, to: board.rigStart});
-  if (firstCall) board.rig.push(...cameraKeys(firstCall, viewFor(first, firstAngle, Math.ceil(board.start * ctx.fps)), ctx));
+  if (firstCall) board.rig.push(...cameraKeys(firstCall,
+    viewFor(first, firstAngle, first.item.start ?? Math.ceil(board.start * ctx.fps)), ctx));
   let previousAngle = firstAngle;
   for (const work of blocks.slice(1)) {
-    if (work.item.reply || work.item !== work.authored.lead && !work.item.camera) continue;
+    if (work.item.reply || (work.item !== work.authored.lead || work.item.start !== undefined) && !work.item.camera) continue;
     const call = work.item.camera ?? follow();
     const predicted = Math.min(...work.item.runs.map((run) => run.vocal?.onset ?? Infinity));
-    const time = Math.max(Math.ceil(board.start * ctx.fps), predicted - call.def.duration(call.params, ctx));
+    const time = work.item.start ?? Math.max(Math.ceil(board.start * ctx.fps), predicted - call.def.duration(call.params, ctx));
     const other = blocks.find((block) => block.authored === work.authored && block.item.reply);
     const keys = cameraKeys(call, viewFor(work, previousAngle, time), ctx);
     for (const k of keys) {
@@ -170,8 +173,9 @@ export function setCamera(ctx: EngineContext, work: SceneWork, draft: boolean) {
 export function lowerEntrance(ctx: EngineContext, work: BlockWork, previous?: SceneWork) {
   const {board, item, source, scene} = work;
   const {enter} = item.card;
-  work.targets = targetsFor(work, ctx.fps);
-  const first = Math.min(...work.targets.map((target) => target.sungFrame!));
+  work.targets = targetsFor(work);
+  const echoStart = item.start;
+  const first = echoStart ?? Math.min(...work.targets.map((target) => target.sungFrame!));
   const block = board.blocks[work.index];
   const name = `${enter.name} · ${item.id}`;
   const add = (def: VerbDef) => scene.entries.push([name, def]);
@@ -187,8 +191,8 @@ export function lowerEntrance(ctx: EngineContext, work: BlockWork, previous?: Sc
     const until = Math.max(-Infinity, ...source.origin.item.runs.flatMap(({vocal}) =>
       vocal ? [vocal.end, vocal.onset + 14] : []));
     const lead = Math.ceil(span * (enter.def.release ?? 0.5));
-    const start = cross ? Math.round(board.start * ctx.fps)
-      : Math.max(first - lead, until + 1 - (enter.def.dismissesOld ? 0 : lead));
+    const start = echoStart ?? (cross ? Math.round(board.start * ctx.fps)
+      : Math.max(first - lead, until + 1 - (enter.def.dismissesOld ? 0 : lead)));
     const priorBoard = cross ? {...source.origin.board, end: (start + 1) / ctx.fps} : source.origin.board;
     const view = blockView(source.origin, priorBoard);
     const out = cross ? carrierView(view, source.origin, start, priorBoard) : view;
@@ -198,18 +202,18 @@ export function lowerEntrance(ctx: EngineContext, work: BlockWork, previous?: Sc
       throw new Error(`${item.id}: source landmark does not contain kept run "${enter.params.keep}"`);
     }
     const lowered = lowerPair(enter, ctx, {out, inc, at: start, keepFrom, carryIn: cross,
-      incoming: work.targets.map(({word, sungFrame}) => {
+      incoming: echoStart !== undefined ? undefined : work.targets.map(({word, sungFrame}) => {
         const end = Math.max(start + 1, sungFrame! + 3);
         return {word, start: Math.max(start, end - 6), end};
       })});
     work.kept = lowered.keptMask;
     work.start = start;
     work.release = cross ? start : Math.ceil(lowered.releaseFrame);
-    work.landing = Math.max(start + span, ...work.targets.map((target) => target.sungFrame! + 3));
+    work.landing = echoStart !== undefined ? start + span : Math.max(start + span, ...work.targets.map((target) => target.sungFrame! + 3));
     const keptWords = new Set(lowered.keptTargets.map(({word}) => word));
     const fullyKept = new Set(inc.units.filter((unit) => unit.glyphs.every((g) =>
       /^\s$/u.test(g.text) || lowered.keptTargets.some((ref) => ref.word === g.word && ref.index === g.index))).map(({word}) => word));
-    work.targets.forEach(({word, sungFrame}) => work.landingByWord.set(word, keptWords.has(word)
+    work.targets.forEach(({word, sungFrame}) => work.landingByWord.set(word, echoStart !== undefined ? work.landing : keptWords.has(word)
       ? Math.max(start + span, fullyKept.has(word) ? start : sungFrame! + 3) : Math.max(start + 1, sungFrame! + 3)));
     add(lowered.definition);
     block.emerge = {move: 'effect', name, from: cross ? {point: {x: 0, y: 0}, reason: 'screen-pinned scene handoff'} : source.anchor, at: at(start)};
@@ -219,20 +223,20 @@ export function lowerEntrance(ctx: EngineContext, work: BlockWork, previous?: Sc
   if (cross) throw new Error(`${item.id}: cross-scene landmarks require a screen-pinned transform`);
   if (!isUnit(enter)) {
     const def = lowerLegacy(enter, getVerb);
-    const start = first - (def.lead ?? 8);
+    const start = echoStart ?? first - (def.lead ?? 8);
+    const cue = echoStart === undefined ? start : start + (def.lead ?? 0);
     work.start = start;
-    work.release = first;
-    work.landing = first;
-    work.targets.forEach(({word}) => work.landingByWord.set(word, first));
-    add(def);
-    block.emerge = {move: 'effect', name, from: source.anchor, at: at(start), params: {...enter.params}};
+    work.release = work.landing = echoStart === undefined ? first : cue;
+    work.targets.forEach(({word}) => work.landingByWord.set(word, work.landing));
+    add(echoStart === undefined ? def : {...def, replacesEnter: true});
+    block.emerge = {move: 'effect', name, from: source.anchor, at: at(cue), params: {...enter.params}};
     return;
   }
   if (enter.def.kind !== 'enter') throw new Error(`${item.id}: ${enter.name} is not an entrance`);
   if (enter.def.source === 'edge' && !('edge' in source.anchor)) throw new Error(`${item.id}: ${enter.name} requires edge()`);
   const firstDuration = enter.def.span?.(work.targets[0].glyphs, enter.params, ctx) ?? enter.def.duration(enter.params, ctx);
   const lead = enter.def.source === 'edge' && !enter.cascade ? Math.min(firstDuration, 9) : firstDuration;
-  const schedule = scheduleUnit(enter, ctx, work.targets, first - lead);
+  const schedule = scheduleUnit(enter, ctx, work.targets, echoStart ?? first - lead);
   const ranges = spans(schedule);
   work.schedule = schedule;
   work.start = Math.min(...ranges.map((span) => span.start));
