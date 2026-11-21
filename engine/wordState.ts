@@ -340,6 +340,19 @@ export const wordStateAt = (board: Board, i: number, f: number): WordMod => {
   const L = layoutBoard(board);
   const w = L.words.get(i);
   if (!w) return {...IDENTITY, hidden: true, opacity: 0};
+  if (board.world) {
+    const word = board.world[i];
+    if (!word || f < word.set - 1e-6) return {...IDENTITY, hidden: true, opacity: 0};
+    if (word.burst === undefined || f < word.burst) return {...IDENTITY};
+    const camAt = (frame: number) => cameraAt(board, frame);
+    const at = word.burst / FPS;
+    const block = L.blocks[w.block];
+    const down = downIn(block.angle, camAt(word.burst).rot);
+    const cue: VerbCue = {name: 'tumble', word: i, at, params: {out: 2 * Math.hypot(WIDTH, HEIGHT), span: 8}};
+    const tumble = resolveVerb('tumble')!.modify!({cue, at, f, t: f / FPS, df: f - word.burst,
+      L, affected: [i], camAt, i, k: 0, geom: w, block, down});
+    return composeMod(IDENTITY, tumble, w.adv.length);
+  }
   const n = w.adv.length;
   const plan = wordCuePlans(board, L).get(i) ?? EMPTY_PLAN;
   const replaced = plan.replaced;

@@ -476,7 +476,18 @@ export interface CameraState {x: number; y: number; zoom: number; rot: number}
 /** Inclusive absolute frame bounds supplied by the compiler. */
 export interface ReadingInterval {readonly start: number; readonly end: number}
 
+export interface CanvasWord {
+  readonly set: number;
+  readonly sung: boolean;
+  readonly burst?: number;
+  readonly line: string;
+  readonly parent?: number;
+  readonly attachment: 'root' | 'baseline' | 'stack' | 'edge' | 'letter';
+  readonly letter?: number;
+}
 export interface Board {
+  /** Canvas words are revealed at their set frame and stay fixed for the life of the board. */
+  world?: Readonly<Partial<Record<number, CanvasWord>>>;
   /** Optional label for validator output. */
   id?: string;
   /** Motion blur for this board's type during rig transits (default true). false: every word is drawn once, sharp, at

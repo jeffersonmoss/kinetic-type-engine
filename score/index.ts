@@ -97,9 +97,43 @@ export interface StagePlan {
 }
 export type Stage = (board: Board, layout: BoardLayout, blocks: readonly StageBlock[], context: EngineContext) => StagePlan | void;
 
+export interface WorldAttachment {
+  kind: 'baseline' | 'stack' | 'edge' | 'letter';
+  /** Earlier song token ID. With no target, the solver chooses one. */
+  to?: string;
+  /** Right/left edge for a turn, or below/above for a stack or letter. */
+  side?: 'right' | 'left' | 'below' | 'above';
+  /** Zero-based glyph index on the host for a letter attachment. */
+  letter?: number;
+}
+export interface WorldWordOverride {
+  attachment?: WorldAttachment;
+  /** Cap height in world pixels. */
+  cap?: number;
+  /** Deliberately tumble the word's letters after its vocal ends. Delay is in seconds. */
+  burst?: {after?: number};
+  camera?: {
+    /** Target fraction of frame width, subject to the height limit. */
+    width?: number;
+    /** Horizontal scan distance as a fraction of frame width. */
+    pan?: number;
+    /** Requested duration of the incoming move in frames, fitted to available time. */
+    frames?: number;
+    /** Request or suppress a reveal after this token, time permitting. */
+    pullBack?: boolean;
+  };
+}
+export interface WorldOptions {
+  seed?: string | number;
+  /** Keys are stable song token IDs. */
+  words?: Readonly<Record<string, WorldWordOverride>>;
+}
+
 export interface Scene {
   kind: 'scene'; id: string; ground?: string; lines: readonly (Line | Interlude)[];
   exit?: Exit; rules?: readonly RuleDef[];
+  /** Set each word once on a continuous canvas and generate the camera path. */
+  world?: true | WorldOptions;
   /** Upper bound on a row's measured width in logical pixels. */
   rowWidth?: number;
   /** Motion style for the compiled board (e.g. 'crisp' for exact holds and discrete moves). */

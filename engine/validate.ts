@@ -1,3 +1,4 @@
+import {validateWorld} from './validateWorld';
 import {crispChecks} from './validateCrisp';
 import {readingSampler} from './reading';
 // validateBoard (rule 181): checks every frame of every word's reading interval. Pure; runs in node through
@@ -102,6 +103,7 @@ export const PICTURE_FRAMES = 15;
 export const PROP_CLEAR = WIDE_LIMITS.propClear;
 export const PROP_CLEAR_FRAMES = 15;
 export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardReport => {
+  if (board.world) return validateWorld(board);
   const step = board.readingIntervals ? 1 : opts.step ?? 1;
   const name = board.id ?? `board@${board.start.toFixed(2)}`;
   const L = layoutBoard(board);

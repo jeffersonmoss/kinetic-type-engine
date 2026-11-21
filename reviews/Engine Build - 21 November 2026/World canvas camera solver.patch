@@ -1,0 +1,870 @@
+diff --git a/compile/bind.ts b/compile/bind.ts
+index 7fa9e8f..98f7d39 100644
+--- a/compile/bind.ts
++++ b/compile/bind.ts
+@@ -182,7 +182,8 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly
+     seenScenes.add(entry.id);
+     if (entry.kind === 'raw') continue;
+     if (entry.kind !== 'scene' || !entry.lines?.length) fail(entry.id, 'scene needs at least one line');
+-    const resolved = {...entry, exit: entry.exit ?? (index < film.scenes.length - 1 && !entry.stage ? fallback(entry.id, 'exit', fade()) : undefined)};
++    const resolved = {...entry, exit: entry.exit ?? (index < film.scenes.length - 1 && !entry.stage && !entry.world ? fallback(entry.id, 'exit', fade()) : undefined)};
++    const worldDefault = <T>(id: string, field: string, value: T) => entry.world ? value : fallback(id, field, value);
+     const bound: BoundLine[] = [];
+     for (const [n, item] of entry.lines.entries()) {
+       const id = item.id;
+@@ -199,15 +200,15 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly
+         const previous = bound.at(-1);
+         const card: LineCard = {...item.card, rows};
+         const from = card.from ?? (!previous && index === 0 ? opening() :
+-          fallback(id, 'from', previous ? row(previous.lead.id, -1) : opening()));
+-        const enter = card.enter ?? fallback(id, 'enter', typeOn({gap: 0, fade: 1}));
++          worldDefault(id, 'from', previous ? row(previous.lead.id, -1) : opening()));
++        const enter = card.enter ?? worldDefault(id, 'enter', typeOn({gap: 0, fade: 1}));
+         if (isUnit(enter) && (enter.cascade?.clock === 'sung' || enter.def.bindsRepeats)) {
+           fail(id, 'an interlude entrance cannot use sung timing or bind sung repeats');
+         }
+         if (previous?.lead.start !== undefined && start <= previous.lead.start) fail(id, 'interlude starts must advance in scene order');
+         if (!previous && card.old) fail(id, 'a scene opener cannot declare old');
+         if (previous && from.kind === 'opening') fail(id, 'opening() requires a scene opener');
+-        if (previous && !entry.stage && !card.old && !(isPair(enter) && enter.def.dismissesOld)) card.old = fallback(id, 'old', clear(fade()));
++        if (previous && !entry.stage && !entry.world && !card.old && !(isPair(enter) && enter.def.dismissesOld)) card.old = fallback(id, 'old', clear(fade()));
+         const lead = block(id, {...card, from, enter}, [], false, undefined, start)!;
+         lead.camera = card.camera;
+         bound.push({id, card, lead, blocks: [lead]});
+@@ -233,11 +234,11 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly
+         ? vocals.filter(({token}) => token.role === 'adlib') : [];
+       const previous = bound.at(-1);
+       const sceneOpener = n === 0 || !previous;
+-      const from = card.from ?? (sceneOpener && index === 0 ? opening() : fallback(id, 'from',
++      const from = card.from ?? (sceneOpener && index === 0 ? opening() : worldDefault(id, 'from',
+         sceneOpener ? opening() : row(previous!.lead.id, -1)));
+-      const enter = card.enter ?? fallback(id, 'enter', sceneOpener ? cascade(typeOn(), {by: 'word', clock: 'sung'}) : draftRise());
++      const enter = card.enter ?? worldDefault(id, 'enter', sceneOpener ? cascade(typeOn(), {by: 'word', clock: 'sung'}) : draftRise());
+       if (sceneOpener && card.old) fail(id, 'a scene opener cannot declare old');
+-      if (!sceneOpener && !entry.stage && !card.old && !(isPair(enter) && enter.def.dismissesOld)) card.old = fallback(id, 'old', clear(fade()));
++      if (!sceneOpener && !entry.stage && !entry.world && !card.old && !(isPair(enter) && enter.def.dismissesOld)) card.old = fallback(id, 'old', clear(fade()));
+       if (!sceneOpener && from.kind === 'opening') fail(id, 'opening() requires a scene opener');
+       const parts = card.parts ?? [];
+       if (!Array.isArray(parts) || parts.length > 2 || [...parts].some((part) => !part)) fail(id, 'expected at most two ordered lead parts');
+@@ -259,9 +260,9 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly
+         parts.forEach((part, i) => {
+           const partId = `${id}.p${i + 1}`;
+           if (!part || !Array.isArray(part.rows)) return fail(partId, 'a part needs explicit rows');
+-          const from = part.from ?? fallback(partId, 'from', row(id, -1));
++          const from = part.from ?? worldDefault(partId, 'from', row(id, -1));
+           if (from.kind === 'opening') fail(partId, 'a part cannot use opening()');
+-          const enter = part.enter ?? fallback(partId, 'enter', draftRise());
++          const enter = part.enter ?? worldDefault(partId, 'enter', draftRise());
+           phrase.last = i === parts.length - 1;
+           add(block(partId, {...part, ink: part.ink ?? card.ink, from, enter, omit: undefined}, calls.map((vocal) =>
+             ({...vocal, preset: vocal.preset || presetFor(part, vocal.token)})), false, phrase), part.camera);
+@@ -273,10 +274,10 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly
+       }
+       let reply: BoundBlock | undefined;
+       const replyId = id + '.reply';
+-      if (replies.length && (card.reply || draft)) {
+-        const authored = card.reply ?? fallback<ReplyCard>(replyId, 'reply', {});
+-        const from = authored.from ?? fallback(replyId, 'from', row(id, -1));
+-        const enter = authored.enter ?? fallback(replyId, 'enter', draftRise());
++      if (replies.length && (card.reply || draft || entry.world)) {
++        const authored = card.reply ?? worldDefault<ReplyCard>(replyId, 'reply', {});
++        const from = authored.from ?? worldDefault(replyId, 'from', row(id, -1));
++        const enter = authored.enter ?? worldDefault(replyId, 'enter', draftRise());
+         const replyVocals = replies.map((vocal) => ({...vocal, preset: vocal.preset || presetFor(authored, vocal.token)}));
+         const replyOmitted = [...(authored.omit ?? []), ...(card.omit ?? []).filter((ref) => replies.some(({token}) => ref === token.id || key(ref) === key(token.text)))];
+         const allOmitted = replies.every(({token}) => replyOmitted.some((ref) => ref === token.id || key(ref) === key(token.text)));
+diff --git a/compile/index.ts b/compile/index.ts
+index eadf199..d884457 100644
+--- a/compile/index.ts
++++ b/compile/index.ts
+@@ -4,6 +4,8 @@ import {isPair, isUnit, bind, type Diagnostic} from './bind';
+ import {boundContext} from './defaults';
+ import {finalizeEffects, lowerEntrance, setCamera, type BlockWork, type SceneWork} from './entrance';
+ import {lowerFates} from './fates';
++import {layoutWorld} from './worldLayout';
++import {worldCamera} from './worldCamera';
+ import {placeBlock, sourceOf, type Located} from './place';
+ import {checkSource, inspect, readBoard} from './read';
+ import {editClock, mapVocal, type EditRange, type SongMap} from '../song';
+@@ -67,12 +69,19 @@ export function compileScore(base: EngineContext, film: Film, song: SongMap, opt
+     const transitions: Transition[] = [];
+     const accents: AccentSample[] = [];
+     const readings: TokenReading[] = [];
++    const worldReadings = new Map<Board, TokenReading[]>();
++    const knownTokens = new Map(song.tokens.map(({id, lineId}) => [id, lineId]));
+     const firstOf = (scene: typeof scenes[number]) => Math.min(...scene.lines[0].lead.runs.map((run) => run.vocal?.onset ?? Infinity));
+     const nominalEnd = (scene: typeof scenes[number]) => Math.max(...scene.lines.flatMap(({blocks}) =>
+       blocks.flatMap(({runs}) => runs.flatMap(({vocal}) => vocal ? [vocal.end, vocal.onset + 14] : []))));
+     const starts = scenes.map((scene, index) => {
+       const item = scene.lines[0].lead;
+       if (item.start !== undefined) return index === 0 && !('line' in item.card.from) ? 0 : item.start;
++      if (scene.scene.world) {
++        const earliest = Math.min(...scene.lines.flatMap(({blocks}) => blocks.map((block) =>
++          block.start ?? Math.min(...block.runs.map(({vocal}) => vocal?.onset ?? Infinity)))));
++        return index === 0 ? 0 : Math.max(0, earliest - Math.round(0.2 * ctx.fps));
++      }
+       const earliest = firstOf(scene);
+       const enter = item.card.enter;
+       const cross = 'line' in item.card.from;
+@@ -94,12 +103,46 @@ export function compileScore(base: EngineContext, film: Film, song: SongMap, opt
+         ...(scene.fadeToBlack ? {fadeToBlack: {...scene.fadeToBlack}} : {})};
+       const work: SceneWork = {board, lines, blocks: [], entries: []};
+       works.push(work);
++      if (scene.world) {
++        if (scene.stage || scene.exit) throw new Error(`${scene.id}: world scenes use their own staging and cut`);
++        const options = scene.world === true ? {} : scene.world;
++        const authoredLines = new Set(scene.lines.map(({id}) => id));
++        for (const [id, override] of Object.entries(options.words ?? {})) {
++          if (!authoredLines.has(knownTokens.get(id)!)) throw new Error(`${scene.id}: unknown world token "${id}"`);
++          if (override.attachment?.to && !authoredLines.has(knownTokens.get(override.attachment.to)!)) {
++            throw new Error(`${scene.id}: unknown world attachment host "${override.attachment.to}"`);
++          }
++        }
++        board.motionStyle = 'crisp';
++        const placed = layoutWorld(ctx, board, lines, ink, options);
++        const tokens = worldCamera(ctx, board, placed);
++        worldReadings.set(board, tokens);
++        const firstBlocks = new Map<import('./bind').BoundBlock, typeof placed[number]>();
++        for (const cue of placed) if (!firstBlocks.has(cue.item)) firstBlocks.set(cue.item, cue);
++        for (const [item, cue] of firstBlocks) {
++          const landing = tokens.find((token) => token.line === item.id)?.landing ?? cue.onset;
++          const block: BlockWork = {board, index: cue.index, item, source: {anchor: {word: cue.runs[0].i}},
++            scene: work, authored: cue.line, start: board.world![cue.runs[0].i]!.set, landing,
++            release: landing, targets: [], landingByWord: new Map()};
++          work.blocks.push(block);
++          byId.set(item.id, block);
++        }
++        for (const key of board.rig ?? []) {
++          const f = Math.round(key.t * ctx.fps);
++          accents.push({frame: f + Math.floor(key.frames! / 2), reason: `${scene.id} · ${key.label}`});
++        }
++        if (i) transitions.push({line: placed[0].item.id, board: scene.id, start, landing: start, release: start, cut: true});
++        continue;
++      }
+       for (const authored of lines) {
+         for (const item of authored.blocks) {
+           if (byId.has(item.id)) throw new Error(`${item.id}: duplicate block ID`);
+           let source;
+           try {source = sourceOf(board, item.card.from, byId);}
+           catch (error) {throw new Error(`${item.id}: ${(error as Error).message}`);}
++          if (source.origin?.board.world && isPair(item.card.enter)) {
++            throw new Error(`${item.id}: a paired transition cannot transfer ink out of a fixed world scene`);
++          }
+           if (source.origin?.board === board && work.blocks.length === 0) throw new Error(`${item.id}: opener cannot reference its own scene`);
+           if (item.card.from.kind === 'free') diagnostics.push({severity: 'warn', code: 'free-placement', line: item.id, message: item.card.from.reason});
+           const index = board.blocks.length;
+@@ -178,6 +221,17 @@ export function compileScore(base: EngineContext, film: Film, song: SongMap, opt
+     const allBlocks = works.flatMap((work) => work.blocks);
+     const boardsById = new Map<string, Board>();
+     for (const [i, work] of works.entries()) {
++      const worldTokens = worldReadings.get(work.board);
++      if (worldTokens) {
++        boardsById.set(work.board.id!, work.board);
++        readings.push(...worldTokens);
++        for (const block of work.blocks) {
++          const reading = worldTokens.find(({line}) => line === block.item.id);
++          lineIndex[block.item.id] = {scene: work.board.id!, block: block.index,
++            ...(reading ? {first: reading.interval!.start} : {}), landing: block.landing};
++        }
++        continue;
++      }
+       const exit = scenes[i].scene.exit;
+       let timing = readBoard(ctx, work.board, work.blocks).readings;
+       let board: Board;
+diff --git a/compile/place.ts b/compile/place.ts
+index 1ed4b59..c675d0f 100644
+--- a/compile/place.ts
++++ b/compile/place.ts
+@@ -95,6 +95,20 @@ export function sourceOf(board: Board, from: Landmark, byId: ReadonlyMap<string,
+   const layout = layoutBoard({...origin.board});
+   const block = layout.blocks[origin.index];
+   const world = (p: Pt) => blockToWorld(block, p);
++  if (from.kind === 'row' && origin.board.world) {
++    const row = from.row === -1 ? origin.item.rows.at(-1) : origin.item.rows[from.row - 1];
++    if (!row) throw new Error(`${from.line}: unknown row ${from.row}`);
++    const g = layout.words.get(row.runs[0].i)!;
++    const b = layout.blocks[g.block];
++    const point = blockToWorld(b, {x: g.x, y: g.baseline});
++    const box = bounds(row.runs.flatMap(({i}) => {
++      const word = layout.words.get(i)!;
++      return corners({x: word.x, y: word.y, width: word.w, height: word.boxH})
++        .map((p) => blockToWorld(layout.blocks[word.block], p));
++    }));
++    return {origin, runs: row.runs, anchor: {word: g.i, offset: {x: -g.w / 2, y: g.h / 2}},
++      box, baseline: point.y, point, angle: b.angle};
++  }
+   if (from.kind === 'row') {
+     const row = block.rows[from.row === -1 ? block.rows.length - 1 : from.row - 1];
+     if (!row) throw new Error(`${from.line}: unknown row ${from.row}`);
+@@ -131,12 +145,13 @@ export function sourceOf(board: Board, from: Landmark, byId: ReadonlyMap<string,
+   }
+   const quad = from.kind === 'glyph' ? resolved.quad! : runs.flatMap(({i}) => {
+     const g = layout.words.get(i)!;
+-    return corners({x: g.x, y: g.y, width: g.w, height: g.h}).map(world);
++    return corners({x: g.x, y: g.y, width: g.w, height: g.h}).map((p) => blockToWorld(layout.blocks[g.block], p));
+   });
+   const g = layout.words.get(anchor.word)!;
++  const anchorBlock = layout.blocks[g.block];
+   const counter = from.kind === 'glyph' && /^counter/u.test(from.part ?? '') ? {width: resolved.w!, height: resolved.h!} : undefined;
+-  return {origin, runs, anchor, point: resolved.p, box: bounds(quad), baseline: world({x: g.x, y: g.baseline}).y,
+-    angle: block.angle, counter};
++  return {origin, runs, anchor, point: resolved.p, box: bounds(quad), baseline: blockToWorld(anchorBlock, {x: g.x, y: g.baseline}).y,
++    angle: anchorBlock.angle, counter};
+ }
+ 
+ export function placeBlock(ctx: EngineContext, board: Board, item: BoundBlock, source: Source, ink: Readonly<Record<Ink, string>>, rowWidthLimit?: number): Block {
+diff --git a/engine/rig.ts b/engine/rig.ts
+index 0596ff6..4f7bfb3 100644
+--- a/engine/rig.ts
++++ b/engine/rig.ts
+@@ -183,8 +183,8 @@ const resolve = (board: Board): RigCache => {
+     let need = Math.ceil((8 * dRot) / 90 - 1e-9);
+     if (changes && k.kind !== 'hold') need = Math.max(need, 6);
+     let stretchedFrom: number | undefined;
+-    if (frames < need) { stretchedFrom = frames; frames = need; }
+-    if (k.kind === 'hold' && changes && frames < 6) { stretchedFrom = frames; frames = 6; }
++    if (!board.world && frames < need) { stretchedFrom = frames; frames = need; }
++    if (!board.world && k.kind === 'hold' && changes && frames < 6) { stretchedFrom = frames; frames = 6; }
+     let pivot: Pt | null = centre;
+     if (k.about) pivot = resolveAnchor(L, k.about, t).p;
+     targets.push({target, pivot, dur: frames, stretchedFrom});
+diff --git a/engine/smearSampling.ts b/engine/smearSampling.ts
+index 385a946..4aa7884 100644
+--- a/engine/smearSampling.ts
++++ b/engine/smearSampling.ts
+@@ -61,7 +61,7 @@ export const smearWordPass = (board: Board, i: number, sf: number, f: number, st
+   // board.smearType false: no blur for type; a word shown at f is drawn once, sharp (grounds and graphics still blur)
+   if (board.smearType === false) return shown(state(f)) ? 'sharp' : 'none';
+   const reading = board.readingIntervals?.[i];
+-  if (reading ? f >= reading.start && f <= reading.end : f >= sf + 3 && f < retireFrame(board, i)) return 'sharp';
++  if (reading ? f >= reading.start && f <= reading.end : !board.world && f >= sf + 3 && f < retireFrame(board, i)) return 'sharp';
+   const now = state(f), early = state(f - SMEAR_SPAN);
+   // a word in a 3D turn (in, out or turnSwap, KIT 89) is never smeared, whatever the board's smear settings (Fable
+   // ruling, 18 November 2026: no motion blur on any 3D turn): drawn once, sharp, at the frame's own time, and no trail
+diff --git a/engine/types.ts b/engine/types.ts
+index 213ed9b..d554713 100644
+--- a/engine/types.ts
++++ b/engine/types.ts
+@@ -476,7 +476,18 @@ export interface CameraState {x: number; y: number; zoom: number; rot: number}
+ /** Inclusive absolute frame bounds supplied by the compiler. */
+ export interface ReadingInterval {readonly start: number; readonly end: number}
+ 
++export interface CanvasWord {
++  readonly set: number;
++  readonly sung: boolean;
++  readonly burst?: number;
++  readonly line: string;
++  readonly parent?: number;
++  readonly attachment: 'root' | 'baseline' | 'stack' | 'edge' | 'letter';
++  readonly letter?: number;
++}
+ export interface Board {
++  /** Canvas words are revealed at their set frame and stay fixed for the life of the board. */
++  world?: Readonly<Partial<Record<number, CanvasWord>>>;
+   /** Optional label for validator output. */
+   id?: string;
+   /** Motion blur for this board's type during rig transits (default true). false: every word is drawn once, sharp, at
+diff --git a/engine/validate.ts b/engine/validate.ts
+index 6addfa3..1041bdd 100644
+--- a/engine/validate.ts
++++ b/engine/validate.ts
+@@ -1,3 +1,4 @@
++import {validateWorld} from './validateWorld';
+ import {crispChecks} from './validateCrisp';
+ import {readingSampler} from './reading';
+ // validateBoard (rule 181): checks every frame of every word's reading interval. Pure; runs in node through
+@@ -102,6 +103,7 @@ export const PICTURE_FRAMES = 15;
+ export const PROP_CLEAR = WIDE_LIMITS.propClear;
+ export const PROP_CLEAR_FRAMES = 15;
+ export const validateBoard = (board: Board, opts: {step?: number} = {}): BoardReport => {
++  if (board.world) return validateWorld(board);
+   const step = board.readingIntervals ? 1 : opts.step ?? 1;
+   const name = board.id ?? `board@${board.start.toFixed(2)}`;
+   const L = layoutBoard(board);
+diff --git a/engine/wordState.ts b/engine/wordState.ts
+index 70c6a2b..d410556 100644
+--- a/engine/wordState.ts
++++ b/engine/wordState.ts
+@@ -340,6 +340,19 @@ export const wordStateAt = (board: Board, i: number, f: number): WordMod => {
+   const L = layoutBoard(board);
+   const w = L.words.get(i);
+   if (!w) return {...IDENTITY, hidden: true, opacity: 0};
++  if (board.world) {
++    const word = board.world[i];
++    if (!word || f < word.set - 1e-6) return {...IDENTITY, hidden: true, opacity: 0};
++    if (word.burst === undefined || f < word.burst) return {...IDENTITY};
++    const camAt = (frame: number) => cameraAt(board, frame);
++    const at = word.burst / FPS;
++    const block = L.blocks[w.block];
++    const down = downIn(block.angle, camAt(word.burst).rot);
++    const cue: VerbCue = {name: 'tumble', word: i, at, params: {out: 2 * Math.hypot(WIDTH, HEIGHT), span: 8}};
++    const tumble = resolveVerb('tumble')!.modify!({cue, at, f, t: f / FPS, df: f - word.burst,
++      L, affected: [i], camAt, i, k: 0, geom: w, block, down});
++    return composeMod(IDENTITY, tumble, w.adv.length);
++  }
+   const n = w.adv.length;
+   const plan = wordCuePlans(board, L).get(i) ?? EMPTY_PLAN;
+   const replaced = plan.replaced;
+diff --git a/score/index.ts b/score/index.ts
+index 4ab4ef0..0d7bcf7 100644
+--- a/score/index.ts
++++ b/score/index.ts
+@@ -97,9 +97,43 @@ export interface StagePlan {
+ }
+ export type Stage = (board: Board, layout: BoardLayout, blocks: readonly StageBlock[], context: EngineContext) => StagePlan | void;
+ 
++export interface WorldAttachment {
++  kind: 'baseline' | 'stack' | 'edge' | 'letter';
++  /** Earlier song token ID. With no target, the solver chooses one. */
++  to?: string;
++  /** Right/left edge for a turn, or below/above for a stack or letter. */
++  side?: 'right' | 'left' | 'below' | 'above';
++  /** Zero-based glyph index on the host for a letter attachment. */
++  letter?: number;
++}
++export interface WorldWordOverride {
++  attachment?: WorldAttachment;
++  /** Cap height in world pixels. */
++  cap?: number;
++  /** Deliberately tumble the word's letters after its vocal ends. Delay is in seconds. */
++  burst?: {after?: number};
++  camera?: {
++    /** Target fraction of frame width, subject to the height limit. */
++    width?: number;
++    /** Horizontal scan distance as a fraction of frame width. */
++    pan?: number;
++    /** Requested duration of the incoming move in frames, fitted to available time. */
++    frames?: number;
++    /** Request or suppress a reveal after this token, time permitting. */
++    pullBack?: boolean;
++  };
++}
++export interface WorldOptions {
++  seed?: string | number;
++  /** Keys are stable song token IDs. */
++  words?: Readonly<Record<string, WorldWordOverride>>;
++}
++
+ export interface Scene {
+   kind: 'scene'; id: string; ground?: string; lines: readonly (Line | Interlude)[];
+   exit?: Exit; rules?: readonly RuleDef[];
++  /** Set each word once on a continuous canvas and generate the camera path. */
++  world?: true | WorldOptions;
+   /** Upper bound on a row's measured width in logical pixels. */
+   rowWidth?: number;
+   /** Motion style for the compiled board (e.g. 'crisp' for exact holds and discrete moves). */
+diff --git a/compile/worldCamera.ts b/compile/worldCamera.ts
+new file mode 100644
+index 0000000..63e9885
+--- /dev/null
++++ b/compile/worldCamera.ts
+@@ -0,0 +1,146 @@
++import type {EngineContext} from '../context';
++import {bounds, corners} from '../effects/geometry';
++import {add, clamp, normDeg, rot} from '../engine/util';
++import type {Board, CameraState, ReadingInterval, RigKey, CanvasWord} from '../engine/types';
++import type {TokenReading} from './types';
++import {boxUnion, centre, type PlacedCue} from './worldLayout';
++
++interface Shot {
++  focus: PlacedCue;
++  cues: PlacedCue[];
++  onset: number;
++  ready: number;
++  moveStart: number;
++  kind: 'track' | 'whip';
++  readEnd: number;
++  pose: CameraState;
++  scan: number;
++  pullBack: boolean;
++}
++
++export function worldCamera(ctx: EngineContext, board: Board, placed: readonly PlacedCue[]): TokenReading[] {
++  const {fps, format: {width, height}} = ctx;
++  const start = Math.round(board.start * fps), end = Math.round(board.end * fps);
++  const seconds = (n: number) => Math.round(n * fps);
++  const shots: Shot[] = [];
++  const byOnset = new Map<number, PlacedCue[]>();
++  for (const cue of placed) {
++    if (cue.onset >= end) throw new Error(`${cue.item.id}: world word starts outside scene ${board.id}`);
++    const group = byOnset.get(cue.onset) ?? [];
++    group.push(cue);
++    byOnset.set(cue.onset, group);
++  }
++  for (const [onset, cues] of byOnset) {
++    const sung = cues.filter(({runs}) => runs[0].vocal);
++    const focus = (sung.length ? sung : cues)[0];
++    const previous = shots.at(-1);
++    const camera = focus.override?.camera;
++    if (camera?.width !== undefined && (!Number.isFinite(camera.width) || camera.width <= 0 || camera.width > 1.1)
++        || camera?.pan !== undefined && (!Number.isFinite(camera.pan) || Math.abs(camera.pan) > 0.25)
++        || camera?.frames !== undefined && (!Number.isSafeInteger(camera.frames) || camera.frames < 1)) {
++      throw new Error(`${focus.item.id}: invalid world camera beat for "${focus.runs[0].text}"`);
++    }
++    const priorRoll = previous?.pose.rot ?? 0;
++    const roll = priorRoll + normDeg(-focus.at.angle - priorRoll);
++    const sameLine = previous?.focus.line === focus.line;
++    const kind = sameLine && roll === priorRoll ? 'track' : 'whip';
++    const vocal = focus.runs[0].vocal;
++    const wantedReady = onset - (vocal?.preset ? seconds(0.2) : 0);
++    const ready = Math.min(onset, Math.max(start, wantedReady, (previous?.onset ?? start - 2) + 2));
++    const previousVocal = previous?.focus.runs[0].vocal;
++    const previousEnd = previousVocal ? Math.min(previousVocal.end, ready) : previous?.onset ?? start;
++    const relinquish = previousVocal ? Math.min(seconds(0.20), Math.floor((previousEnd - previousVocal.onset) * 0.42)) : 0;
++    const availableFrom = previous ? Math.min(ready - 1, Math.max(previous.onset + 1, previousEnd - relinquish)) : start;
++    const moveStart = Math.max(availableFrom, ready - (camera?.frames ?? seconds(kind === 'whip' ? 0.30 : 0.22)));
++    const framed = sung.length ? sung : cues;
++    const box = bounds(framed.flatMap(({box}) => corners(box).map((p) => rot(p, roll))));
++    const duration = vocal ? (vocal.end - vocal.onset) / fps : 0;
++    const widthTarget = focus.small ? 0.70 : duration >= 0.48 ? 1.07 : 0.94;
++    const target = camera?.width ?? (vocal ? widthTarget : 0.76);
++    const zoom = Math.min(target * width / box.width, 0.90 * height / box.height);
++    const ratio = box.width * zoom / width;
++    // When the word is wide, keep at least 87% of its box on-screen at each end of the scan.
++    const allowed = Math.max(0, Math.min((1 - 0.74 * ratio) / 2, 0.19));
++    const scan = clamp((camera?.pan ?? (duration >= 0.47 && ratio >= 0.75 ? 0.18 : 0)) / 2, -allowed, allowed) * width / zoom;
++    const mid = centre(box);
++    const host = focus.parent && rot(centre(focus.parent.box), roll);
++    const bias = host && scan === 0 && framed.length === 1 ? {
++      x: clamp((host.x - mid.x) * zoom, -0.08 * width, 0.08 * width) / zoom,
++      y: clamp((host.y - mid.y) * zoom, -(height - box.height * zoom) / 2, (height - box.height * zoom) / 2) / zoom,
++    } : {x: 0, y: 0};
++    const p = rot(add(mid, bias), -roll);
++    const pose = {...p, zoom, rot: roll};
++    shots.push({focus, cues, onset, ready, moveStart, kind, readEnd: onset, pose, scan, pullBack: false});
++    if (previous) previous.readEnd = moveStart;
++  }
++  if (!shots.length) return [];
++  shots.at(-1)!.readEnd = end - 1;
++
++  const lastShotByLine = new Map(shots.filter((shot) => shot.cues.some(({runs}) => runs[0].vocal))
++    .map((shot) => [shot.focus.line, shot]));
++  const lines = [...lastShotByLine.values()].sort((a, b) => a.onset - b.onset);
++  for (const [i, shot] of lines.entries()) {
++    shot.pullBack = (i + 1) % 2 === 0;
++  }
++  for (const shot of shots) {
++    shot.pullBack = shot.focus.override?.camera?.pullBack ?? shot.pullBack;
++  }
++
++  const rig: RigKey[] = [];
++  const world: Record<number, CanvasWord> = {};
++  const readings: TokenReading[] = [];
++  const addMove = (at: number, until: number, kind: RigKey['kind'], to: CameraState, label: string, joint?: PlacedCue['joint']) => {
++    if (until > at) rig.push({t: at / fps, frames: until - at, kind, to, label,
++      ...(joint ? {about: {point: joint}} : {})});
++  };
++  const offset = (shot: Shot, direction: number): CameraState => ({
++    ...shot.pose, ...add(shot.pose, rot({x: direction * shot.scan, y: 0}, -shot.pose.rot)),
++  });
++  for (const [i, shot] of shots.entries()) {
++    const {focus, cues, kind, onset, ready, moveStart, pose} = shot;
++    const following = shots[i + 1];
++    const vocals = cues.flatMap((cue) => cue.runs[0].vocal ? [cue.runs[0].vocal] : []);
++    const vocalEnd = Math.max(onset, ...vocals.map(({end}) => end));
++    const readEnd = Math.min(shot.readEnd, vocalEnd);
++    const scan = shot.scan !== 0 && readEnd - ready >= seconds(0.30);
++    const arrival = scan ? offset(shot, -1) : pose;
++    if (!i) board.rigStart = arrival;
++    else addMove(moveStart, ready, kind, arrival, `${kind} to ${focus.runs[0].text}`, kind === 'whip' ? focus.joint : undefined);
++    if (scan) addMove(ready, readEnd, 'track', offset(shot, 1), `scan ${focus.runs[0].text}`);
++    for (const cue of cues) {
++      const {runs, parent, glyph, attachment} = cue;
++      const vocal = runs[0].vocal;
++      const set = vocal ? (i ? moveStart : start) : onset;
++      const after = cue.override?.burst?.after;
++      if (after !== undefined && (!Number.isFinite(after) || after < 0)) {
++        throw new Error(`${cue.item.id}: burst delay needs non-negative seconds`);
++      }
++      const burst = vocal && cue.override?.burst ? Math.max(vocal.end, onset) + 1 + seconds(after ?? 0) : undefined;
++      for (const [k, {i: word}] of runs.entries()) {
++        world[word] = {set, sung: !!runs[0].vocal, line: cue.line.id,
++          attachment: k ? 'baseline' : attachment, parent: k ? runs[k - 1].i : glyph?.word ?? parent?.runs.at(-1)!.i,
++          ...(glyph && !k ? {letter: glyph.index} : {}), ...(burst === undefined ? {} : {burst})};
++      }
++      if (!vocal) continue;
++      const interval: ReadingInterval = {start: ready, end: Math.max(ready, Math.min(shot.readEnd, vocal.end))};
++      readings.push({token: vocal.token.id, line: cue.item.id, text: vocal.token.text, board: board.id!,
++        words: runs.map(({i}) => i), onset: vocal.onset, vocalEnd: vocal.end, preset: vocal.preset, landing: ready, interval});
++    }
++    const revealWindow = shot.readEnd - vocalEnd;
++    if (shot.pullBack && revealWindow >= seconds(0.26)) {
++      const whole = boxUnion(placed.slice(0, cues.at(-1)!.index + 1).map(({box}) => box));
++      const wideBox = bounds(corners(whole).map((p) => rot(p, pose.rot)));
++      const wideZoom = Math.min(width * 0.9 / wideBox.width, height * 0.87 / wideBox.height);
++      if (wideZoom < pose.zoom * 0.79) {
++        const reveal = {...centre(whole), rot: pose.rot, zoom: wideZoom};
++        addMove(vocalEnd, vocalEnd + Math.min(seconds(0.32), revealWindow - 2), 'soar', reveal, 'reveal the canvas');
++        // The next incoming move supplies the push-in. A scene-end reveal holds through the cut.
++        if (following) following.kind = 'whip';
++      }
++    }
++  }
++  board.world = world;
++  board.rig = rig;
++  board.readingIntervals = Object.fromEntries(readings.flatMap(({words, interval}) => words.map((word) => [word, interval])));
++  return readings;
++}
+diff --git a/compile/worldLayout.ts b/compile/worldLayout.ts
+new file mode 100644
+index 0000000..846aa3e
+--- /dev/null
++++ b/compile/worldLayout.ts
+@@ -0,0 +1,226 @@
++import type {EngineContext} from '../context';
++import {bounds, corners, unitOf} from '../effects/geometry';
++import type {Box} from '../effects/define';
++import {CONNECTIVES, FONT_INFO} from '../engine/config';
++import {layoutBlock} from '../engine/layout';
++import {worldWordBox} from '../engine/worldGeometry';
++import type {Block, Board, Pt, CanvasWord, WordGeom} from '../engine/types';
++import {add, clamp, len, normDeg, rand, rot, sub} from '../engine/util';
++import type {Ink, WorldAttachment, WorldOptions, WorldWordOverride} from '../score';
++import {isUnit, key, type BoundBlock, type BoundLine, type Run} from './bind';
++
++const shortWords = new Set([...CONNECTIVES, 'ON', 'HIS', 'HE', 'NOT', 'MORE'].map(key));
++type Attachment = WorldAttachment['kind'];
++const attachments: readonly Attachment[] = ['baseline', 'stack', 'edge', 'letter'];
++const right = (b: Box) => b.x + b.width;
++const bottom = (b: Box) => b.y + b.height;
++export const centre = (b: Box): Pt => ({x: b.x + b.width / 2, y: b.y + b.height / 2});
++export function boxUnion([first, ...rest]: readonly Box[]): Box {
++  let {x, y} = first;
++  let x1 = right(first), y1 = bottom(first);
++  for (const box of rest) {
++    x = Math.min(x, box.x);
++    y = Math.min(y, box.y);
++    x1 = Math.max(x1, right(box));
++    y1 = Math.max(y1, bottom(box));
++  }
++  return {x, y, width: x1 - x, height: y1 - y};
++}
++const overlaps = (a: Box, b: Box) => Math.min(right(a), right(b)) - Math.max(a.x, b.x) > 1e-6
++  && Math.min(bottom(a), bottom(b)) - Math.max(a.y, b.y) > 1e-6;
++
++export interface WorldCue {
++  item: BoundBlock;
++  line: BoundLine;
++  runs: Run[];
++  onset: number;
++  cap: number;
++  small: boolean;
++  override?: WorldWordOverride;
++}
++export interface PlacedCue extends WorldCue {
++  index: number;
++  local: Box;
++  box: Box;
++  at: Pt & {angle: number};
++  words: WordGeom[];
++  attachment: CanvasWord['attachment'];
++  parent?: PlacedCue;
++  joint?: Pt;
++  glyph?: {word: number; index: number};
++}
++
++
++function collect(ctx: EngineContext, lines: readonly BoundLine[], options: WorldOptions): WorldCue[] {
++  const cues: WorldCue[] = [];
++  for (const line of lines) for (const item of line.blocks) {
++    const entrance = item.card.enter;
++    const cascade = isUnit(entrance) ? entrance.cascade : undefined;
++    const gap = item.start === undefined ? 0 : cascade?.gap ?? Math.round(ctx.fps * 0.24);
++    const blockCues = new Map<string, WorldCue>();
++    let tick = 0;
++    for (const [rowIndex, {runs, size}] of item.rows.entries()) for (const run of runs) {
++      const {vocal} = run;
++      const id = vocal?.token.id ?? String(run.i);
++      const existing = blockCues.get(id);
++      if (existing) {
++        existing.runs.push(run);
++        continue;
++      }
++      const override = vocal && Object.hasOwn(options.words ?? {}, id) ? options.words![id] : undefined;
++      const small = !!vocal && shortWords.has(key(vocal.token.text));
++      const seconds = vocal ? (vocal.end - vocal.onset) / ctx.fps : 0;
++      const stress = vocal?.syllables?.some(({stress}) => stress === 1) ? 1.1 : 1;
++      const base = typeof size === 'number' ? size : ctx.limits.capTiers[size];
++      const cap = override?.cap ?? (vocal
++        ? base * clamp(Math.sqrt(seconds / 0.36), 0.7, 1.5) * (small ? 0.58 : stress)
++        : base);
++      if (!Number.isFinite(cap) || cap <= 0) throw new Error(`${item.id}: invalid world cap for "${run.text}"`);
++      const onset = vocal?.onset ?? (item.start !== undefined
++        ? item.start + gap * (cascade?.by === 'row' ? rowIndex : tick)
++        : (item.runs.slice(0, item.runs.indexOf(run)).reverse().find((prior) => prior.vocal) ?? item.runs.find((next) => next.vocal))!.vocal!.onset);
++      blockCues.set(id, {item, line, runs: [run], onset, cap, small, override});
++      tick++;
++    }
++    cues.push(...blockCues.values());
++  }
++  return cues.sort((a, b) => a.onset - b.onset || a.runs[0].i - b.runs[0].i);
++}
++
++type Candidate = Pick<PlacedCue, 'at' | 'attachment' | 'joint' | 'glyph' | 'box'>;
++function candidates(host: PlacedCue, shape: Box, baseline: number, cap: number, kind: Attachment, spec?: WorldAttachment): Candidate[] {
++  const p = host.local;
++  const gap = clamp(Math.min(cap, host.cap) * 0.085, 2, 16);
++  // Build in the parent's reading axes. A rotated rectangle is aligned by its bounds.
++  const result: Candidate[] = [];
++  const put = (x: number, y: number, turn: number, joint: Pt, glyph?: Candidate['glyph']) => {
++    const rotated = bounds(corners(shape).map((q) => rot(q, turn)));
++    const origin = add(host.at, rot({x: x - rotated.x, y: y - rotated.y}, host.at.angle));
++    const angle = normDeg(host.at.angle + turn);
++    const at = {...origin, angle};
++    result.push({at, box: bounds(corners(shape).map((q) => add(at, rot(q, angle)))),
++      attachment: kind, joint: add(host.at, rot(joint, host.at.angle)), glyph});
++  };
++  if (kind === 'baseline') {
++    const y = host.words[0].baseline;
++    put(right(p) + gap, y + shape.y - baseline, 0, {x: right(p), y});
++  }
++  if (kind === 'stack') {
++    if (!spec?.side || spec.side === 'below') put(p.x, bottom(p) + gap, 0, {x: p.x, y: bottom(p)});
++    if (!spec?.side || spec.side === 'above') put(p.x, p.y - shape.height - gap, 0, {x: p.x, y: p.y});
++  }
++  if (kind === 'edge') {
++    for (const side of ['right', 'left'] as const) {
++      if (spec?.side && side !== spec.side) continue;
++      const x = side === 'right' ? right(p) : p.x;
++      for (const turn of [90, -90]) for (const y of [p.y, bottom(p) - shape.width]) {
++        put(x + (side === 'right' ? gap : -gap - shape.height), y, turn, {x, y: clamp(y, p.y, bottom(p))});
++      }
++    }
++  }
++  if (kind === 'letter') {
++    const glyphs = host.words.flatMap((word) => unitOf(word).glyphs);
++    for (const [index, glyph] of glyphs.entries()) {
++      if (!/[\p{L}\p{N}]/u.test(glyph.text) || (spec?.letter !== undefined && spec.letter !== index)) continue;
++      if (!spec && (cap > host.cap * 0.72 || shape.width > glyph.box.width * 1.55)) continue;
++      const x = centre(glyph.box).x;
++      const mark = {word: glyph.word, index: glyph.index};
++      if (!spec?.side || spec.side === 'below') put(x - shape.width / 2, bottom(p) + gap, 0, {x, y: bottom(p)}, mark);
++      if (!spec?.side || spec.side === 'above') put(x - shape.width / 2, p.y - shape.height - gap, 0, {x, y: p.y}, mark);
++    }
++  }
++  return result;
++}
++
++export function layoutWorld(ctx: EngineContext, board: Board, lines: readonly BoundLine[], ink: Readonly<Record<Ink, string>>,
++  options: WorldOptions): PlacedCue[] {
++  const cues = collect(ctx, lines, options);
++  const placed: PlacedCue[] = [];
++  const ids = new Map<string, PlacedCue>();
++  const activeTokens = new Set(cues.flatMap(({runs}) => runs[0].vocal ? [runs[0].vocal.token.id] : []));
++  // An edit may omit a token with an override. The caller validates keys against the full song.
++  const lineAngles = new Map<BoundLine, Set<number>>();
++  let envelope: Box | undefined;
++  for (const [index, cue] of cues.entries()) {
++    const {runs, cap, override, line} = cue;
++    for (const {font, text} of runs) {
++      if (!FONT_INFO[font]) throw new Error(`${cue.item.id}: unknown font "${font}"`);
++      const missing = [...text].find((ch) => !/\s/u.test(ch) && !Object.hasOwn(FONT_INFO[font].table, ch));
++      if (missing) throw new Error(`${cue.item.id}: font ${font} has no measured glyph "${missing}" in "${text}"`);
++    }
++    const def: Block = {words: [runs[0].i, runs.at(-1)!.i], attach: 'NEW', cap,
++      style: Object.fromEntries(runs.map(({i, text, font, ink: role}) => [i,
++        {text, font, colour: ink[role], preserveCase: true, tier: 2}]))};
++    if (def.words[1] - def.words[0] + 1 !== runs.length) {
++      throw new Error(`${cue.item.id}: split world token "${runs[0].vocal?.token.text}" must have contiguous display words`);
++    }
++    const geometry = layoutBlock(def, index, board);
++    const local = boxUnion(geometry.words.map(worldWordBox));
++    const previous = placed.at(-1);
++    const authoredAttachment = override?.attachment;
++    const spec = authoredAttachment?.to && !activeTokens.has(authoredAttachment.to) ? undefined : authoredAttachment;
++    let chosen: Candidate = {at: {x: 0, y: 0, angle: 0}, box: local, attachment: 'root'};
++    let parent: PlacedCue | undefined;
++    if (previous) {
++      const oldVocal = previous.runs[0].vocal;
++      const newVocal = runs[0].vocal;
++      const angles = lineAngles.get(line);
++      const firstOfLine = !!newVocal && !angles;
++      const lastInLine = !!newVocal && !cues.slice(index + 1).some((next) => next.line === line && next.runs[0].vocal);
++      const simultaneous = cue.onset === previous.onset && !!oldVocal && !!newVocal;
++      const forceTurn = !spec && !simultaneous && (firstOfLine || (lastInLine && angles?.size === 1));
++      const phraseTurn = !!newVocal && cue.item !== previous.item
++        && cue.onset - (oldVocal?.end ?? previous.onset) >= Math.round(ctx.fps * 0.17);
++      const nest = cue.small && previous.cap >= cap * 1.6 && rand(options.seed ?? board.id!, index, 'nest') < 0.8;
++      const preferTurn = phraseTurn || nest;
++      const prior = placed.at(-2);
++      const repeat = prior?.attachment === previous.attachment ? previous.attachment : undefined;
++      const target = spec?.to ? ids.get(spec.to) : undefined;
++      if (spec?.to && !target && activeTokens.has(spec.to)) throw new Error(`${line.id}: world attachment must name an earlier token (${spec.to})`);
++      let best = Infinity;
++      const worldCentre = centre(envelope!);
++      const parentPool = target ? [target] : placed;
++      const scale = Math.max(90, previous.cap, cap);
++      const sameRow = cue.item === previous.item && cue.item.rows.some(({runs: row}) =>
++        row.includes(runs[0]) && row.includes(previous.runs[0]));
++      for (const host of parentPool) for (const kind of spec ? [spec.kind] : attachments) {
++        if (!spec && kind === repeat) continue;
++        for (const candidate of candidates(host, local, geometry.words[0].baseline, cap, kind, spec)) {
++          const turn = candidate.at.angle !== previous.at.angle;
++          if (forceTurn && (!turn || angles?.has(candidate.at.angle))) continue;
++          if (!spec && simultaneous && turn) continue;
++          const combined = boxUnion([envelope!, candidate.box]);
++          const area = Math.sqrt(combined.width * combined.height);
++          const travel = len(sub(centre(candidate.box), centre(previous.box)));
++          const distance = len(sub(centre(candidate.box), worldCentre));
++          const score = (area + 0.32 * Math.max(combined.width, combined.height) + 0.18 * distance + 0.43 * travel) / scale
++            + (preferTurn ? (turn ? 0 : 2.5) : (turn ? 2.4 : 0))
++            + (cue.small && kind === 'letter' ? -0.9 : 0)
++            + (host === previous ? -1.15 : 0)
++            + (sameRow && kind === 'baseline' && host === previous ? -1.7 : 0)
++            + 0.19 * rand(options.seed ?? board.id!, index, host.index, kind, candidate.at.x, candidate.at.y);
++          if (score < best && !placed.some(({box}) => overlaps(box, candidate.box))) {
++            best = score;
++            chosen = candidate;
++            parent = host;
++          }
++        }
++      }
++      if (!parent) throw new Error(`${line.id}: no collision-free ${spec?.kind ?? 'world'} attachment for "${runs[0].text}"`);
++    } else if (spec) {
++      throw new Error(`${line.id}: the first world word has no earlier attachment host`);
++    }
++    def.at = chosen.at;
++    const item: PlacedCue = {...cue, ...chosen, index, local, words: geometry.words, parent};
++    placed.push(item);
++    envelope = envelope ? boxUnion([envelope, item.box]) : item.box;
++    if (runs[0].vocal) {
++      ids.set(runs[0].vocal.token.id, item);
++      const angles = lineAngles.get(line) ?? new Set<number>();
++      angles.add(item.at.angle);
++      lineAngles.set(line, angles);
++    }
++    board.blocks.push(def);
++  }
++  return placed;
++}
+diff --git a/engine/validateWorld.ts b/engine/validateWorld.ts
+new file mode 100644
+index 0000000..7332cb1
+--- /dev/null
++++ b/engine/validateWorld.ts
+@@ -0,0 +1,111 @@
++import {bounds, corners} from '../effects/geometry';
++import {cameraAt, toScreen} from './camera';
++import {FPS, HEIGHT, WIDTH} from './config';
++import {blockToWorld, layoutBoard} from './layout';
++import {frameArea, MIN_READING_COVERAGE, readingGlyphs, wordCoverage} from './reading';
++import {rigMoves} from './rig';
++import type {Board} from './types';
++import {clipConvex, normDeg, polyArea} from './util';
++import type {BoardReport, Violation} from './validate';
++import {wordStateAt} from './wordState';
++import {worldWordBox} from './worldGeometry';
++
++export function validateWorld(board: Board): BoardReport {
++  const name = board.id ?? `board@${board.start.toFixed(2)}`;
++  const layout = layoutBoard(board);
++  const start = Math.ceil(board.start * FPS - 1e-6);
++  const end = Math.ceil(board.end * FPS - 1e-6);
++  const screen = corners({x: 0, y: 0, width: WIDTH, height: HEIGHT});
++  const violations: Violation[] = [];
++  const seen = new Set<string>();
++  const report = (rule: string, detail: string, word?: number, from?: number, to?: number) => {
++    const key = `${rule}:${word ?? '-'}`;
++    if (seen.has(key)) return;
++    seen.add(key);
++    violations.push({board: name, rule, severity: 'error', detail, word, from, to});
++  };
++  const words = layout.blocks.flatMap((block) => block.words.map((g) => {
++    const w = board.world![g.i];
++    const shape = corners(worldWordBox(g)).map((p) => blockToWorld(block, p));
++    const interval = board.readingIntervals?.[g.i];
++    if (!w || !Number.isSafeInteger(w.set) || w.set < start || w.set >= end) {
++      report('world-set', `"${g.text}" has no set frame within the scene`, g.i);
++    }
++    if (Math.abs(normDeg(block.angle - 90 * Math.round(block.angle / 90))) > 1e-6) {
++      report('world-angle', `"${g.text}" is off the world quarter-turn grid`, g.i);
++    }
++    if (w?.sung && (!interval || interval.start < start || interval.end < interval.start || interval.end >= end
++      || interval.start > g.sf || interval.end < g.sf)) {
++      report('world-reading', `"${g.text}" requires a protected reading containing its sung onset`, g.i, g.sf);
++    }
++    if (w?.burst !== undefined && (!Number.isSafeInteger(w.burst) || w.burst <= (interval?.end ?? w.set))) {
++      report('world-burst', `"${g.text}" must stay fixed through its protected reading`, g.i, w.burst);
++    }
++    if (w && w.attachment !== 'root') {
++      const parent = w.parent !== undefined ? board.world![w.parent] : undefined;
++      if (!parent || parent.set > w.set) report('world-attachment', `"${g.text}" has no earlier canvas host`, g.i, w.set);
++    }
++    return {g, w, angle: block.angle, shape, box: bounds(shape), interval};
++  }));
++  for (const [i, {g, box, w}] of words.entries()) for (const other of words.slice(0, i)) {
++    const b = other.box;
++    if (Math.min(box.x + box.width, b.x + b.width) - Math.max(box.x, b.x) > 1e-5
++      && Math.min(box.y + box.height, b.y + b.height) - Math.max(box.y, b.y) > 1e-5) {
++      report('world-overlap', `"${g.text}" overlaps "${other.g.text}" in world space`, g.i, w?.set);
++    }
++  }
++  const moves = rigMoves(board);
++  if (board.motionStyle !== 'crisp') report('world-camera', 'world camera holds must be crisp');
++  for (const [i, move] of moves.entries()) {
++    if (move.start < start - 1e-6 || move.start + move.dur > end + 1e-6
++      || (i > 0 && moves[i - 1].start + moves[i - 1].dur > move.start + 1e-6)
++      || move.driftRot || move.driftZoom) {
++      report('world-camera', 'camera beats overlap or lack crisp motion and holds', undefined, move.start);
++    }
++  }
++
++  let empty: number | undefined;
++  for (let f = start; f < end; f++) {
++    const cam = cameraAt(board, f);
++    const visible = words.flatMap(({g, w, shape, angle, interval}) => {
++      const state = wordStateAt(board, g.i, f);
++      const bursting = w?.burst !== undefined && f >= w.burst;
++      if (w && f >= w.set && !bursting && (state.hidden || state.opacity !== 1 || state.dx || state.dy || state.rot
++        || state.sx !== 1 || state.sy !== 1 || state.skewY || state.turn || state.letters || state.clip)) {
++        report('world-motion', `"${g.text}" changed after it was set`, g.i, f);
++      }
++      const reading = !!interval && f >= interval.start && f <= interval.end;
++      if (state.hidden || state.opacity <= 0.05) {
++        if (reading) report('world-reading', `"${g.text}" has no ink in its protected reading`, g.i, f);
++        return [];
++      }
++      const glyphs = bursting ? readingGlyphs(board, g, f, state, layout, cam).filter(({opacity}) => opacity > 0.05) : undefined;
++      const quad = shape.map((p) => toScreen(cam, p));
++      const clipped = (glyphs?.map(({quad: part}) => part) ?? [quad]).map((part) => clipConvex(part, screen));
++      const area = clipped.reduce((sum, part) => sum + polyArea(part), 0);
++      if (reading) {
++        const roll = Math.abs(normDeg(cam.rot + angle + state.rot));
++        if (roll > 5 + 1e-6) report('world-upright', `"${g.text}" reads at ${roll.toFixed(1)}°`, g.i, f);
++        const coverage = glyphs ? wordCoverage(glyphs, screen) : area / polyArea(quad);
++        if (coverage < MIN_READING_COVERAGE - 1e-6) {
++          report('world-coverage', `"${g.text}" has only ${(coverage * 100).toFixed(1)}% on screen`, g.i, f);
++        }
++      }
++      return area > 1 ? [{g, clipped, reading}] : [];
++    });
++    for (const {g, clipped, reading} of visible) {
++      if (reading && visible.some((other) => other.g !== g
++        && clipped.some((part) => part.length >= 3 && other.clipped.some((over) => over.length >= 3 && frameArea(part, over) > 1e-4)))) {
++        report('world-reading-overlap', `"${g.text}" is overlapped in its protected reading`, g.i, f);
++      }
++    }
++    if (visible.length) empty = undefined;
++    else {
++      empty ??= f;
++      if (f - empty + 1 > Math.round(FPS * 0.3)) {
++        report('world-empty', 'canvas has no visible type for more than 0.3 seconds', undefined, empty, f);
++      }
++    }
++  }
++  return {board: name, violations, lines: []};
++}
+diff --git a/engine/worldGeometry.ts b/engine/worldGeometry.ts
+new file mode 100644
+index 0000000..8f38d9c
+--- /dev/null
++++ b/engine/worldGeometry.ts
+@@ -0,0 +1,8 @@
++import {FONT_INFO} from './config';
++import type {WordGeom} from './types';
++
++export function worldWordBox(g: WordGeom) {
++  const info = FONT_INFO[g.font];
++  const top = Math.max(0, info.asc - info.cap) * g.size;
++  return {x: g.x, y: g.y - top, width: g.w, height: g.boxH + top};
++}

@@ -182,7 +182,8 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly 
     seenScenes.add(entry.id);
     if (entry.kind === 'raw') continue;
     if (entry.kind !== 'scene' || !entry.lines?.length) fail(entry.id, 'scene needs at least one line');
-    const resolved = {...entry, exit: entry.exit ?? (index < film.scenes.length - 1 && !entry.stage ? fallback(entry.id, 'exit', fade()) : undefined)};
+    const resolved = {...entry, exit: entry.exit ?? (index < film.scenes.length - 1 && !entry.stage && !entry.world ? fallback(entry.id, 'exit', fade()) : undefined)};
+    const worldDefault = <T>(id: string, field: string, value: T) => entry.world ? value : fallback(id, field, value);
     const bound: BoundLine[] = [];
     for (const [n, item] of entry.lines.entries()) {
       const id = item.id;
@@ -199,15 +200,15 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly 
         const previous = bound.at(-1);
         const card: LineCard = {...item.card, rows};
         const from = card.from ?? (!previous && index === 0 ? opening() :
-          fallback(id, 'from', previous ? row(previous.lead.id, -1) : opening()));
-        const enter = card.enter ?? fallback(id, 'enter', typeOn({gap: 0, fade: 1}));
+          worldDefault(id, 'from', previous ? row(previous.lead.id, -1) : opening()));
+        const enter = card.enter ?? worldDefault(id, 'enter', typeOn({gap: 0, fade: 1}));
         if (isUnit(enter) && (enter.cascade?.clock === 'sung' || enter.def.bindsRepeats)) {
           fail(id, 'an interlude entrance cannot use sung timing or bind sung repeats');
         }
         if (previous?.lead.start !== undefined && start <= previous.lead.start) fail(id, 'interlude starts must advance in scene order');
         if (!previous && card.old) fail(id, 'a scene opener cannot declare old');
         if (previous && from.kind === 'opening') fail(id, 'opening() requires a scene opener');
-        if (previous && !entry.stage && !card.old && !(isPair(enter) && enter.def.dismissesOld)) card.old = fallback(id, 'old', clear(fade()));
+        if (previous && !entry.stage && !entry.world && !card.old && !(isPair(enter) && enter.def.dismissesOld)) card.old = fallback(id, 'old', clear(fade()));
         const lead = block(id, {...card, from, enter}, [], false, undefined, start)!;
         lead.camera = card.camera;
         bound.push({id, card, lead, blocks: [lead]});
@@ -233,11 +234,11 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly 
         ? vocals.filter(({token}) => token.role === 'adlib') : [];
       const previous = bound.at(-1);
       const sceneOpener = n === 0 || !previous;
-      const from = card.from ?? (sceneOpener && index === 0 ? opening() : fallback(id, 'from',
+      const from = card.from ?? (sceneOpener && index === 0 ? opening() : worldDefault(id, 'from',
         sceneOpener ? opening() : row(previous!.lead.id, -1)));
-      const enter = card.enter ?? fallback(id, 'enter', sceneOpener ? cascade(typeOn(), {by: 'word', clock: 'sung'}) : draftRise());
+      const enter = card.enter ?? worldDefault(id, 'enter', sceneOpener ? cascade(typeOn(), {by: 'word', clock: 'sung'}) : draftRise());
       if (sceneOpener && card.old) fail(id, 'a scene opener cannot declare old');
-      if (!sceneOpener && !entry.stage && !card.old && !(isPair(enter) && enter.def.dismissesOld)) card.old = fallback(id, 'old', clear(fade()));
+      if (!sceneOpener && !entry.stage && !entry.world && !card.old && !(isPair(enter) && enter.def.dismissesOld)) card.old = fallback(id, 'old', clear(fade()));
       if (!sceneOpener && from.kind === 'opening') fail(id, 'opening() requires a scene opener');
       const parts = card.parts ?? [];
       if (!Array.isArray(parts) || parts.length > 2 || [...parts].some((part) => !part)) fail(id, 'expected at most two ordered lead parts');
@@ -259,9 +260,9 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly 
         parts.forEach((part, i) => {
           const partId = `${id}.p${i + 1}`;
           if (!part || !Array.isArray(part.rows)) return fail(partId, 'a part needs explicit rows');
-          const from = part.from ?? fallback(partId, 'from', row(id, -1));
+          const from = part.from ?? worldDefault(partId, 'from', row(id, -1));
           if (from.kind === 'opening') fail(partId, 'a part cannot use opening()');
-          const enter = part.enter ?? fallback(partId, 'enter', draftRise());
+          const enter = part.enter ?? worldDefault(partId, 'enter', draftRise());
           phrase.last = i === parts.length - 1;
           add(block(partId, {...part, ink: part.ink ?? card.ink, from, enter, omit: undefined}, calls.map((vocal) =>
             ({...vocal, preset: vocal.preset || presetFor(part, vocal.token)})), false, phrase), part.camera);
@@ -273,10 +274,10 @@ export function bind(film: Film, song: SongMap, format: Format, clock: readonly 
       }
       let reply: BoundBlock | undefined;
       const replyId = id + '.reply';
-      if (replies.length && (card.reply || draft)) {
-        const authored = card.reply ?? fallback<ReplyCard>(replyId, 'reply', {});
-        const from = authored.from ?? fallback(replyId, 'from', row(id, -1));
-        const enter = authored.enter ?? fallback(replyId, 'enter', draftRise());
+      if (replies.length && (card.reply || draft || entry.world)) {
+        const authored = card.reply ?? worldDefault<ReplyCard>(replyId, 'reply', {});
+        const from = authored.from ?? worldDefault(replyId, 'from', row(id, -1));
+        const enter = authored.enter ?? worldDefault(replyId, 'enter', draftRise());
         const replyVocals = replies.map((vocal) => ({...vocal, preset: vocal.preset || presetFor(authored, vocal.token)}));
         const replyOmitted = [...(authored.omit ?? []), ...(card.omit ?? []).filter((ref) => replies.some(({token}) => ref === token.id || key(ref) === key(token.text)))];
         const allOmitted = replies.every(({token}) => replyOmitted.some((ref) => ref === token.id || key(ref) === key(token.text)));

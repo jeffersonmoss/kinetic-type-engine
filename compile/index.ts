@@ -4,6 +4,8 @@ import {isPair, isUnit, bind, type Diagnostic} from './bind';
 import {boundContext} from './defaults';
 import {finalizeEffects, lowerEntrance, setCamera, type BlockWork, type SceneWork} from './entrance';
 import {lowerFates} from './fates';
+import {layoutWorld} from './worldLayout';
+import {worldCamera} from './worldCamera';
 import {placeBlock, sourceOf, type Located} from './place';
 import {checkSource, inspect, readBoard} from './read';
 import {editClock, mapVocal, type EditRange, type SongMap} from '../song';
@@ -67,12 +69,19 @@ export function compileScore(base: EngineContext, film: Film, song: SongMap, opt
     const transitions: Transition[] = [];
     const accents: AccentSample[] = [];
     const readings: TokenReading[] = [];
+    const worldReadings = new Map<Board, TokenReading[]>();
+    const knownTokens = new Map(song.tokens.map(({id, lineId}) => [id, lineId]));
     const firstOf = (scene: typeof scenes[number]) => Math.min(...scene.lines[0].lead.runs.map((run) => run.vocal?.onset ?? Infinity));
     const nominalEnd = (scene: typeof scenes[number]) => Math.max(...scene.lines.flatMap(({blocks}) =>
       blocks.flatMap(({runs}) => runs.flatMap(({vocal}) => vocal ? [vocal.end, vocal.onset + 14] : []))));
     const starts = scenes.map((scene, index) => {
       const item = scene.lines[0].lead;
       if (item.start !== undefined) return index === 0 && !('line' in item.card.from) ? 0 : item.start;
+      if (scene.scene.world) {
+        const earliest = Math.min(...scene.lines.flatMap(({blocks}) => blocks.map((block) =>
+          block.start ?? Math.min(...block.runs.map(({vocal}) => vocal?.onset ?? Infinity)))));
+        return index === 0 ? 0 : Math.max(0, earliest - Math.round(0.2 * ctx.fps));
+      }
       const earliest = firstOf(scene);
       const enter = item.card.enter;
       const cross = 'line' in item.card.from;
@@ -94,12 +103,46 @@ export function compileScore(base: EngineContext, film: Film, song: SongMap, opt
         ...(scene.fadeToBlack ? {fadeToBlack: {...scene.fadeToBlack}} : {})};
       const work: SceneWork = {board, lines, blocks: [], entries: []};
       works.push(work);
+      if (scene.world) {
+        if (scene.stage || scene.exit) throw new Error(`${scene.id}: world scenes use their own staging and cut`);
+        const options = scene.world === true ? {} : scene.world;
+        const authoredLines = new Set(scene.lines.map(({id}) => id));
+        for (const [id, override] of Object.entries(options.words ?? {})) {
+          if (!authoredLines.has(knownTokens.get(id)!)) throw new Error(`${scene.id}: unknown world token "${id}"`);
+          if (override.attachment?.to && !authoredLines.has(knownTokens.get(override.attachment.to)!)) {
+            throw new Error(`${scene.id}: unknown world attachment host "${override.attachment.to}"`);
+          }
+        }
+        board.motionStyle = 'crisp';
+        const placed = layoutWorld(ctx, board, lines, ink, options);
+        const tokens = worldCamera(ctx, board, placed);
+        worldReadings.set(board, tokens);
+        const firstBlocks = new Map<import('./bind').BoundBlock, typeof placed[number]>();
+        for (const cue of placed) if (!firstBlocks.has(cue.item)) firstBlocks.set(cue.item, cue);
+        for (const [item, cue] of firstBlocks) {
+          const landing = tokens.find((token) => token.line === item.id)?.landing ?? cue.onset;
+          const block: BlockWork = {board, index: cue.index, item, source: {anchor: {word: cue.runs[0].i}},
+            scene: work, authored: cue.line, start: board.world![cue.runs[0].i]!.set, landing,
+            release: landing, targets: [], landingByWord: new Map()};
+          work.blocks.push(block);
+          byId.set(item.id, block);
+        }
+        for (const key of board.rig ?? []) {
+          const f = Math.round(key.t * ctx.fps);
+          accents.push({frame: f + Math.floor(key.frames! / 2), reason: `${scene.id} · ${key.label}`});
+        }
+        if (i) transitions.push({line: placed[0].item.id, board: scene.id, start, landing: start, release: start, cut: true});
+        continue;
+      }
       for (const authored of lines) {
         for (const item of authored.blocks) {
           if (byId.has(item.id)) throw new Error(`${item.id}: duplicate block ID`);
           let source;
           try {source = sourceOf(board, item.card.from, byId);}
           catch (error) {throw new Error(`${item.id}: ${(error as Error).message}`);}
+          if (source.origin?.board.world && isPair(item.card.enter)) {
+            throw new Error(`${item.id}: a paired transition cannot transfer ink out of a fixed world scene`);
+          }
           if (source.origin?.board === board && work.blocks.length === 0) throw new Error(`${item.id}: opener cannot reference its own scene`);
           if (item.card.from.kind === 'free') diagnostics.push({severity: 'warn', code: 'free-placement', line: item.id, message: item.card.from.reason});
           const index = board.blocks.length;
@@ -178,6 +221,17 @@ export function compileScore(base: EngineContext, film: Film, song: SongMap, opt
     const allBlocks = works.flatMap((work) => work.blocks);
     const boardsById = new Map<string, Board>();
     for (const [i, work] of works.entries()) {
+      const worldTokens = worldReadings.get(work.board);
+      if (worldTokens) {
+        boardsById.set(work.board.id!, work.board);
+        readings.push(...worldTokens);
+        for (const block of work.blocks) {
+          const reading = worldTokens.find(({line}) => line === block.item.id);
+          lineIndex[block.item.id] = {scene: work.board.id!, block: block.index,
+            ...(reading ? {first: reading.interval!.start} : {}), landing: block.landing};
+        }
+        continue;
+      }
       const exit = scenes[i].scene.exit;
       let timing = readBoard(ctx, work.board, work.blocks).readings;
       let board: Board;

@@ -183,8 +183,8 @@ const resolve = (board: Board): RigCache => {
     let need = Math.ceil((8 * dRot) / 90 - 1e-9);
     if (changes && k.kind !== 'hold') need = Math.max(need, 6);
     let stretchedFrom: number | undefined;
-    if (frames < need) { stretchedFrom = frames; frames = need; }
-    if (k.kind === 'hold' && changes && frames < 6) { stretchedFrom = frames; frames = 6; }
+    if (!board.world && frames < need) { stretchedFrom = frames; frames = need; }
+    if (!board.world && k.kind === 'hold' && changes && frames < 6) { stretchedFrom = frames; frames = 6; }
     let pivot: Pt | null = centre;
     if (k.about) pivot = resolveAnchor(L, k.about, t).p;
     targets.push({target, pivot, dur: frames, stretchedFrom});

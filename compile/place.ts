@@ -95,6 +95,20 @@ export function sourceOf(board: Board, from: Landmark, byId: ReadonlyMap<string,
   const layout = layoutBoard({...origin.board});
   const block = layout.blocks[origin.index];
   const world = (p: Pt) => blockToWorld(block, p);
+  if (from.kind === 'row' && origin.board.world) {
+    const row = from.row === -1 ? origin.item.rows.at(-1) : origin.item.rows[from.row - 1];
+    if (!row) throw new Error(`${from.line}: unknown row ${from.row}`);
+    const g = layout.words.get(row.runs[0].i)!;
+    const b = layout.blocks[g.block];
+    const point = blockToWorld(b, {x: g.x, y: g.baseline});
+    const box = bounds(row.runs.flatMap(({i}) => {
+      const word = layout.words.get(i)!;
+      return corners({x: word.x, y: word.y, width: word.w, height: word.boxH})
+        .map((p) => blockToWorld(layout.blocks[word.block], p));
+    }));
+    return {origin, runs: row.runs, anchor: {word: g.i, offset: {x: -g.w / 2, y: g.h / 2}},
+      box, baseline: point.y, point, angle: b.angle};
+  }
   if (from.kind === 'row') {
     const row = block.rows[from.row === -1 ? block.rows.length - 1 : from.row - 1];
     if (!row) throw new Error(`${from.line}: unknown row ${from.row}`);
@@ -131,12 +145,13 @@ export function sourceOf(board: Board, from: Landmark, byId: ReadonlyMap<string,
   }
   const quad = from.kind === 'glyph' ? resolved.quad! : runs.flatMap(({i}) => {
     const g = layout.words.get(i)!;
-    return corners({x: g.x, y: g.y, width: g.w, height: g.h}).map(world);
+    return corners({x: g.x, y: g.y, width: g.w, height: g.h}).map((p) => blockToWorld(layout.blocks[g.block], p));
   });
   const g = layout.words.get(anchor.word)!;
+  const anchorBlock = layout.blocks[g.block];
   const counter = from.kind === 'glyph' && /^counter/u.test(from.part ?? '') ? {width: resolved.w!, height: resolved.h!} : undefined;
-  return {origin, runs, anchor, point: resolved.p, box: bounds(quad), baseline: world({x: g.x, y: g.baseline}).y,
-    angle: block.angle, counter};
+  return {origin, runs, anchor, point: resolved.p, box: bounds(quad), baseline: blockToWorld(anchorBlock, {x: g.x, y: g.baseline}).y,
+    angle: anchorBlock.angle, counter};
 }
 
 export function placeBlock(ctx: EngineContext, board: Board, item: BoundBlock, source: Source, ink: Readonly<Record<Ink, string>>, rowWidthLimit?: number): Block {
