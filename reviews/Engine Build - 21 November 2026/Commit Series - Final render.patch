@@ -1,0 +1,102 @@
+From 4d564cf0d960a6101e1adde943acfb5a1dd22300 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sat, 21 Nov 2026 12:00:00 -0600
+Subject: [PATCH 1/1] Render the full wide film with kte render --final
+
+Select the host's full-size wide composition and render the whole edit as
+H.264 with AAC audio. Reject draft flags and section ranges in final mode.
+Require a fully authored score and stop on compiler errors before starting
+the browser. Preserve the draft and inspection render paths.
+
+---
+ cli/main.ts   | 12 ++++++++----
+ cli/render.ts | 30 +++++++++++++++++++++++-------
+ 2 files changed, 31 insertions(+), 11 deletions(-)
+
+diff --git a/cli/main.ts b/cli/main.ts
+index ce978222d6f7ed73794a46902b51da6909b99db0..bdb49a0d272ea2ad18611c850c6576db96ea90f4 100644
+--- a/cli/main.ts
++++ b/cli/main.ts
+@@ -3,13 +3,14 @@ import {checkCommand} from './check';
+ import {compileFolder, readFilm} from './film';
+ import {ingest, ingestUsage} from './ingest';
+ import {createFilm, newUsage} from './new';
+-import {renderDraft, sectionFrames, sheet} from './render';
++import {renderFilm, sectionFrames, sheet} from './render';
+ import type {Runtime} from './runtime';
+ 
+ const usage = `${newUsage}
+ ${ingestUsage}
+ kte check [film-folder] [--format wide|portrait]
+ kte render [film-folder] --draft [--section scene-id] [--format wide|portrait] [--output path]
++kte render [film-folder] --final [--format wide] [--output path]
+ kte sheet [film-folder] [--format wide|portrait]
+ kte where TIME [film-folder] [--format wide|portrait] [--section scene-id]`;
+ 
+@@ -29,7 +30,7 @@ export async function run([command, ...args]: string[], runtime: Runtime) {
+     const {values, positionals} = parseArgs({args, allowPositionals: true, options: {
+       format: {type: 'string'}, help: {type: 'boolean', short: 'h'}, film: {type: 'string'},
+       ...(command === 'render' || command === 'where' ? {section: {type: 'string' as const}} : {}),
+-      ...(command === 'render' ? {draft: {type: 'boolean' as const}, output: {type: 'string' as const}} : {}),
++      ...(command === 'render' ? {draft: {type: 'boolean' as const}, final: {type: 'boolean' as const}, output: {type: 'string' as const}} : {}),
+     }});
+     if (values.help) {console.log(usage); return;}
+     const where = command === 'where';
+@@ -40,8 +41,11 @@ export async function run([command, ...args]: string[], runtime: Runtime) {
+     if (command === 'check') await checkCommand(folder, format, runtime);
+     else if (command === 'sheet') await sheet(folder, format, runtime);
+     else if (command === 'render') {
+-      if (!values.draft) throw new Error('The pilot render command requires --draft');
+-      await renderDraft(folder, format, str('section'), str('output'), runtime);
++      if (Boolean(values.draft) === Boolean(values.final)) throw new Error('Choose exactly one of --draft and --final');
++      const section = str('section');
++      if (values.final && section !== undefined) throw new Error('--final renders the full film and does not accept --section');
++      if (values.final && format !== undefined && format !== 'wide') throw new Error('--final requires the wide format');
++      await renderFilm(folder, {mode: values.final ? 'final' : 'draft', format, section, output: str('output')}, runtime);
+     } else {
+       const input = readFilm(folder, format ?? 'wide');
+       const [{film}] = await compileFolder(runtime, input);
+diff --git a/cli/render.ts b/cli/render.ts
+index f38ccc326ffb2d9ddaea01d11138f157587b4797..6df6c42e192bf072e4ab2282e49f249850e1512b 100644
+--- a/cli/render.ts
++++ b/cli/render.ts
+@@ -70,16 +70,32 @@ async function withBrowser<T>(runtime: Runtime, folder: FilmFolder, action: (set
+   });
+ }
+ 
+-export async function renderDraft(folder: string, format: string | undefined, section: string | undefined,
+-  output: string | undefined, runtime: Runtime) {
++interface RenderOptions {
++  mode: 'draft' | 'final';
++  format?: string;
++  section?: string;
++  output?: string;
++}
++
++export async function renderFilm(folder: string, {mode, format, section, output}: RenderOptions, runtime: Runtime) {
++  const draft = mode === 'draft';
+   const input = readFilm(folder, format ?? 'wide');
++  input.options.draft = draft;
+   const [{film}] = await compileFolder(runtime, input);
+-  const frameRange = sectionFrames(film, section);
+-  const path = output ? resolve(output) : join(input.path, 'renders', `${section ?? 'Film'} - ${film.format} draft.mp4`);
+-  const hard = film.diagnostics.filter(({severity}) => severity === 'error').length;
+-  if (hard) console.warn(`${film.format}: ${hard} compiler errors across the film. This draft remains available for inspection. Run kte check for details.`);
++  const path = output ? resolve(output) : join(input.path, 'renders', `${section ?? 'Film'} - ${film.format} ${mode}.mp4`);
++  const errors = film.diagnostics.filter(({severity}) => severity === 'error');
++  if (errors.length) {
++    if (!draft) {
++      const first = errors[0];
++      const where = [first.line, first.token, first.frame === undefined ? undefined : `frame ${first.frame}`].filter(Boolean).join(' / ');
++      throw new Error(`${film.format}: ${errors.length} compiler errors. First: [${first.code}] ${where ? where + ': ' : ''}${first.message}. Run kte check for details.`);
++    }
++    console.warn(`${film.format}: ${errors.length} compiler errors across the film. This draft remains available for inspection. Run kte check for details.`);
++  }
++  const frameRange = draft ? sectionFrames(film, section) : undefined;
++  const id = draft ? `${film.format}-draft` : film.format;
+   await withBrowser(runtime, input, async ({renderer, serveUrl, browser, cancelSignal}) => {
+-    const composition = await renderer.selectComposition({serveUrl, id: `${film.format}-draft`, puppeteerInstance: browser, timeoutInMilliseconds: 120_000});
++    const composition = await renderer.selectComposition({serveUrl, id, puppeteerInstance: browser, timeoutInMilliseconds: 120_000});
+     await renderer.renderMedia({serveUrl, composition, codec: 'h264', audioCodec: 'aac', enforceAudioTrack: true,
+       frameRange, outputLocation: path, puppeteerInstance: browser, overwrite: true, cancelSignal, timeoutInMilliseconds: 120_000});
+   });
