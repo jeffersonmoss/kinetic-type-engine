@@ -1,0 +1,509 @@
+{
+  "method": "react-dom/server renderToStaticMarkup",
+  "frames": [
+    {
+      "fixture": "example",
+      "board": "example",
+      "frame": 0,
+      "sha256": "1029349d05053a490079d4c0564fe7cdc5882d5eeee2d0403608d73343bcf323"
+    },
+    {
+      "fixture": "example",
+      "board": "example",
+      "frame": 38,
+      "sha256": "25091cd63757383d181752863e475d00ae2aa5bc09e957262c9d116c52f30165"
+    },
+    {
+      "fixture": "example",
+      "board": "example",
+      "frame": 76,
+      "sha256": "36daae2aab69c905fb6f1386b1e4b885dc86c3c39764aeca1dd3d1dec4f45f2f"
+    },
+    {
+      "fixture": "example",
+      "board": "example",
+      "frame": 114,
+      "sha256": "ccb557adb93dc09417231f0b42e4088ecc72148a166ecb9557c2c3a832572f57"
+    },
+    {
+      "fixture": "example",
+      "board": "example",
+      "frame": 152,
+      "sha256": "c2f95f6407af01363dc5be258eb3ef04f9b9ca2342fc6374deb10f90d9684e0d"
+    },
+    {
+      "fixture": "example",
+      "board": "example",
+      "frame": 190,
+      "sha256": "811aa2ba8fad987930d93acae3c9bdd199d8260aaadd6c5f74265f43a4f12485"
+    },
+    {
+      "fixture": "example",
+      "board": "example",
+      "frame": 229,
+      "sha256": "28d4c172a69c1dd0693afe1dd6fa1711f29580f13b43b39a901e192ac00d78f2"
+    },
+    {
+      "fixture": "example",
+      "board": "example",
+      "frame": 267,
+      "sha256": "7fa15961082e2ea54fcc66a6ab4f301a2d7f4e8c746532b93c78c62f13e82caa"
+    },
+    {
+      "fixture": "example",
+      "board": "example",
+      "frame": 305,
+      "sha256": "9717a03633573f9c824434047d051d66e6106efb4c7f59b148ae76c8bc543695"
+    },
+    {
+      "fixture": "example",
+      "board": "example",
+      "frame": 343,
+      "sha256": "c1e6854cacca7ff121bcd418c1eb328fda2ded92632c68b91b8f84cf30f5765d"
+    },
+    {
+      "fixture": "example",
+      "board": "example",
+      "frame": 381,
+      "sha256": "097511691eec9d83273fbd66ebad1b30dfea8e349c0cdef187fa3573b5cd6835"
+    },
+    {
+      "fixture": "example",
+      "board": "example",
+      "frame": 419,
+      "sha256": "5c46e8555b6d70c39ab2c8928a6ad5bc026c082387914a6c10584649d24c019c"
+    },
+    {
+      "fixture": "example",
+      "board": "fan and drawer",
+      "frame": 420,
+      "sha256": "06cf66a3d18fb6dca7a0540d51cfe76ca070576b68eb67e5b89b992de5478469"
+    },
+    {
+      "fixture": "example",
+      "board": "fan and drawer",
+      "frame": 442,
+      "sha256": "d5745bf0908b2411408969e155ae6064daf2893970c9ef63c4de6a288263f3a1"
+    },
+    {
+      "fixture": "example",
+      "board": "fan and drawer",
+      "frame": 463,
+      "sha256": "9d0c339667cb79c03c3f8df19fc230468abe10dcba8ca8454aa838cfca13e683"
+    },
+    {
+      "fixture": "example",
+      "board": "fan and drawer",
+      "frame": 485,
+      "sha256": "78b2a7f9a71d9a42727869f1021f18c10cfcc6a160369eb191175cb6fad9bb23"
+    },
+    {
+      "fixture": "example",
+      "board": "fan and drawer",
+      "frame": 507,
+      "sha256": "3d1b93d6d8e4af55a23874b32d9b14e8d8a7605009da9820d0d5522f527185d7"
+    },
+    {
+      "fixture": "example",
+      "board": "fan and drawer",
+      "frame": 529,
+      "sha256": "341652f97af1e77766119269ec31d1fe486775150bb544f008f885514c0a6c57"
+    },
+    {
+      "fixture": "example",
+      "board": "fan and drawer",
+      "frame": 550,
+      "sha256": "32963a5b07f52aa2940a70fd39bb4354138793c8bf7f143aa976498aa0acd3ea"
+    },
+    {
+      "fixture": "example",
+      "board": "fan and drawer",
+      "frame": 572,
+      "sha256": "2d8fd00874e5ec0fb88183505a9c8f4452e7a597367d227f733dd7253778d610"
+    },
+    {
+      "fixture": "example",
+      "board": "fan and drawer",
+      "frame": 594,
+      "sha256": "0bd31b04324a506c99e82cfa85cc4cd5b774c355238874ab2eff0230a0cd3af1"
+    },
+    {
+      "fixture": "example",
+      "board": "fan and drawer",
+      "frame": 616,
+      "sha256": "7ee1a267bfc5a9517aaa67974261bdae54024bfacbba5a5522eb148edc6b000d"
+    },
+    {
+      "fixture": "example",
+      "board": "fan and drawer",
+      "frame": 637,
+      "sha256": "3b47a248da2614e010c6c2d7f7929d0284aa5c1dbd6757b3dfd1a1480cbec004"
+    },
+    {
+      "fixture": "example",
+      "board": "fan and drawer",
+      "frame": 659,
+      "sha256": "57237dc6ae8fdc45271a0da75272cc0c4588bc7643901fba5bb683aed7b2bd84"
+    },
+    {
+      "fixture": "example",
+      "board": "slide up",
+      "frame": 615,
+      "sha256": "c4cd28f5262bf3937af3b9cda95121ee804bca8d46e3797a0c600e958fdec04e"
+    },
+    {
+      "fixture": "example",
+      "board": "slide up",
+      "frame": 646,
+      "sha256": "6c383517dc3abb5c2cd77a221c191ee371e5bb5231c4ce11031fdaa4e805b9c0"
+    },
+    {
+      "fixture": "example",
+      "board": "slide up",
+      "frame": 677,
+      "sha256": "1bf6c5f14d2cf77160bbb6941b36360aa26507849c0b31b8aa7a99877bb95269"
+    },
+    {
+      "fixture": "example",
+      "board": "slide up",
+      "frame": 707,
+      "sha256": "008207608bad36cb7e11eb0236170ab05c24319a5373948323deab2a2d41ef4f"
+    },
+    {
+      "fixture": "example",
+      "board": "slide up",
+      "frame": 738,
+      "sha256": "008207608bad36cb7e11eb0236170ab05c24319a5373948323deab2a2d41ef4f"
+    },
+    {
+      "fixture": "example",
+      "board": "slide up",
+      "frame": 769,
+      "sha256": "c744a6e45b07f7ae47c3e7210329453d6c2cfa10d577cea1fe4b076411452e12"
+    },
+    {
+      "fixture": "example",
+      "board": "slide up",
+      "frame": 800,
+      "sha256": "c17fb38d73f99b0ba85865322747cd0a7efe281833db7c712c5bb94874804fb9"
+    },
+    {
+      "fixture": "example",
+      "board": "slide up",
+      "frame": 831,
+      "sha256": "a5ec915eb5709747fdd01671993a0b2741484feb65651ae5d50f8ddcc64c573d"
+    },
+    {
+      "fixture": "example",
+      "board": "slide up",
+      "frame": 862,
+      "sha256": "7ea3f83d2eba4e2650698ac8aeb3aeddb0d8af6bc875826355496645c94c3ad2"
+    },
+    {
+      "fixture": "example",
+      "board": "slide up",
+      "frame": 892,
+      "sha256": "3a277a3eb044ede014779d8803263ace0a8401da9ec22a1f5b50c2d50c5f7547"
+    },
+    {
+      "fixture": "example",
+      "board": "slide up",
+      "frame": 923,
+      "sha256": "fd9d6b7254139f75b9ff54c19c1995b564670cee5aa7c5b69c0ca7fea9a6a488"
+    },
+    {
+      "fixture": "example",
+      "board": "slide up",
+      "frame": 954,
+      "sha256": "4674d067ef69851d9b25320272eec9ebcaed7ea426e10dd18444cc4082828b75"
+    },
+    {
+      "fixture": "example",
+      "board": "all the way round",
+      "frame": 910,
+      "sha256": "2e03968b411bf96bede34fe537f18872469fd4a51cc7d0d852d6ebb3db59c0f2"
+    },
+    {
+      "fixture": "example",
+      "board": "all the way round",
+      "frame": 920,
+      "sha256": "e98709bee6448767edfea1a66f0ac3971cf18e8cd957c18d6685197a93eff07c"
+    },
+    {
+      "fixture": "example",
+      "board": "all the way round",
+      "frame": 930,
+      "sha256": "b61a58165756d462be5b510f12026348d4411461adc83883d439503ee309c644"
+    },
+    {
+      "fixture": "example",
+      "board": "all the way round",
+      "frame": 940,
+      "sha256": "4674d067ef69851d9b25320272eec9ebcaed7ea426e10dd18444cc4082828b75"
+    },
+    {
+      "fixture": "example",
+      "board": "all the way round",
+      "frame": 950,
+      "sha256": "4674d067ef69851d9b25320272eec9ebcaed7ea426e10dd18444cc4082828b75"
+    },
+    {
+      "fixture": "example",
+      "board": "all the way round",
+      "frame": 960,
+      "sha256": "2b0fc854581f92be6e51f4e21d9fa827e018be10c0fb840cfc86e7db72b81209"
+    },
+    {
+      "fixture": "example",
+      "board": "all the way round",
+      "frame": 969,
+      "sha256": "2b0fc854581f92be6e51f4e21d9fa827e018be10c0fb840cfc86e7db72b81209"
+    },
+    {
+      "fixture": "example",
+      "board": "all the way round",
+      "frame": 979,
+      "sha256": "2b0fc854581f92be6e51f4e21d9fa827e018be10c0fb840cfc86e7db72b81209"
+    },
+    {
+      "fixture": "example",
+      "board": "all the way round",
+      "frame": 989,
+      "sha256": "2b0fc854581f92be6e51f4e21d9fa827e018be10c0fb840cfc86e7db72b81209"
+    },
+    {
+      "fixture": "example",
+      "board": "all the way round",
+      "frame": 999,
+      "sha256": "6e80e10c1a36b1e2d869b3dd00892cc7f60a5261836f7ea962e2df9dfb488596"
+    },
+    {
+      "fixture": "example",
+      "board": "all the way round",
+      "frame": 1009,
+      "sha256": "25be8d7d764f01a888fdd82fef2bc057ec2110a819c9bf01e6cece59b947696f"
+    },
+    {
+      "fixture": "example",
+      "board": "all the way round",
+      "frame": 1019,
+      "sha256": "25be8d7d764f01a888fdd82fef2bc057ec2110a819c9bf01e6cece59b947696f"
+    },
+    {
+      "fixture": "example",
+      "board": "sheet rules",
+      "frame": 1020,
+      "sha256": "8c0ce99aded938fcef8beed0a116c4abe5f645f46802021f8b720c0406b04d82"
+    },
+    {
+      "fixture": "example",
+      "board": "sheet rules",
+      "frame": 1039,
+      "sha256": "ababdb3a7fa2432f1a58374aea6d13c5474879a611a73a67f5bdc720f83b5207"
+    },
+    {
+      "fixture": "example",
+      "board": "sheet rules",
+      "frame": 1058,
+      "sha256": "24a6768a5b1533227645def98c8155bb3effdd01323d638cd111204023d416a8"
+    },
+    {
+      "fixture": "example",
+      "board": "sheet rules",
+      "frame": 1077,
+      "sha256": "d587760bbc11d1800a187ca1a0bb673fe5edda05963abbfbfa291dec1aa85991"
+    },
+    {
+      "fixture": "example",
+      "board": "sheet rules",
+      "frame": 1096,
+      "sha256": "41055f49d1e1f75b76d54500fe2cb0ab47e2fcf7a0cdcb4e3bc1dafe432468cc"
+    },
+    {
+      "fixture": "example",
+      "board": "sheet rules",
+      "frame": 1115,
+      "sha256": "85df49ae38a910d986072a77dbd011f65d3f3ee226fcc1488a0984b159ff4c6d"
+    },
+    {
+      "fixture": "example",
+      "board": "sheet rules",
+      "frame": 1134,
+      "sha256": "2978bf9bd0f7a83ed452015f16d0f920e54278fee8dcbee49a2cfec661d2d47d"
+    },
+    {
+      "fixture": "example",
+      "board": "sheet rules",
+      "frame": 1153,
+      "sha256": "28cf0c7f009cd1587c7d1413c507dd5e744d9d14f48a6c7244a3bf25e54b0bde"
+    },
+    {
+      "fixture": "example",
+      "board": "sheet rules",
+      "frame": 1172,
+      "sha256": "041f3665601d967d0f1885c1b431e5d916eb3b76933488a483b38002cba83f7d"
+    },
+    {
+      "fixture": "example",
+      "board": "sheet rules",
+      "frame": 1191,
+      "sha256": "7e4b81e690a225c800fea90b1ba5b79f1da23c4b056448ce507f3b2c69e4c802"
+    },
+    {
+      "fixture": "example",
+      "board": "sheet rules",
+      "frame": 1210,
+      "sha256": "581f6e2c50776e03db8c75a5277a4e9d04d639217054e62c9b5bab92406ea05e"
+    },
+    {
+      "fixture": "example",
+      "board": "sheet rules",
+      "frame": 1229,
+      "sha256": "fe1ee83b984f0ceddd5edb743f2b8c08fc030e61ba9171885362ddee6a79592c"
+    },
+    {
+      "fixture": "example",
+      "board": "follow and verbs",
+      "frame": 1230,
+      "sha256": "e1b086a2c3ec0f5f1158578e6b16970bcb326f61ae025c0c897157cda83d6a94"
+    },
+    {
+      "fixture": "example",
+      "board": "follow and verbs",
+      "frame": 1252,
+      "sha256": "45d605563e75132d69438eeee2122246b314efdb949e2460f6d89d2de804fba6"
+    },
+    {
+      "fixture": "example",
+      "board": "follow and verbs",
+      "frame": 1273,
+      "sha256": "b7e6e3ef093b3f894020ea20810e4028563767f6e0d7e5da1d4d7642b29fa23e"
+    },
+    {
+      "fixture": "example",
+      "board": "follow and verbs",
+      "frame": 1295,
+      "sha256": "7b3d9b3d33e5917a35a5fcc3449b579c82963137d77d337db3033a136ba1d043"
+    },
+    {
+      "fixture": "example",
+      "board": "follow and verbs",
+      "frame": 1317,
+      "sha256": "2596396fe0022989457ca62a4e2e45a14d5140605f521f799234e72b50c64a03"
+    },
+    {
+      "fixture": "example",
+      "board": "follow and verbs",
+      "frame": 1339,
+      "sha256": "40dd4c82374351d93204355b4cded9fb286376472dbbe8b40ef444805f922ac9"
+    },
+    {
+      "fixture": "example",
+      "board": "follow and verbs",
+      "frame": 1360,
+      "sha256": "c7d8e143d626a2cdc08952d4820fee9fdc3cdb4efc097aafe3922cfaecb08981"
+    },
+    {
+      "fixture": "example",
+      "board": "follow and verbs",
+      "frame": 1382,
+      "sha256": "6b5425e5fa6777e0833d6a6d3eae9e61a29d03d82f9d106d12ead48e7470dded"
+    },
+    {
+      "fixture": "example",
+      "board": "follow and verbs",
+      "frame": 1404,
+      "sha256": "5dcfb3559fa03d2d182b5391d688b4735e3f784143f3e11ec33cefdedac8a902"
+    },
+    {
+      "fixture": "example",
+      "board": "follow and verbs",
+      "frame": 1426,
+      "sha256": "2c4666e4c539da9f68f6b48e42c81ccd006a3e948954ec6dba09a7f0d888ea4d"
+    },
+    {
+      "fixture": "example",
+      "board": "follow and verbs",
+      "frame": 1447,
+      "sha256": "47454e736620c40885ff9c422bb443c09e1b9a65aadbf3fb7c0bb354bfeac029"
+    },
+    {
+      "fixture": "example",
+      "board": "follow and verbs",
+      "frame": 1469,
+      "sha256": "7cf64722b2d9176cc857032739f19a1f4422a24f919117ca68a10839505c54d1"
+    },
+    {
+      "fixture": "pure type",
+      "board": "pure type",
+      "frame": 0,
+      "sha256": "b14410c349e07e2ef3b7069f75aed118300bd3563b2cc3fd08eb5235307db524"
+    },
+    {
+      "fixture": "pure type",
+      "board": "pure type",
+      "frame": 5,
+      "sha256": "8bc06a28b99be8a54d1da3f5cee53ced43a237a30325627f1898cb113f580c04"
+    },
+    {
+      "fixture": "pure type",
+      "board": "pure type",
+      "frame": 11,
+      "sha256": "8e5cc6717fcdff74c9a6ba0a6a9e9734b77449f33c18d38a49eeedd015d2060f"
+    },
+    {
+      "fixture": "pure type",
+      "board": "pure type",
+      "frame": 16,
+      "sha256": "571aa6d99a45d52ffcf32b64968e43246e764755974f2f6309e8ed63fb1ae99d"
+    },
+    {
+      "fixture": "pure type",
+      "board": "pure type",
+      "frame": 21,
+      "sha256": "568fc201cea48562dc62431102d395fe4b2869a541e814a17dd974f19361017b"
+    },
+    {
+      "fixture": "pure type",
+      "board": "pure type",
+      "frame": 27,
+      "sha256": "b1b842c700acee63827988e5d0e64b4304c8075c7ee151d025a2a1bc7b2f69ef"
+    },
+    {
+      "fixture": "pure type",
+      "board": "pure type",
+      "frame": 32,
+      "sha256": "53f94f2708357170dcce2dec073188c7e3e50f60b9639dc54e60df64120f64b6"
+    },
+    {
+      "fixture": "pure type",
+      "board": "pure type",
+      "frame": 38,
+      "sha256": "8b16e9140096c20652586dce0173999d0eae2341d44c150ef08524fc111490df"
+    },
+    {
+      "fixture": "pure type",
+      "board": "pure type",
+      "frame": 43,
+      "sha256": "7566f5bcf5318e090056236d8c9f9b6530a21c7b33252965dcd7d25c1b22cc56"
+    },
+    {
+      "fixture": "pure type",
+      "board": "pure type",
+      "frame": 48,
+      "sha256": "59c29d2a308c87611697eb6916ee6296f7fcb38449bcf93b9f7687e8da347aaa"
+    },
+    {
+      "fixture": "pure type",
+      "board": "pure type",
+      "frame": 54,
+      "sha256": "8e8ae697579d3142fed5746cf3509c6260d410c27e40633fbf3463eee160735d"
+    },
+    {
+      "fixture": "pure type",
+      "board": "pure type",
+      "frame": 59,
+      "sha256": "a040fedefbecebdd84a00399055044153b297fd1c6358fe749a05be926515351"
+    }
+  ]
+}
