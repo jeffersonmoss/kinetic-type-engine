@@ -1,4 +1,5 @@
 import {configureEngine, FPS} from '../../engine/config';
+import {extendVerb, getVerb, registerVerb} from '../../engine/verbRegistry';
 import {wordStateAt} from '../../engine/wordState';
 import type {Board} from '../../engine/types';
 import {pureTypeBoard, pureTypeConfig} from './pure-type';
@@ -21,4 +22,17 @@ export function checkFrameCore() {
     }
     console.log(`126.1 stack (run=${run}): dx ${early.dx.toFixed(2)} to ${later.dx.toFixed(2)} px, dy 0 px.`);
   }
+
+  const seam = getVerb('seam');
+  if (!seam) throw new Error('seam was not registered by the engine');
+  let duplicate: unknown;
+  try { registerVerb('seam', {}); } catch (error) { duplicate = error; }
+  if (!(duplicate instanceof Error && duplicate.message.includes('seam')) || getVerb('seam') !== seam) {
+    throw new Error('duplicate seam registration did not fail without replacing the existing definition');
+  }
+  registerVerb('frame-core-test', {early: true});
+  extendVerb('frame-core-test', {gradual: true});
+  const extended = getVerb('frame-core-test');
+  if (!extended?.early || !extended.gradual) throw new Error('extendVerb did not merge existing and new hooks');
+  console.log('126.2 duplicate seam rejected; extendVerb retained existing hooks.');
 }

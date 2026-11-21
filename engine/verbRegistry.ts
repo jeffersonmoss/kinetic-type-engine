@@ -133,7 +133,17 @@ export interface VerbDef {
 }
 
 const REGISTRY = new Map<string, VerbDef>();
-/** Register (or replace) a verb effect. Call at module top level in the effect's own file. */
-export const registerVerb = (name: string, def: VerbDef) => { REGISTRY.set(name, def); };
+/** Register a new verb effect at module top level in the effect's own file. */
+export const registerVerb = (name: string, def: VerbDef) => {
+  if (REGISTRY.has(name)) throw new Error(`Verb "${name}" is already registered; use extendVerb to override it`);
+  REGISTRY.set(name, def);
+};
+
+/** Override selected hooks of an existing verb. A factory can delegate to the previous hooks. */
+export const extendVerb = (name: string, patch: Partial<VerbDef> | ((base: VerbDef) => Partial<VerbDef>)) => {
+  const base = REGISTRY.get(name);
+  if (!base) throw new Error(`Cannot extend unregistered verb "${name}"`);
+  REGISTRY.set(name, {...base, ...(typeof patch === 'function' ? patch(base) : patch)});
+};
 export const getVerb = (name: string) => REGISTRY.get(name);
 export const verbNames = () => [...REGISTRY.keys()];

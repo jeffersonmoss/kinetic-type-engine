@@ -10,10 +10,9 @@ import {FPS} from '../config';
 import {resolveAnchor} from '../letters';
 import type {AnchorRef} from '../types';
 import {clamp, easeInOutCubic, rot} from '../util';
-import {getVerb, registerVerb, type VerbDef} from '../verbRegistry';
+import {extendVerb} from '../verbRegistry';
 import {PC, centreOf, firstSf, toLocal, wordsOfCue, type VerbWordCtx} from './common';
 
-const old = getVerb('hinge') as VerbDef;
 /** Mode 'leaf': the block swings about the rule like a page or a gate seen face on. Its extent across the rule scales
  *  from 0 to 1 about the rule's line in `frames` (10 to 16, cubic), darkening by up to 40 percent while it turns, whole
  *  and at full opacity throughout. The rule must run along the block's x or y axis. */
@@ -30,8 +29,7 @@ const leaf = (c: VerbWordCtx) => {
   const vertical = along > 45 && along < 135; // the rule runs up the block: the leaf opens sideways
   return vertical ? {sx: e, dx: (piv.x - ce.x) * (1 - e)} : {sy: e, dy: (piv.y - ce.y) * (1 - e)};
 };
-registerVerb('hinge', {
-  ...old,
+extendVerb('hinge', (old) => ({
   early: true,
   replacesEnter: false,
   gradual: true,
@@ -54,4 +52,4 @@ registerVerb('hinge', {
     const before = c.df < 0 && c.cue.params?.showFrom === undefined;
     return before ? {hidden: true, opacity: 0} : {dx: piv.x + r.x - ce.x, dy: piv.y + r.y - ce.y, rot: a};
   },
-});
+}));

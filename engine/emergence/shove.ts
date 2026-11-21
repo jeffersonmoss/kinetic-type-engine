@@ -14,10 +14,9 @@ import {wordCorners} from '../layout';
 import {SPEED_CAP} from '../motion';
 import type {BoardLayout, Pt, VerbCue} from '../types';
 import {clamp, easeInOutSine, rot} from '../util';
-import {getVerb, registerVerb, type VerbDef} from '../verbRegistry';
+import {extendVerb} from '../verbRegistry';
 import {PC, SINE_PEAK, anchorBlockWords, capFrames, firstSf, wordsOfCue, wordsParam, zoomOf} from './common';
 
-const old = getVerb('shove') as VerbDef;
 const isPush = (cue: VerbCue) => cue.params?.mode === 'push';
 const targets = (cue: VerbCue, L: BoardLayout) => (cue.params?.target !== undefined ? wordsParam(cue, L, 'target') : anchorBlockWords(cue, L));
 const cornersOf = (L: BoardLayout, ws: number[]) => ws.flatMap((i) => { const g = L.words.get(i)!; return wordCorners(L.blocks[g.block], g); });
@@ -72,8 +71,7 @@ export const pushPlan = (cue: VerbCue, L: BoardLayout): Plan => {
   memo.set(cue, plan);
   return plan;
 };
-registerVerb('shove', {
-  ...old,
+extendVerb('shove', (old) => ({
   early: true,
   gradual: true,
   affects: (cue, L) => (isPush(cue) ? [...wordsOfCue(cue, L), ...targets(cue, L)] : old.affects!(cue, L)),
@@ -117,4 +115,4 @@ registerVerb('shove', {
     }
     return out;
   },
-});
+}));
