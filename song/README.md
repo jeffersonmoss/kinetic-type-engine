@@ -8,7 +8,8 @@ configured audio path beside `song.json`. Use `--song`, `--alignment`,
 Atomic publication uses the system temporary directory, so the output and
 temporary directories must be on the same filesystem.
 
-Set `KTE_PYTHON` to the Python executable with librosa. The CLI measures
+The CLI tries `KTE_PYTHON`, `python3`, then `~/Experiments/*/.venv/bin/python`
+and prints the first interpreter that can import librosa. It measures
 beats from the separated percussive track using the legacy HPSS method.
 When Python or librosa is missing, the map records the reason and leaves beat
 data empty. Re-ingest with the working environment to populate it.

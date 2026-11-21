@@ -1,6 +1,6 @@
 import {spawnSync} from 'node:child_process';
-import {mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync} from 'node:fs';
-import {tmpdir} from 'node:os';
+import {mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync} from 'node:fs';
+import {homedir, tmpdir} from 'node:os';
 import {dirname, join, relative, resolve} from 'node:path';
 import {parseArgs} from 'node:util';
 import {formatEarCheckList, importSong} from '../song/index';
@@ -26,18 +26,42 @@ function optionalFile(path: string) {
   }
 }
 
+function experimentPythons(experiments: string) {
+  try {
+    return readdirSync(experiments, {withFileTypes: true}).filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
+      .map(({name}) => join(experiments, name, '.venv', 'bin', 'python'))
+      .filter((path) => statSync(path, {throwIfNoEntry: false})?.isFile())
+      .sort();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  }
+}
+
 function audioAnalysis(worker: string, audio: string, bpm: number, scratch: string): BeatAnalysis {
-  const python = process.env.KTE_PYTHON || 'python3';
-  const result = spawnSync(python, [worker, audio, String(bpm)], {
-    encoding: 'utf8', timeout: 180_000, maxBuffer: 4 * 1024 * 1024,
-    env: {...process.env, PYTHONDONTWRITEBYTECODE: '1', NUMBA_CACHE_DIR: join(scratch, 'Numba cache')},
-  });
-  if ((result.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT' || result.status === 78) {
-    const detail = result.error?.message ?? result.stderr.trim();
-    const reason = `librosa beat analysis unavailable with ${python}: ${detail}. Re-run with KTE_PYTHON set to a Python with librosa.`;
+  const experiments = join(homedir(), 'Experiments');
+  const candidates = [...new Set([process.env.KTE_PYTHON, 'python3', ...experimentPythons(experiments)].filter((item): item is string => !!item))];
+  const env = {...process.env, PYTHONDONTWRITEBYTECODE: '1', NUMBA_CACHE_DIR: join(scratch, 'Numba cache')};
+  let python: string | undefined;
+  let executable: string | undefined;
+  for (const candidate of candidates) {
+    const probe = spawnSync(candidate, ['-c', 'import librosa, sys; print(sys.executable)'],
+      {encoding: 'utf8', timeout: 15_000, env});
+    if (!probe.error && probe.status === 0) {
+      python = candidate;
+      executable = probe.stdout.trim();
+      break;
+    }
+  }
+  if (!python) {
+    const reason = `librosa beat analysis unavailable. Tried ${candidates.join(', ')}.`;
     console.warn(reason);
     return {status: 'unavailable', reason, beats: [], duration_s: null, tempo_bpm: null, downbeat_phase: null};
   }
+  console.log(`librosa Python: ${executable || python}`);
+  const result = spawnSync(python, [worker, audio, String(bpm)], {
+    encoding: 'utf8', timeout: 180_000, maxBuffer: 4 * 1024 * 1024, env,
+  });
   if (result.error || result.status !== 0) {
     throw new Error(`Beat analysis failed: ${result.error?.message || result.stderr.trim() || result.signal || result.status}`);
   }
