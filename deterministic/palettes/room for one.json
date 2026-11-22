@@ -1,0 +1,20 @@
+{
+  "ground": "#0b0b0d",
+  "panel": "#262b40",
+  "panel_side": "#3a4060",
+  "styles": [
+    {"id":"heat-flame","kind":"block","colours":{"background":"#D0102E","text":"#FFD23F"},"role":"hero","group":"heat","flat_fill":"gold"},
+    {"id":"heat","kind":"block","colours":{"background":"#D0102E","text":"#ffffff"},"role":"hero","group":"heat","flat_fill":"cream"},
+    {"id":"cavs","kind":"block","colours":{"background":"#860038","text":"#FDBB30"},"role":"hero","group":"cavs","flat_fill":"gold"},
+    {"id":"lakers","kind":"block","colours":{"background":"#552583","text":"#FDB927"},"role":"hero","group":"lakers","flat_fill":"gold"},
+    {"id":"sixers","kind":"block","colours":{"background":"#006BB6","text":"#ffffff"},"role":"hero","group":"sixers","flat_fill":"cream"},
+    {"id":"sixers-red","kind":"fill","colours":{"text":"#ED174C"},"role":"accent","group":"sixers","outline_twin":"sixers-outline"},
+    {"id":"sixers-outline","kind":"outline","colours":{"text":"#ED174C"},"role":"accent","group":"sixers"},
+    {"id":"cream","kind":"fill","colours":{"text":"#F3EBDD"},"role":"plain","group":"plain","outline_twin":"cream-outline"},
+    {"id":"cream-outline","kind":"outline","colours":{"text":"#F3EBDD"},"role":"plain","group":"plain"},
+    {"id":"grey","kind":"fill","colours":{"text":"#7d7a76"},"role":"quiet","group":"quiet","on_panel":"#96938e"},
+    {"id":"gold","kind":"fill","colours":{"text":"#FDB927"},"role":"accent","group":"gold"}
+  ],
+  "voices":{"adlib":["cream","grey"]},
+  "pins":{"w01":"heat-flame","w02":"heat-flame","w03":"cavs","w04":"lakers","ONE!":"sixers","24!":"sixers","w30":"sixers-outline"}
+}

@@ -1,0 +1,17 @@
+{
+  "about": "Starter palette for a new song (22 November 2026). team-a and team-b are placeholder team colours (here Minnesota-like lake blue, midnight and aurora green): replace them with the song's real team colours. Every text colour must keep 3:1 contrast on its background, panel and ground (style.mjs checkPalette throws otherwise). Style ids not in viewer.html's table are drawn from these colours. Hero and accent styles carry the emphasis; plain and quiet carry the rest; pins fix a style on a word id or text.",
+  "ground": "#0b0b0d",
+  "panel": "#262b40",
+  "panel_side": "#3a4060",
+  "styles": [
+    {"id":"team-a","kind":"block","colours":{"background":"#236192","text":"#ffffff"},"role":"hero","group":"team-a","flat_fill":"cream"},
+    {"id":"team-b","kind":"block","colours":{"background":"#0C2340","text":"#78BE20"},"role":"hero","group":"team-b","flat_fill":"team-accent"},
+    {"id":"team-accent","kind":"fill","colours":{"text":"#78BE20"},"role":"accent","group":"team-b","outline_twin":"team-accent-outline"},
+    {"id":"team-accent-outline","kind":"outline","colours":{"text":"#78BE20"},"role":"accent","group":"team-b"},
+    {"id":"cream","kind":"fill","colours":{"text":"#F3EBDD"},"role":"plain","group":"plain","outline_twin":"cream-outline"},
+    {"id":"cream-outline","kind":"outline","colours":{"text":"#F3EBDD"},"role":"plain","group":"plain"},
+    {"id":"grey","kind":"fill","colours":{"text":"#7d7a76"},"role":"quiet","group":"quiet","on_panel":"#96938e"}
+  ],
+  "voices": {"adlib": ["cream", "grey"]},
+  "pins": {}
+}

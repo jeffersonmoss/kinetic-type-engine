@@ -1,0 +1,15 @@
+{
+ "css": "https://fonts.googleapis.com/css2?family=Anton&family=Barlow+Condensed:wght@700&family=DM+Serif+Display:ital@1&family=Bebas+Neue&family=League+Gothic&family=Big+Shoulders+Display:wght@900&family=Graduate&family=Archivo+Black&family=Saira+Stencil+One&family=Teko:wght@700&display=block",
+ "fonts": {
+  "anton": {"family": "Anton", "style": "normal", "weight": 400},
+  "serif": {"family": "DM Serif Display", "style": "italic", "weight": 400},
+  "barlow": {"family": "Barlow Condensed", "style": "normal", "weight": 700},
+  "bebas": {"family": "Bebas Neue", "style": "normal", "weight": 400},
+  "gothic": {"family": "League Gothic", "style": "normal", "weight": 400},
+  "shoulders": {"family": "Big Shoulders Display", "style": "normal", "weight": 900},
+  "collegiate": {"family": "Graduate", "style": "normal", "weight": 400},
+  "wide": {"family": "Archivo Black", "style": "normal", "weight": 400},
+  "stencil": {"family": "Saira Stencil One", "style": "normal", "weight": 400},
+  "teko": {"family": "Teko", "style": "normal", "weight": 700}
+ }
+}
