@@ -29,6 +29,7 @@ export const FILLERS = {
   adverb: set('just now then there here also too very really always again'),
 };
 const PRONOUNS = set("i you he she we they it me him us them i'm you're he's she's we're they're it's that's i'll you'll he'll she'll we'll they'll i've you've we've they've i'd you'd he'd she'd we'd they'd who what");
+const PARTICLES = set('up down out off over back away around on in'), OBJECTS = set('me you him her us them it');
 const norm = t => String(t).toLowerCase().replace(/[‘’]/g, "'").replace(/^[^a-z0-9']+|[^a-z0-9']+$/g, '').replace(/^'+|'+$/g, '').replace(/\s+/g, '_');
 const fillerClass = t => Object.entries(FILLERS).find(([, s]) => s.has(t))?.[0] ?? null;
 
@@ -47,6 +48,9 @@ export function keywordFlags(words, { names = [], keep = [], overrides = {} } = 
     if (PRONOUNS.has(t)) return { keyword: true, why: 'pronoun (subject or object)' };
     const cls = fillerClass(t);
     if (cls === 'preposition' && clauseEnd) return { keyword: true, why: 'particle ending its clause (predicate)' };
+    // A particle right after an object pronoun belongs to the verb (shut you DOWN, pick him UP): brief 10 item 48.
+    const prevT = i > 0 && words[i - 1].line === w.line ? norm(words[i - 1].text) : null;
+    if (cls === 'preposition' && PARTICLES.has(t) && OBJECTS.has(prevT)) return { keyword: true, why: 'particle after its object (phrasal verb)' };
     if (lineEnd) return { keyword: true, why: 'rhyme word at the line end' };
     if (w.accent) return { keyword: true, why: 'stressed' };
     if (/^[A-Z][A-Z']+$/.test(raw.replace(/[^A-Za-z']/g, ''))) return { keyword: true, why: 'stressed (written in capitals in the map)' };

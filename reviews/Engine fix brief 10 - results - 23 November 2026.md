@@ -53,10 +53,17 @@ Final 6f, with the Opus keyword marks merged (item 43). 0 keywords are dropped b
 4. **Item 43, Opus keyword marks:** merged from `Keyword marks - Opus pass - 23 November 2026.json`: 395 of 395 words, 27 differ from the classifier (for example THAT'S, IT'S and WHOLE become fillers; ALWAYS, THERE and UP become keywords). Existing keys (92 score, 366 name false) are kept. New tool `keyword_marks.mjs`: `prompt` writes the marking agent's prompt, `merge` merges a marks file. A copy of the song settings from before the merge was kept until this pass ended, then deleted with my temp folder.
 5. **Item 44:** see 1.4.
 6. **Item 45:** KIT.md section "Engine fix brief 10, items 39 to 47" (process notes for the marks and the review gate, plus numerals, display override and team colours).
-7. **Items 46 and 47, names and jersey numbers in team colours:** song setting `jersey_colours`, default `"block"`: white jersey letters on a block of the darker team colour (#0C2340, navy), with `"letters"` (letters in the team colour that reads best on black, #78BE20 green) and `"off"`. No LaMelo engine song input exists, so no pin was needed. Raise the Flagg gets the default at its next join.
+7. **Items 46 and 47, names and jersey numbers in team colours** (on for Big Toothy Grins per the brief's 46.2 correction and item 47; a later relayed message said "pinned off for videos in progress (Big Toothy Grins)", which contradicts the brief, so I followed the brief and flagged it): song setting `jersey_colours`, default `"block"`: white jersey letters on a block of the darker team colour (#0C2340, navy), with `"letters"` (letters in the team colour that reads best on black, #78BE20 green) and `"off"`. No LaMelo engine song input exists, so no pin was needed. Raise the Flagg gets the default at its next join.
    1. In 6f, 11 of 21 names got the navy block. The other 10 got green letters, because growing the box to block padding would overlap a word or cut it at an edge. **The video therefore mixes the two looks.** A rebuild (held) could plan room for blocks; or the song could choose `"letters"` for all. That is a choice for Jefferson.
    2. Unseen: the navy block on the near-black ground may barely show as a block; the white letters carry it.
 8. **KIT.md Type rules:** while I worked, another chat edited rule 3 (it now ends "Jersey numbers follow rule 4.") and rule 4 (adding "white letters on the darker team colour, or letters in team colours"). The brief says the rule 4 wording is pending Jefferson's approval, so I left that hunk uncommitted and did not touch it.
+
+## 3b. Item 48: keyword mode and "shut you down" (Raise the Flagg; checked, not built)
+
+1. **How keyword mode chose words before:** inside a fast stretch it dropped every word on a fixed function-word list (all pronouns, auxiliaries, prepositions, conjunctions), then thinned the remaining words to 0.4 s apart, keeping the higher-ranked (name or number, then line-end rhyme word, then the rest). It never consulted the keyword flags. On the Flagg map that dropped 82 words in 4 stretches: 50 as function words and 32 by the spacing. YOU in all three "shut you down" lines went as a function word, and the first DOWN went by the spacing.
+2. **Now:** keyword mode drops only fillers, by the same flags as everything else (Opus marks through word_overrides, else the classifier); the spacing step is removed. The classifier also keeps a particle right after an object pronoun (DOWN after YOU), which the spacing had kept only by chance in two of the three lines.
+3. **Check on the Flagg map:** all three "shut you down" lines (55.70 s, 107.80 s, 146.74 s) keep SHUT, YOU and DOWN. Keyword mode now drops 36 words there, all fillers. Flagg was not built; its next join will change.
+4. Big Toothy Grins has no fast stretches, so 6f is unchanged (the re-join gives a byte-identical final scene).
 
 ## 4. Items 33 to 36
 
@@ -107,7 +114,7 @@ Correction: my first reply called these items 13 to 16; they are 33 to 36.
 
 ## 8. Files and cleanup
 
-1. Engine: `composition.mjs`, `build_song.mjs`, `word_roles.mjs`, `type_rules_check.mjs`, new `keyword_marks.mjs`, `KIT.md` (new section; Type rules hunk by the other chat left uncommitted).
+1. Engine: `composition.mjs`, `build_song.mjs`, `word_roles.mjs`, `keywords.mjs`, `type_rules_check.mjs`, new `keyword_marks.mjs`, `KIT.md` (new section). KIT line 192 (rule 3) committed as is, as told (cf4061b). Line 193 (rule 4), edited by the other chat, is left uncommitted: its wording is pending Jefferson.
 2. Song input (not in git): `song settings.json` (real artwork, keyword marks merged, 366 display TR3Y).
 3. 6f: `Keyword drops for review.json` (empty list). The stale pre-item-37 scene was deleted earlier (restorable for 7 days). Rough cuts 6c to 6e left in place.
 4. My temp folder is deleted.

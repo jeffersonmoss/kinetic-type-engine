@@ -82,7 +82,7 @@ const display = t => t.replace(/^(\(?)([a-z]+-[a-z]+)/i, (m, p, w) => p + (NUMBE
 // approved opening scene is used as is). Dropped words are left out of the scene, the sync check and the pulses.
 const palettePins = Object.keys(JSON.parse(fs.readFileSync(palettePath, 'utf8')).pins ?? {});
 const builtLines = new Set(song.sections.flatMap(sec => map.lines.filter(l => l.id >= sec.lines[0] && l.id <= sec.lines[1]).map(l => l.id)));
-const keywords = keywordPlan(map.words, song.fast_words ?? {}, { names: [...Object.keys(song.team_wordmarks ?? {}), ...Object.values(song.display_numbers ?? {}), ...palettePins] });
+const keywords = keywordPlan(map.words, song.fast_words ?? {}, { names: [...Object.keys(song.team_wordmarks ?? {}), ...Object.values(song.display_numbers ?? {}), ...palettePins, ...(song.player_names ?? [])], overrides: song.word_overrides ?? {} });
 for (const i of [...keywords.dropped]) if (!builtLines.has(map.words[i].line)) keywords.dropped.delete(i);
 keywords.log = keywords.log.filter(x => keywords.dropped.has(x.i));
 function sectionWords(sec) {
