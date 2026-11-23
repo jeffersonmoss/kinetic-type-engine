@@ -63,7 +63,10 @@ for (const w of scene.words) {
   const st = palStyles.find(s => s.id === w.style);
   const text = (w.colours?.text ?? st?.colours?.text ?? '').toLowerCase();
   const why = [];
-  if (w.colours?.stroke || w.kind === 'outline' || w.colours?.outline) why.push('outlined');
+  if (w.colours?.stroke || w.kind === 'outline' || w.colours?.outline || st?.kind === 'outline') why.push('outlined');
+  // Before brief 5 the viewer drew the grey style with a white outline whatever the scene said (Raise the Flagg rough
+  // cut 2: COOPER at 4.9 s, TONIGHT at 95 s). A scene built before brief 5 has no meta.jersey_bold.
+  else if (w.style === 'grey' && scene.meta.jersey_bold == null && !w.wordmark) why.push('outlined: grey drawn with a white outline by the viewer this scene was built for (before brief 5)');
   if (w.wordmark?.colours?.stroke || w.wordmark?.colours?.accent) why.push('wordmark with stroke or accent rings');
   if (!w.wordmark && !w.stripes && text && !allowed.has(text) && !team.has(w.style)) why.push(`text colour ${text} is not cream, white, flat grey or a team colour`);
   if (why.length) fails.push({ rule: 3, f, to: f + 30, word: `${w.id} ${w.text}`, what: why.join('; '), rebuild: 'draw it solid in an allowed colour' });

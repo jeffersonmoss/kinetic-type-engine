@@ -304,14 +304,16 @@ export function fillEmptyFrames(scene, { from = 0, until = scene.meta.frames, on
 // Size (engine fix brief 5, Jefferson 22 November 2026: "We should either show a word big enough to be seen or not
 // show it at all"). Per camera hold, each word whole in frame and at rest is measured at its largest (cap height as a
 // share of the frame height, letterHeight). Its minimum is minH when the frame is crowded and roomFactor x minH when it
-// is not. Crowded: at that frame at least crowdedWords words (this one included) are at least half in frame, or their
+// is not. Crowded: at that frame at least crowdedWords (4) words (this one included) are at least half in frame, or their
 // projected boxes cover at least crowdedArea of the frame. A word under its minimum is first grown about its centre (its
 // box, cap, font size and padding together, at most MAX_GROW times), kept only when that adds no projected overlap over
 // its life and does not make it partly shown or unshown at its onset. Otherwise: in a hold that is its focus window it is
 // dropped for its whole life (opacity 0, w.dropped = 'size', exempt from the shown-whole gates like a keyword-mode
 // drop); in a later hold it is hidden for that hold when another word meeting its minimum stays on screen there. Echoes,
 // reveal copies, wordmarks and words on a hinge or a clip plane are not resized.
-export const SIZE_DEFAULTS = Object.freeze({ minH: 0.09, roomFactor: 1.5, crowdedWords: 3, crowdedArea: 0.30 });
+// crowdedWords 4 (brief 6, was 3): HE, TURNS and a small sideways HE in a mostly empty frame were judged crowded, so the
+// small HE passed at 9.5%; three words with room around them are not crowded.
+export const SIZE_DEFAULTS = Object.freeze({ minH: 0.09, roomFactor: 1.5, crowdedWords: 4, crowdedArea: 0.30 });
 export const MAX_GROW = 2.5;
 function boxCoverage(w, f, pose, vfov) {
   const cs = cornersAt(w, f);

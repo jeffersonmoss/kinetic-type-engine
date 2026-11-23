@@ -293,10 +293,12 @@ function setPose(frame){
 function sampleCount(frame){
   if(!window.KT_BLUR)return 1;
   const a=I.poseAt(S.cams,frame),b=I.poseAt(S.cams,frame+.5),q=I.project(a.target,b,S.meta.vfov ?? 40);
-  if(!q)return hasMotion?Math.max(1,Math.min(12,Math.ceil(wordMotionPx(frame)/10))):1;
+  if(!q){const m=hasMotion?wordMotionPx(frame):0;return m<4?1:Math.max(2,Math.min(32,Math.ceil(m/3)));}
   const roll=Math.atan2(dot(a.R,b.U),dot(a.R,b.R));
   const shift=Math.max(Math.hypot(q.x*W/2,q.y*H/2)+300*Math.abs(roll),hasMotion?wordMotionPx(frame):0);
-  return Math.max(1,Math.min(12,Math.ceil(shift/10)));
+  // Brief 6: samples at most 3 px apart (was 10, capped at 12). Two half-strength copies 13 px apart read as a drop
+  // shadow (SHOOTING at 101.6 s in rough cut 6); under 4 px of motion is drawn sharp.
+  return shift<4 ? 1 : Math.max(2,Math.min(32,Math.ceil(shift/3)));
 }
 function drawIntro(frame){
   const active=intro.filter(item=>item.start<=frame&&frame<item.end);
