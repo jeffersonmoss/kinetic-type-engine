@@ -517,3 +517,102 @@ export function sizeShortfalls(scene, onsetOf, { until = scene.meta.frames, sett
   }
   return out;
 }
+
+// No word static and partly on screen (brief 6 item 5; Jefferson: "No word should ever be static and partly on screen.
+// A word's boundary has only three allowed states: moving onto the screen, moving off it, or wholly on screen.").
+// Visible fraction r(f): the word's ink (letter band, or the whole box for a word on a block) projected and clipped to
+// the frame, as a share of its projected area. Partly on screen: PARTIAL_LO < r < PARTIAL_HI. Static: r changes by less
+// than STATIC_RATE per frame (centred difference). A run of STATIC_FRAMES or more partly-on-screen static frames fails.
+// Best guesses: STATIC_RATE 0.01 (crossing the edge in under about 3 s counts as moving), STATIC_FRAMES 4 (0.13 s).
+export const PARTIAL_LO = 0.005, PARTIAL_HI = 0.995, STATIC_RATE = 0.01, STATIC_FRAMES = 4;
+function clipPoly(poly, inside, cut) {
+  const out = [];
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length], ia = inside(a), ib = inside(b);
+    if (ia) out.push(a);
+    if (ia !== ib) out.push(cut(a, b));
+  }
+  return out;
+}
+const polyArea = p => { let a = 0; for (let i = 0; i < p.length; i++) { const [x0, y0] = p[i], [x1, y1] = p[(i + 1) % p.length]; a += x0 * y1 - x1 * y0; } return Math.abs(a) / 2; };
+export function visibleFraction(w, f, pose, vfov) {
+  const I = globalThis.KT_INTERP;
+  const X = I.wordXform(w, f), band = hasBlock(w) ? 1 : Math.min(1, (w.cap ?? w.h) / w.h);
+  const c = X(w.C), n = X(add(w.C, w.N)).map((x, i) => x - c[i]);
+  if (n.reduce((s, x, i) => s + x * (pose.position[i] - c[i]), 0) <= 0) return null; // seen from behind: not drawn
+  // Corners in camera space, clipped to the near plane, then projected.
+  const tv = Math.tan((vfov * Math.PI) / 360), aspect = 16 / 9;
+  let cam = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => {
+    const p = X(add(w.C, add(mul(w.R, u * w.w / 2), mul(w.U, v * band * w.h / 2))));
+    const d = p.map((x, i) => x - pose.position[i]);
+    return [d.reduce((s, x, i) => s + x * pose.R[i], 0), d.reduce((s, x, i) => s + x * pose.U[i], 0), -d.reduce((s, x, i) => s + x * pose.N[i], 0)];
+  });
+  const near = 1;
+  cam = clipPoly(cam, p => p[2] >= near, (a, b) => { const t = (near - a[2]) / (b[2] - a[2]); return a.map((x, i) => x + (b[i] - x) * t); });
+  if (cam.length < 3) return 0;
+  let p = cam.map(q => [q[0] / (q[2] * tv * aspect), q[1] / (q[2] * tv)]);
+  const total = polyArea(p);
+  if (!(total > 0)) return 0;
+  for (const [axis, sign] of [[0, 1], [0, -1], [1, 1], [1, -1]])
+    p = clipPoly(p, q => sign * q[axis] <= 1, (a, b) => { const t = (sign - a[axis]) / (b[axis] - a[axis]); return a.map((x, i) => x + (b[i] - x) * t); });
+  return p.length < 3 ? 0 : polyArea(p) / total;
+}
+// Runs of a word partly on screen and static, each inside its partly-on-screen span [spanStart, spanEnd).
+export function staticPartials(scene, { from = 0, until = scene.meta.frames, words = scene.words } = {}) {
+  const I = globalThis.KT_INTERP, vfov = scene.meta.vfov ?? 40, out = [];
+  const poses = new Map(), poseAt = f => poses.get(f) ?? poses.set(f, I.poseAt(scene.cams, f)).get(f);
+  for (const w of words) {
+    if (w.dropped) continue;
+    const a = Math.max(from, w.on, 0), b = Math.min(until, w.off ?? until);
+    if (b - a < STATIC_FRAMES) continue;
+    const r = [];
+    for (let f = a - 1; f <= b; f++) r.push(f >= a && f < b && drawn(w, f) ? visibleFraction(w, f, poseAt(f), vfov) : null);
+    const at = f => r[f - a + 1];
+    const partial = f => { const v = at(f); return v != null && v > PARTIAL_LO && v < PARTIAL_HI; };
+    let f = a;
+    while (f < b) {
+      if (!partial(f)) { f++; continue; }
+      let e = f; while (e < b && partial(e)) e++;
+      // Static frames inside the span [f, e).
+      let s = null;
+      for (let g = f; g <= e; g++) {
+        const prev = at(g - 1) ?? at(g), next = at(g + 1) ?? at(g);
+        const still = g < e && Math.abs((next ?? 0) - (prev ?? 0)) / 2 < STATIC_RATE;
+        if (still && s == null) s = g;
+        if (!still && s != null) { if (g - s >= STATIC_FRAMES) out.push({ w, start: s, end: g, spanStart: f, spanEnd: e, share: at(s) }); s = null; }
+      }
+      f = e;
+    }
+  }
+  return out;
+}
+// Resolve: the whole partly-on-screen span of such a word is hidden ("That fragment should not appear at all"), outside
+// its focus window. A focused word is reported, never hidden (the shown-whole gate keeps it whole there).
+export function hideStaticPartials(scene, onsetOf, { until = scene.meta.frames } = {}) {
+  const fps = scene.meta.fps ?? 30, log = [], focused = [];
+  for (let pass = 0; pass < 3; pass++) {
+    const runs = staticPartials(scene, { until });
+    let changed = false;
+    const done = new Set();
+    for (const x of runs) {
+      const key = `${x.w.id}:${x.spanStart}`;
+      if (done.has(key)) continue;
+      done.add(key);
+      const [fa, fb] = focusWindow(x.w, onsetOf, fps);
+      const a = x.spanStart, b = x.spanEnd;
+      let from = a;
+      if (!x.w.reveal_copy_of && onsetOf(x.w) != null && fa < b && fb > a) {
+        // A focused word must stay whole from where it comes to rest through its onset and for SHOWN_FRAMES; after
+        // that it may be hidden. If the static frames fall inside that requirement, report it instead.
+        const o = onsetOf(x.w), A = appearanceFrame(x.w);
+        const mustEnd = Math.max(A + G.SHOWN_FRAMES - 1, o);
+        if (x.start <= mustEnd) { focused.push(`${x.w.id} ${x.w.text} ${x.start}-${x.end}`); continue; }
+        from = Math.max(a, mustEnd + 1);
+      }
+      hide(x.w, from, b); changed = true;
+      log.push(`${x.w.id} ${x.w.text}: hidden ${from}-${b} (static and ${Math.round(100 * x.share)}% on screen on frames ${x.start}-${x.end})`);
+    }
+    if (!changed) break;
+  }
+  return { log, focused: [...new Set(focused)] };
+}

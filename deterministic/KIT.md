@@ -193,3 +193,14 @@ Approved by Jefferson, 22 November 2026 (brief 5 change 3, numbers corrected by 
 4. Player names and jersey numbers use a bold jersey font. Team names use the team's own wordmark in its own colours, downloaded or traced, as long as it looks close to the real one.
 - Motion blur samples (`viewer.html` sampleCount, brief 6): samples are at most 3 px apart (up to 32 per frame), and under 4 px of motion a frame is drawn sharp. At 10 px spacing two half-strength copies 13 px apart read as a drop shadow (SHOOTING at 101.6 s in Big Toothy Grins rough cut 6). Renders with long fast moves take longer.
 - The Type rules check counts as outlined any word with a stroke, a white edge or an outline style, and, in a scene built before brief 5 (no `meta.jersey_bold`), any word in the grey style, which that viewer drew with a white outline.
+
+## No word static and partly on screen (engine fix brief 6 item 5, 22 November 2026)
+
+Jefferson: a word's boundary has only three allowed states: moving onto the screen, moving off it, or wholly on screen. Already-shown words may still be partly visible at the edges while the camera or the word is moving.
+
+- Visible share: the word's projected ink (letter band, or the whole box for block words) clipped exactly to the frame, divided by its full projected area. A word facing away is skipped.
+- Partly on screen: visible share above 0.005 and below 0.995 (`PARTIAL_LO`, `PARTIAL_HI`), on a frame where the word is drawn.
+- Static: the visible share changes by less than 0.01 per frame (`STATIC_RATE`, centred difference) for 4 frames or more in a row (`STATIC_FRAMES`). These numbers are best guesses.
+- Resolution (`hideStaticPartials` in `composition.mjs`): the word is hidden for its whole partly-on-screen stretch (opacity 0, restored after). A focused word must still be whole from where it comes to rest through its onset and for `SHOWN_FRAMES`; it is hidden only from the end of that requirement. If the static frames fall inside the requirement, it is left and the gate fails. It runs after the size pass, and again after the empty-screen fills.
+- Gate: any static partly-on-screen run left in the final scene fails the join (`STATIC PARTLY ON SCREEN FAIL`, exit 1). The provenance report lists every word hidden.
+- Not yet tried: moving a word fully in or pushing it fully out with the camera. Hiding was enough for every case so far.

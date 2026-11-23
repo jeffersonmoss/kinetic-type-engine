@@ -12,6 +12,7 @@ Builder: the T2 engine chat (Claude, Opus 5.5). Nothing was rendered; the stills
 2. The small sideways HE at 40.7 s (w3003) is now caught. It is resolved by growing it, not by dropping it, which differs from the brief's "drop it". Part 2 explains why, and a decision is needed.
 3. SHOOTING's "shadow" is not a style. It is the renderer's motion blur. The viewer fix is made but unverified until a re-render.
 4. The Type rules check now reports the Raise the Flagg outlines. It finds 127 outlined words, including COOPER at 4.9 s and TONIGHT at 43.9 s and 95.3 s.
+5. Item 5 (no word static and partly on screen) is an engine rule and gate. Raise the Flagg rough cut 2 has 7 cases, including the FL fragment (not rebuilt). Big Toothy Grins 6b had 12; all are now hidden and the gate passes (part 7). Side effect: one more Type rule 1 failure in 6b (22, was 21).
 
 ## 2. The small HE at 40.7 s
 
@@ -42,7 +43,7 @@ Builder: the T2 engine chat (Claude, Opus 5.5). Nothing was rendered; the stills
 
 ## 5. Type rules check on rough cut 6b (replaces brief 5 results part 6.1)
 
-All 21 failures are rule 1 (letters too small). None is unexplained. Full list: `Big Toothy Grins Music Video/engine output/Rough cut 6b - 22 November/Type rules check - 22 November 2026.md`.
+All 21 failures (22 after item 5, see part 7) are rule 1 (letters too small). None is unexplained. Full list: `Big Toothy Grins Music Video/engine output/Rough cut 6b - 22 November/Type rules check - 22 November 2026.md`.
 
 1. 3 are important words that can't grow and may not be dropped: ANT 13.2% at 89.80 s, BONES 10.5% at 147.27 s, TREY 9.5% at 158.17 s.
 2. 18 are 14 non-important words the engine dropped and then showed small again, because each drop left a stretch over 0.25 s empty that no fill could clear:
@@ -78,8 +79,42 @@ All 21 failures are rule 1 (letters too small). None is unexplained. Full list: 
    2. 101.4 to 101.7 s: SHOOTING during the camera follow; the shadow should be gone.
    3. Any fast move, for the new blur.
 
+## 7. Item 5: no word static and partly on screen
+
+1. **Definition** (best guesses, in KIT.md):
+   1. Visible share: the word's projected letters clipped exactly to the frame, over their full projected area.
+   2. Partly on screen: share between 0.5% and 99.5%, while the word is drawn.
+   3. Static: the share changes by under 0.01 per frame for 4 frames or more in a row.
+2. **Resolution:** the word is hidden for its whole partly-on-screen stretch. A focused word is hidden only after it has been shown whole through its onset and for 6 frames; if the static frames fall inside that, the join fails. Moving it in or pushing it out with the camera is not built; hiding cleared every case.
+3. **Gate:** the join exits 1 if any case is left (`STATIC PARTLY ON SCREEN FAIL`). The provenance report lists each word hidden.
+4. **Raise the Flagg rough cut 2 (check only, not rebuilt): 7 cases.**
+   1. DUNKS 31.03 s, 6% on screen
+   2. PASS 37.23 s, 47%
+   3. PAY 77.80 s, 1%
+   4. PLAY 84.13 s, 11%
+   5. MAINE 122.33 s, 2%
+   6. FLAGG! 162.63 s, 32% (Jefferson's FL fragment: a zoom entrance that comes to rest past the right edge)
+   7. FLAGG! 163.60 s, 42% (the same word a second later)
+5. **Big Toothy Grins rough cut 6b: 12 found before the fix, 0 after.** All hidden (time is where the static stretch starts):
+   1. HOT? 27.73 s, 11%
+   2. HANDS 34.00 s, 75%
+   3. GOODBYE 44.03 s, 8%
+   4. EYES 46.83 s, 6%
+   5. WE and AND 70.47 s, 75% and 81%
+   6. ANT 90.13 s, 2%
+   7. DOWN 90.50 s, 9%
+   8. EVER 97.03 s, 4%
+   9. WIN 110.97 s, 18%
+   10. BALL 143.67 s, 8%
+   11. OF THE 146.23 s, 9%
+   Ten are focused words caught by a camera follow after their onset; each is hidden from the end of its shown-whole requirement.
+6. **Side effect:** hiding HANDS left 34.0 to 34.4 s empty, so the empty-screen undo brought back ARE (w2024, 8.7%, a hinge word that cannot grow). The Type rules check now lists 22 rule 1 failures in 6b (Section 2 has 2). The report in the 6b folder is updated.
+7. **Other gates on 6b:** exit 0, overlap 0, partly shown 0, no empty stretch over 0.25 s, first and last frames non-empty, still ending PASS, sync 0 late.
+8. **Stills to render:** Flagg rough cut 2 162.4 to 164.0 s (the fragment, before); Big Toothy Grins 6b at 27.7, 34.0, 70.5, 90.1 and 146.2 s (each word should vanish rather than sit cut at the edge).
+9. **Not checked:** `type_rules_check.mjs` does not include this rule; the join's gate and provenance report it.
+
 ## 6. Files and cleanup
 
-1. Engine: `composition.mjs` (crowded 4), `viewer.html` (blur samples), `type_rules_check.mjs` (outline detection), `KIT.md`.
+1. Engine: `composition.mjs` (crowded 4; static partly-on-screen rule), `build_song.mjs` (its gate), `viewer.html` (blur samples), `type_rules_check.mjs` (outline detection), `KIT.md`.
 2. Rough cut 6 is left in place. Rough cut 6b holds copies of its sections, about the same size on disk. Rough cut 6 could go once 6b is accepted (not deleted; your call).
 3. My scratch files are deleted.

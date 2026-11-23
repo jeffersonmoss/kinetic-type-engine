@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 import './interp.js';
 import { checkSync, checkHolds } from './whole_song_checks.mjs';
 import { assemble, hideWhenGone, buildReveal, checkReveal, endOnWord, checkStillEnding } from './assemble_sections.mjs';
-import { tightenLone, hideEdgeClutter, hideUnreadable, fillEmptyFrames, emptyFrames, enforceMinSize, noOutlines, undoSizeForEmpty } from './composition.mjs';
+import { tightenLone, hideEdgeClutter, hideUnreadable, fillEmptyFrames, emptyFrames, enforceMinSize, noOutlines, undoSizeForEmpty, hideStaticPartials, staticPartials, STATIC_RATE, STATIC_FRAMES } from './composition.mjs';
 import { JERSEY_BOLD } from './style.mjs';
 import { keywordPlan, fastWordsOn, wordRanks } from './keywords.mjs';
 import { severity, worstReadingLoss, SHOWN_GATE } from './build_best.mjs';
@@ -237,6 +237,9 @@ const EMPTY_MAX_S = song.empty_gap_max_s ?? 0.25, emptyMaxF = Math.floor(EMPTY_M
 // The empty-screen rule outranks the size rule: the fills are tried on a copy first, and any size drop or hide inside a
 // stretch the fills cannot clear is undone on the real scene before the real fills (so no fill is built around a word
 // that then comes back).
+// No word static and partly on screen (brief 6 item 5): such fragments are hidden for their whole partly-on-screen span
+// before the fills, and again after them (a fill may keep one on).
+const staticHide = hideStaticPartials(finalObj, onsetOf, { until: frames });
 const sizeUndone = [];
 for (let round = 0; round < 12; round++) {
   const trial = JSON.parse(JSON.stringify(finalObj));
@@ -247,6 +250,11 @@ for (let round = 0; round < 12; round++) {
 }
 const fill = fillEmptyFrames(finalObj, { from: 0, until: frames, onsetOf, maxFrames: emptyMaxF });
 for (const w of finalObj.words) { delete w.size_restore; delete w.size_hides; delete w.size_kept_holds; }
+{ const again = hideStaticPartials(finalObj, onsetOf, { until: frames });
+  staticHide.log.push(...again.log.map(x => `(after the fills) ${x}`)); staticHide.focused = [...new Set([...staticHide.focused, ...again.focused])];
+  if (again.log.length) fill.remaining = emptyFrames(finalObj, { from: 0, until: frames }).filter(r => r.end - r.start + 1 > emptyMaxF); }
+const staticFinal = staticPartials(finalObj, { until: frames });
+if (staticFinal.length) { process.exitCode = 1; console.error(`STATIC PARTLY ON SCREEN FAIL: ${staticFinal.map(x => `${x.w.id} ${x.w.text} ${x.start}-${x.end}`).join(', ')}`); }
 const emptyEnds = [0, frames - 1].filter(f => emptyFrames(finalObj, { from: f, until: f + 1 }).length);
 if (emptyEnds.length) { process.exitCode = 1; console.error(`EMPTY ${emptyEnds.map(f => f ? 'LAST' : 'FIRST').join(' AND ')} FRAME FAIL (not waivable)`); }
 // No section pick, fallback or song setting waives this (Jefferson, 22 November 2026: dead screen is the kiss of death).
@@ -305,6 +313,7 @@ md.push('## Readable size and composition', '',
   `Sparse frames (two small consecutive words far apart, no anchor word in view): ${sparseFinal.length}.`, ...sparseFinal.map(x => `- ${x.id} ${x.text} at ${(x.onsetF / FPS).toFixed(2)} s: ${x.why}`), '',
   `Lone focus words brought closer: ${lone.log.length}.`, ...lone.log.map(x => `- ${x}`), '',
   `Size (brief 5, big enough or not shown; minimum ${size.settings.minH} of the frame height when crowded, ${size.settings.roomFactor} x that with room): ${size.counts.grown} grown, ${size.counts.dropped} dropped, ${size.counts.hidden} hidden for a later hold, ${size.counts.keptSmall} kept small to avoid an empty screen; ${size.counts.importantSmall} important words kept under size (Type rule 2 forbids dropping them); ${sizeUndone.length} drops or hides undone because they left a stretch over ${EMPTY_MAX_S} s empty that the fills could not clear.`, ...size.log.map(x => `- ${x}`), ...sizeUndone.map(x => `- undone: ${x}`), '',
+  `No word static and partly on screen (brief 6 item 5; static: visible share changing under ${STATIC_RATE} per frame for ${STATIC_FRAMES} frames or more): ${staticHide.log.length} fragments hidden; ${staticHide.focused.length} focused words left as they are; final scene ${staticFinal.length} (${staticFinal.length ? 'FAIL' : 'PASS'}).`, ...staticHide.log.map(x => `- ${x}`), ...staticHide.focused.map(x => `- focused, not hidden: ${x}`), ...staticFinal.map(x => `- FAIL: ${x.w.id} ${x.w.text} frames ${x.start}-${x.end} (${(x.start / FPS).toFixed(2)} s), ${Math.round(100 * x.share)}% on screen`), '',
   `No outlines (brief 5, change 2: every word solid): ${outlines.log.length} changed.`, ...outlines.log.map(x => `- ${x}`), '',
   `Edge clutter hidden (non-focus words with letters cut by the frame edge during a hold): ${clutter.log.length}.`, ...clutter.log.map(x => `- ${x}`), '',
   `Unreadable text hidden (upside down, mirrored or from behind, outside its focus window): ${unreadable.log.length}.${unreadable.focused.length ? ` Focus words shown that way (not hidden): ${unreadable.focused.join(', ')}.` : ''}`, ...unreadable.log.map(x => `- ${x}`), '',
@@ -329,7 +338,7 @@ console.log('sync', JSON.stringify({ late: syncCheck.late.length, dropped: syncC
 console.log('shown whole', JSON.stringify({ sweepBefore: shownSweep.before, sweepAfter: shownSweep.after, finalPartial: partialFinal.length, finalDropped: droppedFinal.length }), 'echoes', finalObj.words.filter(w => w.echo).length);
 console.log('entrances', JSON.stringify(counts['Whole song']), 'pop reasons', JSON.stringify(popWhy));
 console.log('reveal check', JSON.stringify(revealCheck), 'still ending', JSON.stringify(stillEnding));
-console.log('size', JSON.stringify({ grown: size.counts.grown, dropped: size.counts.dropped, hiddenSmall: size.counts.hidden, keptSmall: size.counts.keptSmall, importantSmall: size.counts.importantSmall, sizeUndone: sizeUndone.length, outlinesFlat: outlines.log.length, small: smallFinal.length, sparse: sparseFinal.length, lone: lone.log.length, clutter: clutter.log.length, unreadable: unreadable.log.length, unreadableFocus: unreadable.focused.length, emptyEnds, filled: fill.log.length, shortGaps: fill.short.length, longestShortGap: Math.max(0, ...fill.short.map(r => r.end - r.start + 1)), emptyRuns: fill.remaining.map(r => `${r.start}-${r.end}`) }));
+console.log('size', JSON.stringify({ staticHidden: staticHide.log.length, staticFinal: staticFinal.length, grown: size.counts.grown, dropped: size.counts.dropped, hiddenSmall: size.counts.hidden, keptSmall: size.counts.keptSmall, importantSmall: size.counts.importantSmall, sizeUndone: sizeUndone.length, outlinesFlat: outlines.log.length, small: smallFinal.length, sparse: sparseFinal.length, lone: lone.log.length, clutter: clutter.log.length, unreadable: unreadable.log.length, unreadableFocus: unreadable.focused.length, emptyEnds, filled: fill.log.length, shortGaps: fill.short.length, longestShortGap: Math.max(0, ...fill.short.map(r => r.end - r.start + 1)), emptyRuns: fill.remaining.map(r => `${r.start}-${r.end}`) }));
 console.log('reveal', JSON.stringify(reveal), 'revealF0', revealF0, 'hidden', hideLog.filter(l => l.includes('hidden')).length);
 console.log(el.split('\n').filter(l => /CHECKS|FAIL|^  /.test(l)).join('\n'));
 console.log('wordmarks', JSON.stringify(appearance.wordmarkUse.map(({ name, used, words }) => ({ name, used, words }))), 'opening blank', appearance.blank);
