@@ -187,7 +187,8 @@ const clutter = hideEdgeClutter(finalObj, onsetOf, { until: revealF0 });
 const unreadable = hideUnreadable(finalObj, onsetOf, { until: revealF0 });
 const introEndF = Math.round(Math.min(...map.words.map(w => w.start_s)) * FPS);
 const fill = fillEmptyFrames(finalObj, { from: introEndF, until: frames, onsetOf });
-if (fill.remaining.length) process.exitCode = 1;
+// No section pick, fallback or song setting waives this (Jefferson, 22 November 2026: dead screen is the kiss of death).
+if (fill.remaining.length) { process.exitCode = 1; console.error(`EMPTY FRAMES FAIL (not waivable): ${fill.remaining.map(r => `${r.start}-${r.end}`).join(', ')}`); }
 const stillEnding = checkStillEnding(finalObj, { minHoldFrames: MIN_END_HOLD });
 if (!stillEnding.pass) process.exitCode = 1;
 const overlapRepair = { retired: joint.overlapLog };

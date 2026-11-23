@@ -164,9 +164,11 @@ function anyVisible(scene, f, pose, vfov) {
     if (!on || opacityAt(w, f) <= 0.05) return false;
     const X = I.wordXform(w, f), c = X(w.C), n = X(add(w.C, w.N)).map((x, i) => x - c[i]);
     if (n.reduce((s, x, i) => s + x * (pose.position[i] - c[i]), 0) <= 0) return false;
-    return inFrameShare(w, f, pose, vfov) > 0;
+    // Filled means a word at least FILLED_SHARE in frame and readable; an edge sliver does not count.
+    return inFrameShare(w, f, pose, vfov) >= FILLED_SHARE && G.readableOrientation(w, f, pose, vfov, { tilt: false });
   });
 }
+export const FILLED_SHARE = 0.5;
 export function emptyFrames(scene, { from = 0, until = scene.meta.frames } = {}) {
   const I = globalThis.KT_INTERP, vfov = scene.meta.vfov ?? 40, runs = [];
   for (let f = from; f < until; f++) {
@@ -237,6 +239,24 @@ export function fillEmptyFrames(scene, { from = 0, until = scene.meta.frames, on
       if (accept()) { log.push(`frames ${run.start}-${run.end}: camera ${K.verb} lands at ${run.start} instead of ${was}${sw.length ? `; switched on ${sw.join(', ')}` : ''}`); basePartial = partials(); continue; }
       scene.cams = JSON.parse(camSnap);
       for (const [w, on, joint] of wsnap) { w.on = on; if (joint) w.joint = joint; }
+    }
+    // (4) camera stutter: the camera holds the run's last filled pose over the run (key.hold in interp.js), and the
+    //     words visible and readable on that frame stay on through it. Kept on the same terms as the other tries.
+    const K4 = scene.cams.find(k => k.f0 < run.start && k.f1 >= run.end && k.f1 > k.f0 && k.verb !== 'cut');
+    const still = emptyFrames(scene, { from: run.start, until: run.end + 1 });
+    if (K4 && still.length) {
+      const camSnap = JSON.stringify(scene.cams), f = run.start - 1, p = I.poseAt(scene.cams, f);
+      const vis = scene.words.filter(w => !w.reveal_copy_of && drawn(w, f) && inFrameShare(w, f, p, vfov) > 0 && G.readableOrientation(w, f, p, vfov));
+      const wsnap = vis.map(w => [w, w.off, JSON.stringify(w.opacity ?? null)]);
+      K4.hold = [...(K4.hold ?? []), [run.start, run.end]];
+      for (const w of vis) {
+        const o = opacityAt(w, f), after = opacityAt(w, run.end + 1);
+        if (w.off != null && w.off <= run.end + 1) w.off = run.end + 1;
+        w.opacity = [...(w.opacity ?? []).filter(([k]) => k < run.start || k > run.end + 1), [run.start, o], [run.end + 1, w.off === run.end + 1 ? o : after]].sort((x, y) => x[0] - y[0]);
+      }
+      if (accept()) { log.push(`frames ${run.start}-${run.end}: camera ${K4.verb} holds the frame ${f} pose; ${vis.map(w => w.text).join(' ')} stay on`); basePartial = partials(); continue; }
+      scene.cams = JSON.parse(camSnap);
+      for (const [w, off, op] of wsnap) { w.off = off; const v = JSON.parse(op); if (v) w.opacity = v; else delete w.opacity; }
     }
   }
   if (log.length === before) break;

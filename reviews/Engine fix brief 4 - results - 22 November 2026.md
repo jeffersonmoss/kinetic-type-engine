@@ -39,8 +39,8 @@ Both pass 0 projected overlap, 0 partly shown focused words, 0 blank opening fra
    7.2. 157.9 s: PARTLY. LYLES, RIGHT, BACK and TO show cut letters on 1 to 2 frames (camera move).
    7.3. 164.9 s: FIXED. All words whole.
    7.4. 175.0 s: PARTLY. CIRCLE shows 33% of its letters on 1 frame.
-8. Black frames (new engine rule, `fillEmptyFrames`, and a gate that fails the build): 10 of Fable's 11 runs are gone (53.27, 55.40, 71.37, 73.60, 84.43, 89.10, 111.6, 144.5, 155.17 and 160.33 s show no black frame). Left from his list: 156.33 s, 1 frame.
-9. Other black runs in the final scene, all 1 frame except one of 2: 26.57, 48.93, 50.07, 122.83 (2 frames) and 126.03 s. Cause, checked on three runs of the earlier join: mid-pivot frames where every word turns past the plaque plane (1468, 3781), or the outgoing word slides out one frame before the incoming one appears (797). The fill tries (keep outgoing words on, switch incoming words on early, land the move early) were rejected there because they added overlaps or did not fill. A real fix is in the camera planner (pivots that cross the plane, or a one-frame handover on sweeps); not done in this pass. A floor-13 build of the same pass had 3 runs left, so the rider floor bought specks and WE at the cost of extra single black frames through different section picks.
+8. Black frames (new engine rule, `fillEmptyFrames`, and a gate that fails the build): 10 of Fable's 11 runs are gone (53.27, 55.40, 71.37, 73.60, 84.43, 89.10, 111.6, 144.5, 155.17 and 160.33 s show no black frame). After the dead-screen follow-up (item 15), none is left.
+9. Other black runs in the final scene, all 1 frame except one of 2: 26.57, 48.93, 50.07, 122.83 (2 frames) and 126.03 s. Cause, checked on three runs of the earlier join: mid-pivot frames where every word turns past the plaque plane (1468, 3781), or the outgoing word slides out one frame before the incoming one appears (797). The fill tries (keep outgoing words on, switch incoming words on early, land the move early) were rejected there because they added overlaps or did not fill. Cleared in the follow-up (item 15) by a camera stutter; a planner fix for pivots that cross the plane would avoid needing it. A floor-13 build of the same pass had 3 runs left, so the rider floor bought specks and WE at the cost of extra single black frames through different section picks.
 
 ## Found on the way: Room for One's outro chant
 
@@ -55,16 +55,20 @@ Both pass 0 projected overlap, 0 partly shown focused words, 0 blank opening fra
 | Blank opening frames | 0 | 0 | 0 | 0 |
 | Still ending | yes | yes | yes | yes |
 | Dropped focused words | 3 | 2 | 2 | 4 |
-| Black runs mid-song (my detector) | 12 | 6 (5 of 1 frame) | 15, incl. the 16 s outro | 2 (1 frame each) |
+| Black runs mid-song (my detector) | 12 | 0 | 15, incl. the 16 s outro | 0 |
 | Unreadable words hidden | none hidden | 116 | none hidden | 40 |
 | Focused words seen unreadably (left alone) | not measured | 5 | not measured | 1 |
 | Pop share | 17.7% | 18.1% | 27.1% | 28.5% |
 | Reveal coverage | off | off | 3.7% | 10.8% |
-| Exit status | 0 | 1 (black-frame gate) | 1 | 1 (black-frame gate, reveal, 76ers ring) |
+| Exit status | 0 | 0 | 1 | 1 (reveal under 20%, 76ers ring, as before) |
 
 ## Not done or open
 
-11. Black frames at pivots and sweep handovers (item 9) need a camera-planner change.
+11. Pivots that cross the plaque plane still need the stutter to stay filled; a camera-planner change would remove the cause.
 12. ONE at 93.7 s is still under 10%.
 13. Slivers on 1 to 2 camera-move frames remain at several of Fable's times; the clutter rule acts in holds and on move tails only when another word is whole in frame.
-14. The new black-frame gate makes Big Toothy Grins exit 1 where rough cut 4 exited 0. Its outputs are complete; the failing runs are listed in the provenance report.
+14. Both builds were re-joined only (`--skip-build`), not section-rebuilt: the fill runs on the joined scene, so no section scene changes.
+
+## Follow-up: no dead screen (Jefferson, 22 November 2026)
+
+15. The empty-frame gate cannot be waived: no section pick, fallback or song setting passes a build with an empty frame mid-song (exit 1, "EMPTY FRAMES FAIL (not waivable)"). A frame now counts as filled only when some word is at least half in frame and reads the right way round; my earlier test counted an edge sliver, which is how 797 (Big Toothy Grins) and 3589 and 4644 (Room for One) passed the engine while my independent check still found them empty. A fourth fill try, the camera stutter, holds the camera on the run's last filled pose over the run (`key.hold` in `interp.js`, which the render also uses) and keeps the words visible on that frame on. Result, both by the engine and by an independent per-frame check from the first sung word to the end: 0 empty frames in Big Toothy Grins Rough cut 5 and in Room for One Engine fix test 5, and 0 word-frames shown mirrored or from behind. Camera holds: 12 in Big Toothy Grins (18 frames in all, longest 4 frames) and 8 in Room for One (10 frames, longest 2). Overlap, partly shown, blank opening and still ending all still pass; Big Toothy Grins exits 0. The supervisor's note named one run in Big Toothy Grins (156.33 s); there were six by the engine's count and more under the stricter test, all cleared.

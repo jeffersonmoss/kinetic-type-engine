@@ -78,6 +78,8 @@
   function movePose(key, frame) {
     const { from, to } = key;
     if (key.verb === 'cut' || key.f1 === key.f0) return complete(frame < key.f0 ? from : to);
+    // key.hold [[a, b], ...]: the camera holds the pose of frame a - 1 over frames a..b (brief 4: no empty frame mid-song).
+    for (const [ha, hb] of key.hold ?? []) if (frame >= ha && frame <= hb) { frame = Math.max(key.f0, ha - 1); break; }
     if (frame <= key.f0) return complete(from);
     if (frame >= key.f1) return complete(to);
     const u = (frame - key.f0) / (key.f1 - key.f0);
