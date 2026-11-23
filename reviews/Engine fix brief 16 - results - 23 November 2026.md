@@ -100,3 +100,51 @@ Keyword mode found `0` fast stretches in Big Toothy Grins (`keywords.dropped: 0`
 
 ## Files to consider cleaning up later (not deleted)
 - Older rough cut folders in `~/Experiments/Big Toothy Grins Music Video/engine output/` (`Rough cut 6h - 23 November` and earlier) were left untouched per Rule 2; only our own temp folder `/tmp/brief16` was created and deleted.
+
+---
+
+## Addendum results (WOLVES SVG wired in — Rough cut 6j, 23 November 2026)
+
+Carried out on branch `world-canvas` (no engine code changes were required — commit `6e00ae9`'s SVG `viewBox`, ink-box sizing, and `margin = 0` support worked cleanly alongside commits `c3c0ea4` and `a4ad096`). Re-joined Big Toothy Grins into a new folder using `--skip-build` from 6i's 10 built sections (no section rebuild required; `Rough cut 6i - 23 November` left untouched). **No browser was launched and nothing was rendered.**
+
+### Commits & outputs
+- **Song repo (`~/Experiments/Big Toothy Grins Music Video`, branch `main`):** `7b73fee` — added `engine input/WOLVES wordmark - Icon lettering only - traced vector.svg` (copied from `~/Experiments/Timberwolves WOLVES Icon Wordmark Vector/WOLVES Icon wordmark - vector.svg`, `2543.94 × 1065.47` = `2.39:1`) and updated `engine input/song settings.json` (`team_wordmarks.WOLVES.image` pointed at the SVG, `colours.background: ""`, removed old `letter_share: 0.668` so lettering reports its true `1.0` share of the lettering-only SVG). Old Icon panel PNG and Statement PNG left in place unused. Note: `song settings.json` also carried prior uncommitted Rough cut 6–6i settings; `Keyword marks - Opus pass - 23 November 2026.json` and all other pre-existing untracked/modified files were kept out of the commit.
+- **Engine repo (`~/Experiments/Kinetic Type Engine`, branch `world-canvas`):** no code changes needed; this results update committed separately.
+- **6j join folder:** `~/Experiments/Big Toothy Grins Music Video/engine output/Rough cut 6j - 23 November`
+- **Final frame count:** **`5345` frames** at 30 fps (frames `0` through `5344`, last frame at `178.133 s`, `end_s: 178.15`; unchanged from 6i; `w10028 WOLVES!` at rest from frame `5307` through `5344`).
+
+### `WOLVES` (and `PORTLAND`) ink width share: 6i vs 6j
+
+All 7 `WOLVES` occurrences resolved `size = { w: 2543.94, h: 1065.47 }`, `margin = 0`, `letter_share = 1`, embedded as `data:image/svg+xml;base64,...`.
+
+| Scene word | Map idx | Time (s) | Focus frame | 6i ink width (1.70:1 PNG) | 6j ink width (2.39:1 SVG) | 6j ink height | 6j centre (NDC) | Notes |
+|---|---:|---:|---:|---:|---:|---:|---|---|
+| `w15 WOLVES` | 14 | 16.76 | 509 | 80.0% | **80.0%** | 59.6% | `(0.00, 0.00)` | Alone; full 80% target, centred |
+| `w28 WOLVES` | 27 | 25.73 | 778 | 56.1% | **77.9%** | 58.0% | `(0.00, -0.30)` | Alone; **+21.8 pp** wider than 6i (still shifted `-0.30` to clear `w27 ATTACK` on outgoing move) |
+| `w4038 WOLVES!` | 137 | 70.48 | 2120 | 80.0% | **80.0%** | 59.6% | `(0.00, 0.00)` | Full 80% target, centred |
+| `w7015 WOLVES!` | 273 | 119.42 | 3589 | 80.0% | **80.0%** | 59.6% | `(0.00, 0.00)` | Alone; full 80% target, centred |
+| `w7028 WOLVES!` | 286 | 128.30 | 3855 | 63.6% | **80.0%** | 59.6% | `(0.00, 0.00)` | Alone; **+16.4 pp** wider than 6i, now dead-centred (was `-0.20` in 6i) |
+| `w10015 WOLVES!` | 381 | 168.14 | 5050 | 56.3% | **77.9%** | 58.0% | `(0.00, -0.29)` | Alone; **+21.6 pp** wider than 6i (shifted `-0.29` to clear `w10014 PACK` on outgoing move) |
+| `w10028 WOLVES!` | 394 | 176.95 | 5314 | 80.0% | **80.0%** | 59.6% | `(0.00, 0.00)` | Alone (final frame); `on 5298->5307`, full 80% target, centred |
+| `w8001 PORTLAND` | 287 | 129.47 | 3890 | 59.5% | **59.5%** | 28.4% | `(0.00, +0.22)` | Unchanged (red block `0.25` margin) |
+
+### Words restored or dropped vs 6i
+- **Restored (6i → 6j):** none (`0`).
+- **Newly dropped (6i → 6j):** none (`0`).
+- The exact same 3 non-keywords remain dropped for **no room** (`w10 THE` at `13.21 s`, `w2030 AND` at `36.73 s`, `w9025 RIGHT` at `156.39 s`); `0` keywords dropped; `w9033 A` in `"UP FOR A TR3Y"` remains restored.
+
+### Gate & Type-rules verification (`Rough cut 6j - 23 November`)
+- **Join exit code:** `0` (`Whole song - final - scene.json` written).
+- **Hard gates:** all PASS — `sync late: 0`, `idle: 0`, `finalPartial: 0`, `overlaps: 0`, `staticFinal: 0`, `roomLeft: 0`, `keywordsDropped: 0`, `emptyEnds: []`, `emptyRuns: []` (longest short gap 6 frames), `opening blank: 0`, `stillEnding: PASS` (frame `5344`).
+- **Type rules check** (`Rough cut 6j - 23 November/Type rules check - 23 November 2026.md`): **`10` failures total** (`byRule: [10, 0, 0, 0]`, identical to 6i: 10 Rule 1, 0 Rule 2, 0 Rule 3, 0 Rule 4).
+
+### Suggested stills to render & check (6j)
+1. **`16.97 s` (frame `509`) — `w15 WOLVES`**: first chorus hero SVG (`80.0% × 59.6%`, centred, transparent with blue fill / white inner / green outer outline and padded ghost ripple).
+2. **`25.93 s` (frame `778`) — `w28 WOLVES`**: jumped from `56.1%` to **`77.9%` width** (`(0.00, -0.30)`); check balance and clearance from `w27 ATTACK`.
+3. **`128.50 s` (frame `3855`) — `w7028 WOLVES!`**: jumped from `63.6%` to **`80.0%` width**, now dead-centred (back-to-back with `w8001 PORTLAND` at `129.67 s` / frame `3890`).
+4. **`168.33 s` (frame `5050`) — `w10015 WOLVES!`**: jumped from `56.3%` to **`77.9%` width** (`(0.00, -0.29)`).
+5. **`177.13 s` (frame `5314`) and `178.13 s` (frame `5344`, last frame) — `w10028 WOLVES!`**: final hold SVG (`80.0% × 59.6%`, centred) through the end cut at frame `5344`.
+
+### Anything left undone / files to consider cleaning up
+- **Visual render check pending:** No browser was launched and no frames were rendered, so actual Chromium rasterization of the embedded SVG (`data:image/svg+xml;base64,...`) and the padded ripple on `margin = 0` still need a real render check on the stills above.
+- **Left untouched (not deleted per temp-only rule):** `engine input/Keyword marks - Opus pass - 23 November 2026.json` (kept out of commit `7b73fee` per addendum item 4; consider removing or moving out of `engine input/`), and older rough-cut folders in `engine output/` (`Rough cut 6i - 23 November` and earlier).
