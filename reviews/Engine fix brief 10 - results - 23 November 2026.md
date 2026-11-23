@@ -88,7 +88,7 @@ Correction: my first reply called these items 13 to 16; they are 33 to 36.
 
 ## 7. Files and cleanup
 
-1. Engine: `composition.mjs`, `build_song.mjs`, `KIT.md` (brief 8 section: room check, focused hold, real artwork). The working copy of KIT.md also has an uncommitted change to Type rule 3 (a sentence on numerals as scores or jersey numbers) that I did not make; I left it out of my commit and did not touch it.
+1. Engine: `composition.mjs`, `build_song.mjs`, `KIT.md` (brief 8 section: room check, focused hold, real artwork). The Type rules and the real-artwork notes are the lamelo chat's wording, approved by Jefferson, committed word for word and not edited by me: rule 3's numeral sentences in 8703a38; rule 4 and the intro, wordmark, jersey-font and team-artwork notes were already in earlier commits.
 2. Song input (not in git): `song settings.json` points at the real files; new files listed in 3.
 3. 6f: the stale `Whole song - earlier final, before a failed join - scene.json` (the 6f scene before items 37 and 38) is deleted (restorable for 7 days). Rough cuts 6c to 6e left in place.
 4. My temp folder is deleted.
