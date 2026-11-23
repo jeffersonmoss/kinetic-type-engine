@@ -1180,7 +1180,7 @@ export function pairHoldHides(scene, onsetOf, { until = scene.meta.frames, maxFr
     for (const rec of [...(h.size_hides ?? [])]) {
       const [a, b] = rec;
       const after = byMap.get(h.map_index + 1), before = byMap.get(h.map_index - 1);
-      const leaners = [after && (after.keyword === false || /^pronoun/.test(after.keyword_why ?? '')) ? after : null,
+      const leaners = [after && (after.keyword === false || after.pronoun || /^pronoun/.test(after.keyword_why ?? '')) ? after : null,
         before && before.keyword === false ? before : null].filter(Boolean);
       for (const n of leaners) {
         let lo = null, hi = null;

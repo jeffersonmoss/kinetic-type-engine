@@ -23,7 +23,7 @@ import { assemble, hideWhenGone, buildReveal, checkReveal, endOnWord, checkStill
 import { tightenLone, hideEdgeClutter, hideUnreadable, hideFlythrough, SIDE_FILL, placeInRoom, loneHolds, LONE_HOLD, swellRelease, largestGreyToCream, fillEmptyFrames, swellSmallWords, floorZoomEntrances, pairHoldHides, emptyFrames, enforceMinSize, noOutlines, undoSizeForEmpty, hideStaticPartials, staticPartials, STATIC_RATE, STATIC_FRAMES } from './composition.mjs';
 import { JERSEY_BOLD } from './style.mjs';
 import { keywordPlan, fastWordsOn, wordRanks } from './keywords.mjs';
-import { applyWordRoles } from './word_roles.mjs';
+import { applyWordRoles, teamColourNames } from './word_roles.mjs';
 import { severity, worstReadingLoss, SHOWN_GATE } from './build_best.mjs';
 import { repairShown, gateFailures } from './shown_gate.mjs';
 import { entranceCounts } from './entrance_counts.mjs';
@@ -234,6 +234,8 @@ for (const w of finalObj.words) {
   if (w.t == null || w.reveal_copy_of || w.map_index == null) continue;
   if (ranks[w.map_index] >= 3 || w.score) w.important = true;
 }
+// Brief 10 items 46 and 47: player names and jersey numbers in team colours (song setting jersey_colours).
+const teamNames = teamColourNames(finalObj, { song, palette: finalObj.meta.palette ?? JSON.parse(fs.readFileSync(palettePath, 'utf8')), metricsPath: process.env.KTE_METRICS ?? path.join(engine, '../fonts/room-for-one-variety.metrics.json'), until: revealF0, onsetOf });
 // Repeated until it settles (at most 4 passes): a drop thins the frame, which can make its neighbours' frames uncrowded and
 // raise their minimum to room_factor x min_word_h.
 // The empty-screen rule counts a frame whose words are all under the size minimum as empty (brief 7 item 3).
@@ -319,6 +321,19 @@ const nearEmpty = emptyFrames(finalObj, { from: 0, until: revealF0, sideFill: SI
 // Room gate (brief 10 item 37): no keyword may stay dropped by necessity while there is room for it (checked on a copy).
 const roomLeft = (() => { const copy = JSON.parse(JSON.stringify(finalObj)); return placeInRoom(copy, onsetOf, { until: revealF0, settings: finalObj.meta.size_rule ?? {} }).filter(r => r.room); })();
 if (roomLeft.length) { process.exitCode = 1; console.error(`ROOM FOR A DROPPED KEYWORD FAIL: ${roomLeft.map(r => `${r.w.id} ${r.w.text}`).join(', ')}`); }
+// Drop review gate (brief 10 item 44): every keyword still dropped after the room gate is listed beside the final scene
+// with its recorded reason and a frame to still. A reviewer (an Opus agent, run by the supervisor) approves or rejects
+// each in "Keyword drop review.json" ({ reviews: { "<map index>": { verdict: "approve" | "reject", reviewer, note } } });
+// a rejected drop, or a drop with no review entry, fails the join. Run the join once for the list, then again with the
+// review in place.
+const dropReasons = [...size.log, ...staticHide.log.map(String)];
+const dropsForReview = finalObj.words.filter(w => w.keyword && w.dropped && !w.reveal_copy_of && !w.echo).map(w => ({
+  word: w.text, id: w.id, index: w.map_index ?? null, time_s: +(w.t ?? 0).toFixed(2), frame_to_still: onsetOf(w), dropped: w.dropped,
+  reason: dropReasons.filter(x => x.includes(`${w.id} ${w.text}`)).at(-1) ?? `dropped (${w.dropped})` }));
+fs.writeFileSync(path.join(OUT, 'Keyword drops for review.json'), JSON.stringify({ about: 'Keywords still dropped by necessity after the room gate (brief 10 item 44). Review each in "Keyword drop review.json" beside this file: { "reviews": { "<map index>": { "verdict": "approve" | "reject", "reviewer": "...", "note": "..." } } }, then re-join with --skip-build.', drops: dropsForReview }, null, 1));
+const dropReview = (() => { try { return JSON.parse(fs.readFileSync(path.join(OUT, 'Keyword drop review.json'), 'utf8')).reviews ?? {}; } catch { return {}; } })();
+const dropFails = dropsForReview.map(d => ({ d, r: dropReview[String(d.index)] })).filter(({ r }) => !r || r.verdict !== 'approve');
+if (dropFails.length) { process.exitCode = 1; console.error(`KEYWORD DROP REVIEW FAIL: ${dropFails.map(({ d, r }) => `${d.id} ${d.word} (${r ? `rejected by ${r.reviewer ?? 'reviewer'}` : 'not reviewed'})`).join(', ')}`); }
 const staticFinal = staticPartials(finalObj, { until: frames });
 if (staticFinal.length) { process.exitCode = 1; console.error(`STATIC PARTLY ON SCREEN FAIL: ${staticFinal.map(x => `${x.w.id} ${x.w.text} ${x.start}-${x.end}`).join(', ')}`); }
 const emptyEnds = [0, frames - 1].filter(f => emptyFrames(finalObj, { from: f, until: f + 1 }).length);
@@ -380,7 +395,7 @@ md.push('', '## Opening and team wordmarks', '', appearance.intro,
 { const L = roles.log, kw = finalObj.words.filter(w => w.keyword && !w.reveal_copy_of), kwDropped = kw.filter(w => w.dropped);
   md.push('', '## Word roles (keywords, names, scores)', '', `Keywords (one classifier for the grey rule, the size pass and keyword mode): ${kw.length} of ${finalObj.words.filter(w => w.map_index != null && !w.reveal_copy_of).length} matched words. Keywords dropped: ${kwDropped.length}${kwDropped.length ? ` (${kwDropped.map(w => `${w.id} ${w.text}, ${w.dropped}`).join('; ')})` : ''}.`,
     `Grey keywords made cream: ${L.greyKeywords.length}. Grey player names made cream: ${L.greyNames.length}. Font changes: ${L.fontChanges.length}. Scores: ${L.scores.length}. Scene words not matched to the song map: ${L.unmatched.length}.`, '',
-    ...[...L.greyKeywords, ...L.greyNames, ...L.fontChanges, ...L.scores].map(x => `- ${x}`), ...(L.unmatched.length ? [`- Unmatched: ${L.unmatched.join(', ')}`] : [])); }
+    ...[...L.greyKeywords, ...L.greyNames, ...L.fontChanges, ...L.scores].map(x => `- ${x}`), '', `Numerals (brief 10 items 40 and 41): ${L.numerals.length}.`, ...L.numerals.map(x => `- ${x}`), '', `Display overrides (brief 10 item 42): ${L.displays.length}.`, ...L.displays.map(x => `- ${x}`), '', `Player names and jersey numbers in team colours (brief 10 items 46 and 47, jersey_colours ${teamNames.mode}${teamNames.team ? `, dark ${teamNames.team.dark}, light ${teamNames.team.light}` : ''}): ${teamNames.log.length}.`, ...teamNames.log.map(x => `- ${x}`), '', `Keyword drops for review (brief 10 item 44): ${dropsForReview.length}${dropsForReview.length ? `; ${dropFails.length} without an approving review (FAIL)` : ''}.`, ...dropsForReview.map(d => `- ${d.id} ${d.word} at ${d.time_s} s (still frame ${d.frame_to_still}): ${d.reason}; review: ${dropReview[String(d.index)]?.verdict ?? 'none'}`), ...(L.unmatched.length ? [`- Unmatched: ${L.unmatched.join(', ')}`] : [])); }
 md.push('', '## Hold-hide partners', '', `${partnerHides.length} changes.`, '', ...partnerHides.map(x => `- ${x}`));
 { const opAt = (w, f) => { let v = 1; for (const [k, x] of w.opacity ?? []) if (k <= f) v = x; return v; };
   const byId = new Map(finalObj.words.map(w => [w.id, w]));

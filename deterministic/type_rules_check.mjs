@@ -48,7 +48,7 @@ map.words.forEach((m, i) => {
   if (ranks[i] < 2) return;
   const f = Math.round(m.start_s * FPS);
   if (f >= until) return;
-  const w = lyric.find(x => Math.abs(x.t - m.start_s) < 0.05 && (N(x.text) === N(disp(m.text)) || N(x.text).replace(/[^A-Z0-9]/g, '') === N(disp(m.text)).replace(/[^A-Z0-9]/g, '')));
+  const w = lyric.find(x => x.map_index === i) ?? lyric.find(x => Math.abs(x.t - m.start_s) < 0.05 && (N(x.text) === N(disp(m.text)) || N(x.text).replace(/[^A-Z0-9]/g, '') === N(disp(m.text)).replace(/[^A-Z0-9]/g, '')));
   let shown = false;
   if (w && !w.dropped) for (let g = f - 2; g <= f + 8 && !shown; g++) shown = opacityAt(w, g) > 0.05 && w.on <= g && (w.off == null || g < w.off) && fullyShown(w, g, I.poseAt(scene.cams, g), vfov);
   // Rule 2 as amended (Jefferson, 22 November 2026): a word the engine dropped by necessity is reported, not failed.
@@ -60,6 +60,8 @@ map.words.forEach((m, i) => {
 // Rule 3: one solid colour, no outlines; cream, white, flat grey 75% or 50%, or a team colour.
 const palStyles = scene.meta.palette?.styles ?? [], team = teamStyleIds({ styles: palStyles });
 const allowed = new Set(Object.values(TEXT_COLOURS).map(c => c.toLowerCase()));
+// The song's team colours (the palette's team styles, brief 10 items 46 and 47: names and jersey numbers drawn in them).
+for (const st of palStyles) if (team.has(st.id)) for (const c of [st.colours?.text, st.colours?.background]) if (c) allowed.add(c.toLowerCase());
 for (const w of scene.words) {
   if (w.reveal_copy_of || w.dropped || w.on >= until) continue;
   const f = w.on;
