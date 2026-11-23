@@ -182,14 +182,17 @@ export function emptyFrames(scene, { from = 0, until = scene.meta.frames } = {})
 // overlaps increase: (1) the outgoing words stay on through the run; (2) the incoming words (switching on within
 // FILL_LEAD frames after it, at rest) switch on at the first frame of the run they are in frame and upright.
 export const FILL_LEAD = 4;
-export function fillEmptyFrames(scene, { from = 0, until = scene.meta.frames, onsetOf } = {}) {
+// Only empty stretches longer than maxFrames are filled or reported (Jefferson, 22 November 2026: perceptibly long gaps
+// between something leaving and the next thing arriving are the problem; a frame or a few are not).
+export function fillEmptyFrames(scene, { from = 0, until = scene.meta.frames, onsetOf, maxFrames = 15 } = {}) {
+  const long = r => r.end - r.start + 1 > maxFrames;
   const I = globalThis.KT_INTERP, vfov = scene.meta.vfov ?? 40, log = [];
   const partials = () => onsetOf ? gateFailures(scene, onsetOf, { until }).filter(x => x.kind === 'partial').length : 0;
   let basePartial = partials();
   for (let pass = 0; pass < 3; pass++) {
   const before = log.length;
   for (const run of emptyFrames(scene, { from, until })) {
-    if (run.start === 0) continue;
+    if (run.start === 0 || !long(run)) continue;
     const lo = Math.max(0, run.start - 2), hi = Math.min(scene.meta.frames, run.end + 12);
     const overlapBefore = scanOverlap(scene, { from: lo, until: hi }).overlaps.length;
     const wLo = Math.max(from, run.start - 20), wHi = Math.min(until, run.end + 21);
@@ -261,5 +264,6 @@ export function fillEmptyFrames(scene, { from = 0, until = scene.meta.frames, on
   }
   if (log.length === before) break;
   }
-  return { log, remaining: emptyFrames(scene, { from, until }) };
+  const all = emptyFrames(scene, { from, until });
+  return { log, remaining: all.filter(long), short: all.filter(r => !long(r)) };
 }
