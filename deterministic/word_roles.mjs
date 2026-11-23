@@ -181,6 +181,7 @@ export function applyWordRoles(scene, { mapWords, display, song, names = [], met
 // { dark, light } (per player: `player_teams` { NAME: { dark, light } }). A block grows the word's box about its centre
 // (block padding at the same letter height); if that would overlap a word or cut the word at an edge where it was
 // whole, the block is drawn inside the word's own box (tighter padding, no layout change), and the report says so.
+export const BLOCK_MIN_PAD = 0.18; // brief 12 item 1.2: 3x the 6f thin rim (0.06), as a share of the letter height
 const lum = hex => contrast(hex, '#000000');
 export function songTeamColours(palette, song) {
   const blockText = song.team_colours?.block_text ?? TEXT_COLOURS.white;
@@ -213,18 +214,29 @@ export function teamColourNames(scene, { song, palette, metricsPath, until = sce
     let how = 'letters';
     if (mode === 'block' && metrics) {
       const a = Math.max(0, w.on), b = Math.min(until, w.off ?? until), before = mine(w, a, b), whole = wholeFrames(w);
-      const blockPad = 0.28 * w.cap, pad0 = w.pad ?? 0.08 * w.cap;
-      if (pad0 < blockPad) { const dw = 2 * (blockPad - pad0); w.w += dw; w.h += dw; w.pad = blockPad; }
-      w.colours = { ...(w.colours ?? {}), text: team.block_text, background: team.dark };
-      const now = wholeFrames(w);
-      if (mine(w, a, b) > before || now.length < whole.length) {
-        // Brief 10 item 47.1: the block is the default, so a word with no room for block padding keeps its own box and
-        // gets the block inside it (tighter padding), rather than switching to letters.
-        back(); w.colours = { ...(w.colours ?? {}), text: team.block_text, background: team.dark }; how = 'tight block';
-      } else how = 'block';
+      const pad0 = w.pad ?? 0.08 * w.cap;
+      // Brief 12 item 1.2 ("we don't do thin lines"): the team-colour margin round the letters is at least
+      // BLOCK_MIN_PAD x the letter height. Tried: full block padding (0.28), then the minimum (0.18), each grown about
+      // the centre; else the box stays and the letters shrink inside it until the margin reaches the minimum.
+      for (const p of [0.28, BLOCK_MIN_PAD]) {
+        back(); const pad = p * w.cap;
+        if (pad0 < pad) { const dw = 2 * (pad - pad0); w.w += dw; w.h += dw; w.pad = pad; }
+        w.colours = { ...(w.colours ?? {}), text: team.block_text, background: team.dark };
+        if (mine(w, a, b) <= before && wholeFrames(w).length >= whole.length) { how = p === 0.28 ? 'block' : 'minimum block'; break; }
+      }
+      if (how === 'letters') {
+        back();
+        if (pad0 < BLOCK_MIN_PAD * w.cap - 1e-9) {
+          const textW = w.w - 2 * pad0, extra = w.h - w.cap - 2 * pad0; // the box's height beyond cap and padding
+          const k = Math.min(w.w / (textW + 2 * BLOCK_MIN_PAD * w.cap), w.h / (w.cap * (1 + 2 * BLOCK_MIN_PAD) + extra));
+          for (const key of ['cap', 'fontPx']) if (typeof w[key] === 'number') w[key] *= k;
+          w.pad = BLOCK_MIN_PAD * w.cap; w.block_shrunk = +k.toFixed(3);
+        }
+        w.colours = { ...(w.colours ?? {}), text: team.block_text, background: team.dark }; how = 'tight block';
+      }
     }
     if (how === 'letters') { const c = { ...(w.colours ?? {}), text: team.light }; delete c.background; w.colours = c; w.style = 'cream'; if ((w.pad ?? 0) > 0.2 * w.cap) { const d = 2 * (w.pad - 0.08 * w.cap); w.w -= d; w.h -= d; w.pad = 0.08 * w.cap; } }
-    log.push(`${w.id} ${w.text} at ${(w.t ?? 0).toFixed(2)} s: ${how === 'block' ? `${team.block_text} on a ${team.dark} block` : how === 'tight block' ? `${team.block_text} on a ${team.dark} block inside its own box (block padding would overlap a word or cut it at an edge)` : `letters in ${team.light}`}`);
+    log.push(`${w.id} ${w.text} at ${(w.t ?? 0).toFixed(2)} s: ${how === 'block' ? `${team.block_text} on a ${team.dark} block` : how === 'minimum block' ? `${team.block_text} on a ${team.dark} block, margin at the minimum (${BLOCK_MIN_PAD} x the letter height; full padding would overlap or cut it)` : how === 'tight block' ? `${team.block_text} on a ${team.dark} block inside its own box${w.block_shrunk ? `, letters shrunk x${w.block_shrunk} to keep the minimum margin` : ''} (a larger block would overlap a word or cut it at an edge)` : `letters in ${team.light}`}`);
   }
   // Reveal copies and echoes follow their source word.
   const byId = new Map(scene.words.map(x => [x.id, x]));

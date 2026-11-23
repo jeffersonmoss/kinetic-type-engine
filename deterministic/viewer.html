@@ -20,6 +20,11 @@ const camera=new THREE.PerspectiveCamera(S.meta.vfov ?? 40,W/H,20,2e5);
 const FAM={anton:'Anton',serif:'Graduate',barlow:'"Barlow Condensed"',bebas:'"Bebas Neue"',gothic:'"League Gothic"',shoulders:'"Big Shoulders Display"',collegiate:'Graduate',wide:'"Archivo Black"',stencil:'"Saira Stencil One"',teko:'Teko'};
 const WEIGHT={barlow:700,shoulders:900,teko:700};
 const JERSEY=['collegiate']; // style.mjs JERSEY_FONTS
+// Brief 12 item 1.2 (Jefferson: "we don't do thin lines"): borders and edges round blocks are 3x their 6f thickness
+// as the engine minimum. Score rim (block colour round the bulb panel) 0.06 -> 0.18 of the letter height; wordmark
+// edge 0.045 -> 0.135 of the image height; ring-box border 0.07 -> 0.21 of the letter height. Letter outlines are
+// not borders (Type rule 3: no outlines) and are unchanged.
+const BORDER={rim:.18,edge:.135,ring:.21};
 const ST={'heat-flame':{bg:'#D0102E',fill:'flame'},heat:{bg:'#98002E',fill:'#ffffff',border:'#ffffff'},'sixers-white':{bg:'#FFFFFF',fill:'#006BB6'},cavs:{bg:'#860038',fill:'#FDBB30',border:'#FDBB30'},lakers:{bg:'#552583',fill:'#FDB927',border:'#FDB927'},sixers:{bg:'#006BB6',fill:'#ffffff'},'sixers-red':{fill:'#ED174C'},'sixers-outline':{stroke:'#ED174C'},cream:{fill:'#F3EBDD'},'cream-outline':{stroke:'#F3EBDD'},white:{fill:'#FFFFFF'},grey:{fill:'#808080'},teal:{fill:'#2EC4B6'},'teal-block':{bg:'#2EC4B6',fill:'#0b0b0d'},'teal-outline':{stroke:'#2EC4B6'},gold:{fill:'#FDB927'}};
 // Song-agnostic (22 November 2026): palette styles this table lacks come from the scene's palette (build_best writes meta.palette.styles).
 for(const ps of (S.meta.palette?.styles ?? [])) if(!ST[ps.id]){const c=ps.colours ?? {};ST[ps.id]=ps.kind==='outline' ? {stroke:c.stroke ?? c.text} : {...(c.background ? {bg:c.background} : {}), fill:c.text ?? '#F3EBDD', ...(c.border ? {border:c.border} : {})};}
@@ -58,6 +63,7 @@ function scoreTexture(w,c,g,px){
   const digits=[...String(w.text)].filter(ch=>/\d/.test(ch));
   let u=w.cap*px/8; const span=n=>n*4*u+(n-1)*2.4*u+1.6*u;
   if(span(digits.length)>c.width*.96)u*=c.width*.96/span(digits.length);
+  if(8*u>c.height*.96)u*=c.height*.96/(8*u); // brief 12: inside a thicker rim the digits may need to shrink
   const x0=(c.width-span(digits.length))/2+.8*u, y0=(c.height-8*u)/2, r=.36*u;
   const bulb=(x,y,lit)=>{
     if(lit){
@@ -83,10 +89,10 @@ function wordTexture(w) {
   if(w.score && /\d/.test(w.text)){
     // Brief 8 item 53: bulb digits always sit on a dark scoreboard panel (on a mid-colour block the unlit bulbs read
     // as lit, so 43 read as 88); the word's block colour, if any, shows as a thin rim around it.
-    const bg=override.background, rim=bg?Math.max(2,Math.round(.06*w.cap*px)):0;
+    const bg=override.background, rim=bg?Math.max(2,Math.round(BORDER.rim*w.cap*px)):0;
     if(bg){g.fillStyle=bg;g.fillRect(0,0,c.width,c.height);}
     g.fillStyle='#0A0F1C';g.fillRect(rim,rim,c.width-2*rim,c.height-2*rim);
-    scoreTexture(w,c,g,px);
+    g.save();g.translate(rim,rim);scoreTexture(w,{width:c.width-2*rim,height:c.height-2*rim},g,px);g.restore(); // digits fit inside the rim
     const texture=new THREE.CanvasTexture(c);texture.colorSpace=THREE.SRGBColorSpace;texture.anisotropy=8;
     return {texture,block:true,canvas:c};
   }
@@ -111,7 +117,7 @@ function wordTexture(w) {
       g.drawImage(tinted(brand.tint ?? null),x,y);
       // Brief 8 item 55: an edge colour (song setting colours.edge) frames an opaque wordmark that would sink into a
       // dark background (PORTLAND's black block).
-      if(brand.edge){const e=Math.max(2,Math.round(dh*.045));g.strokeStyle=brand.edge;g.lineWidth=e;g.strokeRect(x+e/2,y+e/2,dw-e,dh-e);}
+      if(brand.edge){const e=Math.max(2,Math.round(dh*BORDER.edge));g.strokeStyle=brand.edge;g.lineWidth=e;if(mg!=null&&ink)g.strokeRect(e/2,e/2,c.width-e,c.height-e);else g.strokeRect(x+e/2,y+e/2,dw-e,dh-e);} // with even margins the edge frames the block, clear of the ink
       const texture=new THREE.CanvasTexture(c);texture.colorSpace=THREE.SRGBColorSpace;texture.anisotropy=8;
       return {texture,block:!!bg,canvas:c};
     }
@@ -185,7 +191,7 @@ function wordTexture(w) {
       }
       g.drawImage(L,0,0);
     } else {bolden();g.fillText(w.text,CX,base);}
-    if(style.border){const b=.07*w.cap*px;g.lineWidth=b;g.strokeStyle=style.border;g.strokeRect(b/2,b/2,c.width-b,c.height-b);} // ring boxes: border in the letter colour (Jefferson 22 Nov: Heat plain white on red, no flames, no edge)
+    if(style.border){const b=BORDER.ring*w.cap*px;g.lineWidth=b;g.strokeStyle=style.border;g.strokeRect(b/2,b/2,c.width-b,c.height-b);} // ring boxes: border in the letter colour (Jefferson 22 Nov: Heat plain white on red, no flames, no edge)
 
   }
   const t=new THREE.CanvasTexture(c);t.colorSpace=THREE.SRGBColorSpace;t.anisotropy=8;return {texture:t,block:!!bg,canvas:c};
