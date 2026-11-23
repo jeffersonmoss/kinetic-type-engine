@@ -250,7 +250,7 @@ export function compactLayout(plaques, { gapFrac = 0.3 } = {}) {
 // of their bounding box, and backs off until every corner sits within 86% of the frame. The longest candidate whose last
 // frame covers at least minCoverage of the frame wins (or the best-covering one if none does). The pull-back ends
 // maxHoldFrames before endFrame (and lasts at least pullFrames), so the still hold at the end stays short.
-export function buildReveal(scene, { f0, pullFrames, endFrame, maxHoldFrames = 90, gapFrac = 0.1, minCoverage = 0.2, fill = 0.86, compact = true }) {
+export function buildReveal(scene, { f0, pullFrames, endFrame, maxHoldFrames = 90, minHoldFrames = 15, gapFrac = 0.1, minCoverage = 0.2, fill = 0.86, compact = true }) {
   const I = globalThis.KT_INTERP, vfov = scene.meta.vfov;
   const order = [...scene.plaques].sort((a, b) => b.on - a.on);
   // Plaques of one section already obey that section's trail rules (joined plaques touch by design), so conflicts are
@@ -330,6 +330,20 @@ export function buildReveal(scene, { f0, pullFrames, endFrame, maxHoldFrames = 9
     if (!best || r.coverage > best.coverage + 1e-9) { best = r; bestN = n; }
     if (r.coverage >= minCoverage) { best = r; bestN = n; break; }
   }
+  // Stop the pull-back at the coverage floor (engine fix brief 3, item 1.2): when showing the whole compacted layout
+  // would cover less than minCoverage of the frame, the camera stops closer, centred on the layout, at the farthest
+  // distance that still covers minCoverage.
+  let stoppedAt = null;
+  if (best.coverage < minCoverage) {
+    const tailSet = tail.slice(0, bestN);
+    const poseOf = dist => I.poseAt([{ f0: -2, f1: -1, from: { target: best.target, ...best.view, dist }, to: { target: best.target, ...best.view, dist } }], 0);
+    let lo = best.dist * 0.02, hi = best.dist;
+    if (frameCoverage(tailSet, poseOf(lo), vfov) >= minCoverage) {
+      for (let i = 0; i < 40; i++) { const m = (lo + hi) / 2; if (frameCoverage(tailSet, poseOf(m), vfov) >= minCoverage) lo = m; else hi = m; }
+      stoppedAt = { from: best.dist, to: lo, coverageWhole: best.coverage };
+      best = { ...best, dist: lo, coverage: frameCoverage(tailSet, poseOf(lo), vfov) };
+    }
+  }
   const shown = tail.slice(0, bestN);
   const tailIds = new Set(shown.map(p => p.id));
   // every revealed plaque (and its words) is switched on for the reveal, whatever the vanishing rule did earlier
@@ -338,7 +352,10 @@ export function buildReveal(scene, { f0, pullFrames, endFrame, maxHoldFrames = 9
   // everything else switches off for good at the reveal if still on
   for (const p of scene.plaques) if (!tailIds.has(p.id)) { p.reveal_on = null; if (p.off == null || p.off > f0) p.off = f0; }
   for (const w of scene.words) if (!tailIds.has(w.plaque)) { w.reveal_on = null; if (w.off == null || w.off > f0) w.off = f0; }
-  const f1 = Math.max(f0 + pullFrames, (endFrame ?? f0 + pullFrames) - maxHoldFrames);
+  // Never end mid-move (item 1.3): the pull-back lands at least minHoldFrames before the end (build_song starts the
+  // reveal early enough for that); a still hold of at most maxHoldFrames follows.
+  let f1 = Math.max(f0 + pullFrames, (endFrame ?? f0 + pullFrames) - maxHoldFrames);
+  if (endFrame != null) f1 = Math.max(f0 + 1, Math.min(f1, endFrame - minHoldFrames));
   const from = I.poseAt(scene.cams, f0);
   scene.cams = scene.cams.filter(c => c.f0 < f0).map(c => (c.f1 > f0 ? { ...c, f1: f0 } : c));
   scene.cams.push({ f0, f1, kind: 'reveal', verb: 'sweep', fold: 'reveal', ease: { a: 2, b: 3, x0: 0.4 }, hold_target_until: 0.3,
@@ -349,7 +366,7 @@ export function buildReveal(scene, { f0, pullFrames, endFrame, maxHoldFrames = 9
     scene.words = scene.words.filter(w => !w.reveal_copy_of || keep.has(w.plaque));
   }
   const originals = scene.plaques.filter(p => !p.reveal_copy_of).length;
-  return { conflictFreeTail: tail.length, tail: bestN, of: originals, cut, dist: best.dist, plannedCoverage: best.coverage, f0, f1,
+  return { conflictFreeTail: tail.length, tail: bestN, of: originals, cut, dist: best.dist, plannedCoverage: best.coverage, f0, f1, stoppedAt,
     compaction: compaction && { chains: compaction.chains, gapsBefore: compaction.gapsBefore, largestGapAfter: compaction.largestGapAfter, dropped: compaction.dropped, log: compaction.log } };
 }
 
@@ -361,4 +378,47 @@ export function checkReveal(scene, { frame = scene.meta.frames - 1, minCoverage 
   const coverage = frameCoverage(shown, pose, scene.meta.vfov);
   const inFrame = shown.filter(p => cornersOf(p).some(c => { const q = I.project(c, pose, scene.meta.vfov); return q && q.depth > 0 && Math.abs(q.x) <= 1 && Math.abs(q.y) <= 1; })).length;
   return { frame, coverage, plaquesShown: shown.length, plaquesInFrame: inFrame, pass: coverage >= minCoverage };
+}
+
+// Ending without a reveal (engine fix brief 3, item 1.1): the song ends on one word held still to the last frame.
+// `hold` is a word's text (its last sung occurrence; case and surrounding punctuation ignored) or "last" (the last sung
+// word). Camera keys that start after the held word has come to rest are dropped, and so the camera holds still on it.
+// If words are sung after the held word, the camera keeps playing through them and then cuts back to the held framing
+// at least minHoldFrames before the end. The held word and its plaque stay on to the end.
+export function endOnWord(scene, { hold = 'last', endFrame, fps = 30, minHoldFrames = 15, settle = 6 }) {
+  const I = globalThis.KT_INTERP;
+  const norm = t => String(t).toUpperCase().replace(/^[^A-Z0-9]+|[^A-Z0-9]+$/g, '');
+  const sung = scene.words.filter(w => w.t != null && !w.echo && !w.reveal_copy_of).sort((a, b) => a.t - b.t);
+  const pick = hold === 'last' ? sung.at(-1) : sung.filter(w => norm(w.text) === norm(hold)).at(-1);
+  if (!pick) throw Error(`ending.hold "${hold}": no sung word matches`);
+  const j = pick.joint, rest = !j || ['pop', 'travel', 'echo'].includes(j.prim) || !(j.f1 > pick.on) ? pick.on : j.f1;
+  const after = sung.filter(w => w.t > pick.t);
+  const lastOnset = after.length ? Math.round(after.at(-1).t * fps) : null;
+  const holdPose = I.poseAt(scene.cams, rest + settle);
+  const strip = p => ({ target: p.target, R: p.R, U: p.U, N: p.N, dist: p.dist });
+  let cutBack = null;
+  if (after.length) {
+    const keepUntil = Math.min(lastOnset + 15, endFrame - minHoldFrames);
+    scene.cams = scene.cams.filter(c => c.f0 < keepUntil).map(c => (c.f1 > keepUntil ? { ...c, f1: keepUntil } : c));
+    const from = I.poseAt(scene.cams, keepUntil);
+    scene.cams.push({ f0: keepUntil, f1: keepUntil, kind: 'ending', verb: 'cut', fold: 'flat', from: strip(from), to: strip(holdPose) });
+    cutBack = keepUntil;
+  } else {
+    scene.cams = scene.cams.filter(c => c.f0 <= rest); // a move already under way when the word rests finishes as planned
+  }
+  pick.off = null;
+  const plaque = scene.plaques.find(p => p.id === pick.plaque);
+  if (plaque) plaque.off = null;
+  for (const v of [...scene.plaques, ...scene.words]) v.reveal_on = null;
+  return { word: `${pick.id} ${pick.text}`, restFrame: rest, sungAfter: after.map(w => `${w.id} ${w.text}`), cutBack, f0: endFrame, f1: endFrame };
+}
+
+// Never end mid-move (item 1.3): the camera is still over the last minHoldFrames frames and no shown word is moving
+// on the last frame.
+export function checkStillEnding(scene, { minHoldFrames = 15 } = {}) {
+  const I = globalThis.KT_INTERP, last = scene.meta.frames - 1, problems = [];
+  for (const k of scene.cams) if (k.f1 > k.f0 && k.f1 > last - minHoldFrames + 1 && k.f0 < scene.meta.frames) problems.push(`camera ${k.verb} ${k.f0}-${k.f1} moves within the last ${minHoldFrames} frames`);
+  const shown = w => (w.on <= last && (w.off == null || last < w.off)) || (w.reveal_on != null && last >= w.reveal_on);
+  for (const w of scene.words) if (shown(w) && I.wordMoving(w, last)) problems.push(`${w.id} ${w.text} is moving on the last frame`);
+  return { pass: !problems.length, problems };
 }
