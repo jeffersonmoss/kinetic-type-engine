@@ -105,6 +105,12 @@ function hide(w, a, b) {
   const restore = opacityAt(w, b);
   w.opacity = [...(w.opacity ?? []).filter(([k]) => k < a || k >= b), [a, 0], [b, restore]].sort((x, y) => x[0] - y[0]);
 }
+// Unhide w over [a, b): opacity 1, then whatever it was at b.
+function unhide(w, a, b) {
+  const restore = opacityAt(w, b);
+  w.opacity = [...(w.opacity ?? []).filter(([k]) => k < a || k >= b), [a, 1], [b, restore]].sort((x, y) => x[0] - y[0]);
+  if (w.opacity.every(([, v]) => v === 1)) delete w.opacity;
+}
 const focusWindow = (w, onsetOf, fps) => {
   const o = onsetOf(w) ?? Math.round((w.t ?? w.on / fps) * fps);
   return [Math.min(appearanceFrame(w), o), Math.max(appearanceFrame(w), o) + FOCUS_READ];
@@ -812,7 +818,7 @@ export function placeInRoom(scene, onsetOf, { until = scene.meta.frames, setting
             const big = f => scene.words.some(y => y !== w && !y.reveal_copy_of && drawn(y, f) && inFrameShare(y, f, poseAt(f), vfov) > CLIP_SHARE && (letterHeight(y, f, poseAt(f), vfov) ?? 0) >= S.minH);
             let ok = true;
             for (let f = a; f < b && ok; f += 2) if (drawn(w, f)) ok = big(f);
-            if (ok) hide(w, a, b);
+            if (ok) { (w.size_hides ??= []).push([a, b, JSON.stringify(w.opacity ?? null)]); hide(w, a, b); }
           }
           const appliedMin = sh.find(x => x.h.start <= o && o < x.h.end)?.min ?? (min0 / 1.03);
           how = `${du || dv ? `moved ${du ? `${du} of its width along its line` : ''}${du && dv ? ' and ' : ''}${dv ? `${dv} of its height up its plaque` : ''}` : 'in its planned spot'}${k > 1.0001 ? `, grown x${k.toFixed(2)}` : ''}${candOn !== on0 ? `, on moved ${on0}->${candOn} (onset)` : ''}, letters ${(100 * h0 * k).toFixed(1)}% (minimum ${(100 * appliedMin).toFixed(1)}%), entering as a pop`;
@@ -1053,6 +1059,11 @@ export function sizeShortfalls(scene, onsetOf, { until = scene.meta.frames, sett
   const S = { ...SIZE_DEFAULTS, ...settings };
   const I = globalThis.KT_INTERP, vfov = scene.meta.vfov ?? 40, fps = scene.meta.fps ?? 30, out = [];
   const poses = new Map(), poseAt = f => poses.get(f) ?? poses.set(f, I.poseAt(scene.cams, f)).get(f);
+  const crowdedAt = f => {
+    const p = poseAt(f);
+    const on = scene.words.filter(x => !x.reveal_copy_of && drawn(x, f) && inFrameShare(x, f, p, vfov) >= FILLED_SHARE);
+    return on.length >= S.crowdedWords || on.reduce((t, x) => t + boxCoverage(x, f, p, vfov), 0) >= S.crowdedArea;
+  };
   const hs = holds(scene, until);
   for (const w of scene.words) {
     if (w.reveal_copy_of || w.wordmark || w.dropped || w.on >= until) continue;
@@ -1064,12 +1075,10 @@ export function sizeShortfalls(scene, onsetOf, { until = scene.meta.frames, sett
         const p = poseAt(f);
         if (inFrameShare(w, f, p, vfov) <= CLIP_SHARE || !G.readableOrientation(w, f, p, vfov)) continue;
         const size = letterHeight(w, f, p, vfov);
-        if (size != null && (!best || size > best.size)) best = { size, f };
+        if (size != null && (!best || size > best.size + 1e-9 || (Math.abs(size - best.size) <= 1e-9 && crowdedAt(f) && !crowdedAt(best.f)))) best = { size, f };
       }
       if (!best) continue;
-      const p = poseAt(best.f);
-      const on = scene.words.filter(x => !x.reveal_copy_of && drawn(x, best.f) && inFrameShare(x, best.f, p, vfov) >= FILLED_SHARE);
-      const crowded = on.length >= S.crowdedWords || on.reduce((t, x) => t + boxCoverage(x, best.f, p, vfov), 0) >= S.crowdedArea;
+      const crowded = crowdedAt(best.f);
       const min = crowded ? S.minH : S.roomFactor * S.minH;
       const [fa, fb] = focusWindow(w, onsetOf, fps);
       if (best.size < min - 1e-9) out.push({ w, start: h.start, end: h.end, f: best.f, size: best.size, min, crowded, focused: fa < h.end && fb > h.start });
@@ -1206,7 +1215,13 @@ export function staticPartials(scene, { from = 0, until = scene.meta.frames, wor
         const prev = at(g - 1) ?? at(g);
         const still = g < e && Math.abs((at(g) ?? 0) - (prev ?? 0)) < STATIC_RATE;
         if (still && s == null) s = g;
-        if (!still && s != null) { if (g - s >= STATIC_FRAMES) out.push({ w, start: s, end: g, spanStart: f, spanEnd: e, share: at(s) }); s = null; }
+        if (!still && s != null) {
+          // Include the first frame of the static run (s - 1 when s > f): k consecutive frames at rest have k - 1
+          // zero-change steps between them (brief 16b: INSIDE sat 9% in frame on 4541-4543, 3 frames = 2 steps).
+          const start = s > f ? s - 1 : s;
+          if (g - start >= STATIC_FRAMES) out.push({ w, start, end: g, spanStart: f, spanEnd: e, share: at(s) });
+          s = null;
+        }
       }
       f = e;
     }
@@ -1279,6 +1294,171 @@ export function pairHoldHides(scene, onsetOf, { until = scene.meta.frames, maxFr
     }
   }
   return log;
+}
+// Phrase gaps in later views (brief 16b: UP [gap] TR3Y at 159.3 s, SO DON'T [gap] NOT ONE INCH at 141.5 s).
+// When a later view (camera hold) of a phrase shows words on both sides of one or more hidden intermediate words
+// from the same plaque/phrase that fit in frame, either show all the fitting words between them (judging crowdedness
+// with all of them visible together, with no overlap or static partial) or hide one non-focused side of the gap so
+// the view never shows a blank hole inside a phrase.
+export function phraseGaps(scene, onsetOf, { until = scene.meta.frames, settings = {}, maxFrames = 7 } = {}) {
+  const S = { ...SIZE_DEFAULTS, ...settings }, I = globalThis.KT_INTERP, vfov = scene.meta.vfov ?? 40, fps = scene.meta.fps ?? 30;
+  const poses = new Map(), poseAt = f => poses.get(f) ?? poses.set(f, I.poseAt(scene.cams, f)).get(f);
+  const hs = holds(scene, until);
+  const byMap = new Map(scene.words.filter(w => w.map_index != null && !w.reveal_copy_of && !w.echo).map(w => [w.map_index, w]));
+  const crowdedAt = f => {
+    const p = poseAt(f);
+    const on = scene.words.filter(x => !x.reveal_copy_of && drawn(x, f) && inFrameShare(x, f, p, vfov) >= FILLED_SHARE);
+    return on.length >= S.crowdedWords || on.reduce((t, x) => t + boxCoverage(x, f, p, vfov), 0) >= S.crowdedArea;
+  };
+  const hasProps = I.hasKeepClearProps?.(scene);
+  const out = [];
+  for (const h of hs) {
+    const sampleFrames = [...new Set([h.start, Math.min(h.end - 1, h.start + 2), Math.floor((h.start + h.end) / 2), Math.max(h.start, h.end - 2)])];
+    const seen = new Set();
+    for (const f of sampleFrames) {
+      const p = poseAt(f);
+      const vis = scene.words.filter(w =>
+        w.map_index != null && !w.reveal_copy_of && !w.echo && drawn(w, f) && !I.wordMoving(w, f) &&
+        inFrameShare(w, f, p, vfov) >= FILLED_SHARE && G.readableOrientation(w, f, p, vfov, { tilt: false })
+      ).sort((a, b) => a.map_index - b.map_index);
+      for (let i = 0; i < vis.length - 1; i++) {
+        const wL = vis[i], wR = vis[i + 1];
+        if (wR.map_index - wL.map_index <= 1) continue;
+        if (!wL.plaque || wL.plaque !== wR.plaque) continue;
+        const key = `${h.start}-${h.end}:${wL.plaque}:${wL.map_index}-${wR.map_index}`;
+        if (seen.has(key)) continue;
+        const hidden = [];
+        for (let m = wL.map_index + 1; m < wR.map_index; m++) {
+          const mw = byMap.get(m);
+          if (!mw || mw.plaque !== wL.plaque || mw.dropped) continue;
+          if (mw.on > f || (mw.off != null && f >= mw.off)) continue;
+          if (drawn(mw, f)) continue;
+          hidden.push(mw);
+        }
+        if (!hidden.length) continue;
+        // Find which hidden intermediate words fit whole & readable in frame across their overlap with this hold.
+        const fitting = [];
+        for (const mw of hidden) {
+          const a = Math.max(h.start, mw.on), b = Math.min(h.end, mw.off ?? until, until);
+          if (b - a < 1) continue;
+          const savedOp = JSON.stringify(mw.opacity ?? null);
+          unhide(mw, a, b);
+          let ok = true, anyFrame = false;
+          for (let g = a; g < b && ok; g += 2) {
+            if (I.wordMoving(mw, g)) continue;
+            anyFrame = true;
+            const pg = poseAt(g);
+            ok = inFrameShare(mw, g, pg, vfov) > CLIP_SHARE && G.readableOrientation(mw, g, pg, vfov);
+          }
+          const orig = JSON.parse(savedOp); if (orig) mw.opacity = orig; else delete mw.opacity;
+          if (ok && anyFrame) fitting.push(mw);
+        }
+        if (!fitting.length) continue;
+        seen.add(key);
+        // Option A: can all fitting intermediate words be shown together in hold h (meeting size min, no overlap, no static partial)?
+        const savedOps = fitting.map(mw => [mw, JSON.stringify(mw.opacity ?? null)]);
+        const ovBefore = overlapFrames(scanOverlap(scene, { from: h.start, until: h.end }).overlaps, fps);
+        const stBefore = staticPartials(scene, { from: Math.max(0, h.start - 2), until: Math.min(until, h.end + 2), words: fitting }).length;
+        for (const mw of fitting) {
+          const a = Math.max(h.start, mw.on), b = Math.min(h.end, mw.off ?? until, until);
+          unhide(mw, a, b);
+        }
+        let allSizeOk = true;
+        for (const mw of fitting) {
+          const a = Math.max(h.start, mw.on), b = Math.min(h.end, mw.off ?? until, until);
+          let best = null;
+          for (let g = a; g < b; g += 2) {
+            if (!drawn(mw, g) || I.wordMoving(mw, g)) continue;
+            const pg = poseAt(g);
+            if (inFrameShare(mw, g, pg, vfov) <= CLIP_SHARE || !G.readableOrientation(mw, g, pg, vfov)) continue;
+            const sz = letterHeight(mw, g, pg, vfov);
+            if (sz != null && (!best || sz > best.size)) best = { size: sz, f: g };
+          }
+          if (!best) { allSizeOk = false; break; }
+          const min = crowdedAt(best.f) ? S.minH : S.roomFactor * S.minH;
+          if (best.size < min - 1e-9) { allSizeOk = false; break; }
+        }
+        const ovAfter = overlapFrames(scanOverlap(scene, { from: h.start, until: h.end }).overlaps, fps);
+        const stAfter = staticPartials(scene, { from: Math.max(0, h.start - 2), until: Math.min(until, h.end + 2), words: fitting }).length;
+        const propBad = hasProps && fitting.some(mw => {
+          const [pfa, pfb] = focusWindow(mw, onsetOf, fps);
+          return pfa < h.end && pfb > h.start && wordPropOverlapFrames(scene, mw, Math.max(h.start, pfa), Math.min(h.end, pfb), { useMargin: true }).length > 0;
+        });
+        for (const [mw, op] of savedOps) { const orig = JSON.parse(op); if (orig) mw.opacity = orig; else delete mw.opacity; }
+        const canShowAll = allSizeOk && ovAfter <= ovBefore && stAfter <= stBefore && !propBad;
+
+        // Option B: if not all fitting words can be shown, can we hide one non-focused side of the gap on this plaque?
+        let hideSide = null;
+        if (!canShowAll) {
+          const onPlaque = vis.filter(w => w.plaque === wL.plaque);
+          const leftSide = onPlaque.filter(w => w.map_index <= wL.map_index);
+          const rightSide = onPlaque.filter(w => w.map_index >= wR.map_index);
+          const near = { from: Math.max(0, h.start - maxFrames - 1), until: Math.min(until, h.end + maxFrames + 1) };
+          const longRuns = () => emptyFrames(scene, near).filter(r => r.end - r.start + 1 > maxFrames).length;
+          const shortInHold = () => {
+            let n = 0;
+            for (const x of onPlaque) {
+              const a = Math.max(h.start, x.on), b = Math.min(h.end, x.off ?? until, until);
+              let best = null;
+              for (let g = a; g < b; g += 2) {
+                if (!drawn(x, g) || I.wordMoving(x, g)) continue;
+                const pg = poseAt(g);
+                if (inFrameShare(x, g, pg, vfov) <= CLIP_SHARE || !G.readableOrientation(x, g, pg, vfov)) continue;
+                const sz = letterHeight(x, g, pg, vfov);
+                if (sz != null && (!best || sz > best.size + 1e-9 || (Math.abs(sz - best.size) <= 1e-9 && crowdedAt(g) && !crowdedAt(best.f)))) best = { size: sz, f: g };
+              }
+              if (!best) continue;
+              const min = crowdedAt(best.f) ? S.minH : S.roomFactor * S.minH;
+              if (best.size < min - 1e-9) n++;
+            }
+            return n;
+          };
+          const runsBefore = longRuns(), shortBefore = shortInHold();
+          for (const side of [leftSide, rightSide]) {
+            if (!side.length) continue;
+            if (side.some(w => { const [fa, fb] = focusWindow(w, onsetOf, fps); return fa < h.end && fb > h.start; })) continue;
+            const sOps = side.map(w => [w, JSON.stringify(w.opacity ?? null)]);
+            for (const w of side) hide(w, Math.max(h.start, w.on), Math.min(h.end, w.off ?? until, until));
+            const ok = longRuns() <= runsBefore && shortInHold() <= shortBefore;
+            for (const [w, op] of sOps) { const orig = JSON.parse(op); if (orig) w.opacity = orig; else delete w.opacity; }
+            if (ok) { hideSide = side; break; }
+          }
+        }
+        out.push({ h, f, left: wL, right: wR, hidden, fitting, canShowAll, hideSide });
+      }
+    }
+  }
+  return out;
+}
+export function repairPhraseGaps(scene, onsetOf, { until = scene.meta.frames, settings = {}, maxFrames = 7 } = {}) {
+  const log = [];
+  for (let pass = 0; pass < 4; pass++) {
+    const gaps = phraseGaps(scene, onsetOf, { until, settings, maxFrames });
+    let changed = false;
+    for (const g of gaps) {
+      if (g.canShowAll) {
+        for (const mw of g.fitting) {
+          const a = Math.max(g.h.start, mw.on), b = Math.min(g.h.end, mw.off ?? until, until);
+          unhide(mw, a, b);
+          if (mw.size_hides) mw.size_hides = mw.size_hides.filter(([ha, hb]) => hb <= a || ha >= b);
+        }
+        log.push(`${g.fitting.map(w => `${w.id} ${w.text}`).join(', ')}: unhidden ${g.h.start}-${g.h.end} to close phrase gap between ${g.left.id} ${g.left.text} and ${g.right.id} ${g.right.text}`);
+        changed = true;
+        break;
+      }
+      if (g.hideSide) {
+        for (const w of g.hideSide) {
+          const a = Math.max(g.h.start, w.on), b = Math.min(g.h.end, w.off ?? until, until);
+          hide(w, a, b);
+        }
+        log.push(`${g.hideSide.map(w => `${w.id} ${w.text}`).join(', ')}: hidden ${g.h.start}-${g.h.end} to close phrase gap around ${g.fitting.map(w => `${w.id} ${w.text}`).join(', ')} (cannot show at size without overlap)`);
+        changed = true;
+        break;
+      }
+    }
+    if (!changed) break;
+  }
+  return { log };
 }
 // Overlap measured in frames (the sum of the scan's interval lengths), optionally only intervals involving one word.
 export function overlapFrames(list, fps = 30, id = null) {

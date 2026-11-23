@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 import './interp.js';
 import { checkSync, checkHolds } from './whole_song_checks.mjs';
 import { assemble, hideWhenGone, buildReveal, checkReveal, endOnWord, checkStillEnding } from './assemble_sections.mjs';
-import { tightenLone, hideEdgeClutter, hideUnreadable, hideFlythrough, SIDE_FILL, placeInRoom, growWordmarks, loneHolds, LONE_HOLD, swellRelease, largestGreyToCream, fillEmptyFrames, swellSmallWords, floorZoomEntrances, pairHoldHides, emptyFrames, enforceMinSize, noOutlines, undoSizeForEmpty, hideStaticPartials, staticPartials, STATIC_RATE, STATIC_FRAMES } from './composition.mjs';
+import { tightenLone, hideEdgeClutter, hideUnreadable, hideFlythrough, SIDE_FILL, placeInRoom, phraseGaps, repairPhraseGaps, growWordmarks, loneHolds, LONE_HOLD, swellRelease, largestGreyToCream, fillEmptyFrames, swellSmallWords, floorZoomEntrances, pairHoldHides, emptyFrames, enforceMinSize, noOutlines, undoSizeForEmpty, hideStaticPartials, staticPartials, STATIC_RATE, STATIC_FRAMES } from './composition.mjs';
 import { JERSEY_BOLD, normalizePalette, checkPalette } from './style.mjs';
 import { keywordPlan, fastWordsOn, wordRanks } from './keywords.mjs';
 import { applyWordRoles, teamColourNames } from './word_roles.mjs';
@@ -367,8 +367,14 @@ if (fill.remaining.length) { // brief 7 item 3: stretches holding only undersize
 }
 // Brief 8 item 51: a big swell does not drop straight back to a speck.
 const swellReleases = swellRelease(finalObj, onsetOf, { until: frames, maxFrames: emptyMaxF });
+// Brief 16b: close phrase gaps in later views before pairHoldHides (so sibling words that fit together at crowded size
+// are unhidden before pairHoldHides hides their neighbour) and again after pairHoldHides (to close any gap a partner
+// hide left behind).
+const gapRepairs = repairPhraseGaps(finalObj, onsetOf, { until: revealF0, settings: finalObj.meta.size_rule ?? {}, maxFrames: emptyMaxF });
 const partnerHides = pairHoldHides(finalObj, onsetOf, { until: frames, maxFrames: emptyMaxF });
-if (partnerHides.length) { const all = emptyFrames(finalObj, { from: 0, until: frames }); fill.remaining = all.filter(r => r.end - r.start + 1 > emptyMaxF); fill.short = all.filter(r => r.end - r.start + 1 <= emptyMaxF); }
+const gapRepairs2 = repairPhraseGaps(finalObj, onsetOf, { until: revealF0, settings: finalObj.meta.size_rule ?? {}, maxFrames: emptyMaxF });
+gapRepairs.log.push(...gapRepairs2.log);
+if (partnerHides.length || gapRepairs.log.length) { const all = emptyFrames(finalObj, { from: 0, until: frames }); fill.remaining = all.filter(r => r.end - r.start + 1 > emptyMaxF); fill.short = all.filter(r => r.end - r.start + 1 <= emptyMaxF); }
 for (const w of finalObj.words) { delete w.size_restore; delete w.size_hides; delete w.size_kept_holds; }
 // Brief 10 item 9: the fills may change the camera (a held or skipped move), so fly-through is judged again on the final
 // camera; the report then marks any earlier hide a fill undid.
@@ -391,6 +397,8 @@ if (keepClearResolve.log.length) {
   if (roomAfter.some(r => r.room)) {
     const c4 = hideEdgeClutter(finalObj, onsetOf, { until: revealF0 }), u4 = hideUnreadable(finalObj, onsetOf, { until: revealF0 });
     clutter.log.push(...c4.log.map(x => `(after keep-clear room) ${x}`)); unreadable.log.push(...u4.log.map(x => `(after keep-clear room) ${x}`));
+    const g4 = repairPhraseGaps(finalObj, onsetOf, { until: revealF0, settings: finalObj.meta.size_rule ?? {}, maxFrames: emptyMaxF });
+    gapRepairs.log.push(...g4.log.map(x => `(after keep-clear room) ${x}`));
   }
 }
 // Brief 8 item 54: the largest word on screen is never grey.
@@ -399,10 +407,13 @@ const greyLargest = largestGreyToCream(finalObj, { until: revealF0 });
 const lone1 = loneHolds(finalObj, { until: revealF0, onsetOf });
 // Brief 9 item 27: stretches over the empty limit whose only word is a sideways one under 1.5 x the minimum (reported).
 const nearEmpty = emptyFrames(finalObj, { from: 0, until: revealF0, sideFill: SIDE_FILL }).filter(r => r.end - r.start + 1 > Math.floor((song.empty_gap_max_s ?? 0.25) * FPS + 1e-9));
-// Room gate (brief 10 item 37 & brief 16 item 3): no dropped word (keyword or non-keyword) may stay dropped while
-// there is room for it (checked on a copy).
+// Room gate (brief 10 item 37, brief 16 item 3, brief 16b): no dropped word may stay dropped while there is room for it,
+// and no later view of a phrase may show words on both sides of a gap when there is room for the missing words (or a
+// non-focused side can be hidden to close the gap).
 const roomLeft = (() => { const copy = JSON.parse(JSON.stringify(finalObj)); return placeInRoom(copy, onsetOf, { until: revealF0, settings: finalObj.meta.size_rule ?? {} }).filter(r => r.room); })();
+const gapsLeft = phraseGaps(finalObj, onsetOf, { until: revealF0, settings: finalObj.meta.size_rule ?? {}, maxFrames: emptyMaxF }).filter(g => g.canShowAll || g.hideSide);
 if (roomLeft.length) { process.exitCode = 1; console.error(`ROOM FOR A DROPPED WORD FAIL: ${roomLeft.map(r => `${r.w.id} ${r.w.text}`).join(', ')}`); }
+if (gapsLeft.length) { process.exitCode = 1; console.error(`ROOM FOR A PHRASE GAP FAIL: ${gapsLeft.map(g => `${g.left.id} ${g.left.text} .. [${g.fitting.map(w => `${w.id} ${w.text}`).join(', ')}] .. ${g.right.id} ${g.right.text} (${g.h.start}-${g.h.end})`).join('; ')}`); }
 // Drop review gate (brief 10 item 44): every keyword still dropped after the room gate is listed beside the final scene
 // with its recorded reason and a frame to still. A reviewer (an Opus agent, run by the supervisor) approves or rejects
 // each in "Keyword drop review.json" ({ reviews: { "<map index>": { verdict: "approve" | "reject", reviewer, note } } });
@@ -498,7 +509,9 @@ md.push('', '## Hold-hide partners', '', `${partnerHides.length} changes.`, '', 
   md.push('', '## Dropped words: room check (brief 10 item 37, brief 16 item 3)', '',
     'Room: a placement on the word\'s own plaque plane, same orientation, at least its minimum letter size in the hold where it is sung, centre within 3 of its widths or heights of its planned spot, whole in frame from its appearance through its onset, clear of every other word over its life, and not static and partly on screen.', '',
     ...[...latest.values()].map(r => `- ${r.w.id} ${r.w.text} at ${(r.w.t ?? 0).toFixed(2)} s (${r.w.keyword ? 'keyword' : 'filler'}): ${r.room ? `had room, put back (${r.how})${r.w.dropped ? `; LATER DROPPED again (${r.w.dropped})` : ''}` : `no room (${r.how}); ${r.w.dropped ? 'still dropped' : 'shown small after all: dropping it left an empty stretch (see the size undo list)'}`}`),
-    ...(roomLeft.length ? ['', `GATE FAIL: room left for ${roomLeft.map(r => `${r.w.id} ${r.w.text}`).join(', ')}`] : [])); }
+    ...(gapRepairs.log.length ? ['', `Phrase gaps closed in later views (brief 16b): ${gapRepairs.log.length}.`, ...gapRepairs.log.map(x => `- ${x}`)] : []),
+    ...(roomLeft.length ? ['', `GATE FAIL: room left for ${roomLeft.map(r => `${r.w.id} ${r.w.text}`).join(', ')}`] : []),
+    ...(gapsLeft.length ? ['', `GATE FAIL: phrase gap with room left: ${gapsLeft.map(g => `${g.left.id} ${g.left.text} .. [${g.fitting.map(w => `${w.id} ${w.text}`).join(', ')}] .. ${g.right.id} ${g.right.text} (${g.h.start}-${g.h.end})`).join('; ')}`] : [])); }
 md.push('', '## Fly-through, swell release, largest word, lone holds (brief 8)', '',
   `Fly-through hides: ${flythrough.log.length}, of which ${flythrough.visible} change visible pixels${flythrough.focused.length ? `; words the camera flies through while they must be shown whole (not hidden): ${flythrough.focused.join(', ')}` : ''}.`, '', ...flythrough.log.map(x => `- ${x}`),
   '', `Swell releases: ${swellReleases.length}.`, '', ...swellReleases.map(x => `- ${x}`),

@@ -148,3 +148,46 @@ All 7 `WOLVES` occurrences resolved `size = { w: 2543.94, h: 1065.47 }`, `margin
 ### Anything left undone / files to consider cleaning up
 - **Visual render check pending:** No browser was launched and no frames were rendered, so actual Chromium rasterization of the embedded SVG (`data:image/svg+xml;base64,...`) and the padded ripple on `margin = 0` still need a real render check on the stills above.
 - **Left untouched (not deleted per temp-only rule):** `engine input/Keyword marks - Opus pass - 23 November 2026.json` (kept out of commit `7b73fee` per addendum item 4; consider removing or moving out of `engine input/`), and older rough-cut folders in `engine output/` (`Rough cut 6i - 23 November` and earlier).
+
+---
+
+## Brief 16b results (UP FOR A TR3Y second view & 151.4 s stray mark — Rough cut 6k, 23 November 2026)
+
+Carried out on branch `world-canvas`. Re-joined Big Toothy Grins into `~/Experiments/Big Toothy Grins Music Video/engine output/Rough cut 6k - 23 November` using `--skip-build` from 6j's 10 built sections (no section rebuild required; `end_s: 178.15` and WOLVES SVG wiring preserved; `Rough cut 6j - 23 November` left untouched). **No browser was launched and nothing was rendered.**
+
+### 1. What caused the gap in `UP FOR A TR3Y` (second view, `159.23–160.13 s`)
+- **Not a plaque split, echo, or camera crop:** `w9031 UP` (idx 363), `w9032 FOR` (idx 364), `w9033 A` (idx 365), and `w9034 TR3Y` (idx 366) are all on plaque `p908`, and all four fit wholly and readably in frame during the second camera hold (`4777–4804`, `159.23–160.13 s`).
+- **Root cause (`placeInRoom` sequential later-hold hiding):** When `placeInRoom` restored `w9032 FOR` and `w9033 A` one at a time, each word's letter height in hold `4777–4804` was `9.9%`. While checking `w9032 FOR`, `w9033 A` was still dropped, so only 3 words (`UP`, `FOR`, `TR3Y`, `< crowdedWords: 4` and `< 30%` area) were drawn — making the hold look uncrowded (`13.5%` minimum), so `placeInRoom` hid `w9032 FOR` on `4777–4804` (`opacity: [[4777,0],[4804,1]]`). When `placeInRoom` next checked `w9033 A`, `w9032 FOR` was already hidden on `4777–4804`, so again only 3 words (`UP`, `A`, `TR3Y`) were drawn (`13.5%` minimum), and `placeInRoom` hid `w9033 A` on `4777–4804` as well. Together, all four words make the hold crowded (`4 >= 4`), so the `9.0%` minimum applies and both `FOR` (`9.9%`) and `A` (`9.9%`) fit cleanly.
+
+### 2. Engine fixes (`deterministic/composition.mjs`, `deterministic/build_song.mjs`)
+- **Phrase-gap detection & repair (`phraseGaps`, `repairPhraseGaps` in `deterministic/composition.mjs`):**
+  - Scans every camera hold for same-plaque phrase views where visible words bracket one or more hidden intermediate words (`!w.dropped`, already alive in that hold) that fit wholly and readably in frame.
+  - **Option A (show all that fit):** Temporarily unhides all fitting intermediate words together, recomputes hold crowdedness with all of them visible, and keeps them unhidden if every word meets the hold's size minimum with no new projected overlap, prop overlap, or static partial (and clears any matching `size_hides` entry).
+  - **Option B (or none of them):** If the fitting intermediate words cannot be shown at size without overlap, hides one non-focused side of the gap on that plaque (preferring the trailing left side) when that leaves no empty stretch over `empty_gap_max_s` and adds no size shortfall.
+  - Wired into `deterministic/build_song.mjs` both before and after `pairHoldHides` (and after `keepClearResolve` if it re-runs `placeInRoom`), and enforced by the hard **room gate** (`ROOM FOR A PHRASE GAP FAIL`).
+  - Also fixed equal-size tie-breaking in `sizeShortfalls` (and `phraseGaps`'s hold size check) so a static word whose letter height is constant across a hold breaks ties in favour of a crowded frame once entrance motions in that hold settle (rather than always judging crowdedness on frame 0 of the hold while a hero word is still zooming in).
+- **Static-partial off-by-one fix (`staticPartials` in `deterministic/composition.mjs`):**
+  - Fixed `staticPartials` so a run of `k` consecutive frames at rest (`k - 1` zero-change steps when preceded by a moving frame) includes its first frame at rest (`start = s > f ? s - 1 : s`, length `g - start >= STATIC_FRAMES`). Previously a 3-frame static edge sliver (`4541–4543`) only counted 2 inter-frame diffs and slipped past both `hideStaticPartials` and the hard `staticPartials` gate.
+
+### 3. Every case found and fixed across Big Toothy Grins (`Rough cut 6k - 23 November`)
+
+#### Phrase gaps in later views — 2 cases fixed (0 remaining)
+1. **`159.23–160.13 s` (hold `4777–4804`, plaque `p908`) — `UP FOR A TR3Y`**:
+   - **Fix:** Unhid `w9032 FOR` (map idx 364, `9.9%`) and `w9033 A` (map idx 365, `9.9%`) on `4777–4804`. All four words (`UP` `14.9%`, `FOR` `9.9%`, `A` `9.9%`, `TR3Y` `22.3%`) now show together cleanly with no gap and no overlap.
+2. **`141.53–142.03 s` (hold `4246–4261`, plaque `p806`) — `SO DON'T [GIVE HIM] NOT ONE INCH`**:
+   - **Fix:** `w8030 GIVE` (`7.9%`) is under the `9.0%` crowded minimum (and `w8031 HIM` was hidden as its partner by `pairHoldHides`), so they cannot show at readable size. Hid the non-focused trailing left side `w8028 SO` (map idx 314) and `w8029 DON'T` (map idx 315) on `4246–4261`, leaving `NOT ONE INCH` cleanly with no gap (`39.4%` frame coverage once `INCH` lands).
+
+#### 151.4 s stray mark & 3-frame static edge slivers — 4 cases fixed (0 remaining)
+1. **`151.37–151.47 s` (frames `4541–4544`, hidden `4539–4544`) — `w9014 INSIDE`**: **This was the stray colon-like mark at `151.4 s` near `LEAVE` / `TREY?`** — the right edge of the `E` of `INSIDE` (`9.1%` visible) sitting static for 3 frames after the camera landed on `LEAVE` before `hideEdgeClutter` hid it at frame `4544` (end of `INSIDE`'s 15-frame focus window). Now hidden across `4539–4544`.
+2. **`33.37–33.47 s` (frames `1001–1004`, hidden `999–1004`) — `w2021 SHOCK`**: `8.1%` visible static edge sliver, now hidden.
+3. **`65.07–65.17 s` (frames `1952–1955`, hidden `1945–1955`) — `w4025 HELL-O`**: `0.6%` visible static edge sliver, now hidden.
+4. **`136.97–137.07 s` (frames `4109–4112`, hidden `4107–4112`) — `w8019 OFF`**: `16.8%` visible static edge sliver, now hidden.
+
+### 4. Gate & Type-rules verification (`Rough cut 6k - 23 November`)
+- **6k join folder:** `~/Experiments/Big Toothy Grins Music Video/engine output/Rough cut 6k - 23 November`
+- **Join exit code:** `0` (`Whole song - final - scene.json` written, `5345` frames at 30 fps, `end_s: 178.15`, WOLVES SVG intact).
+- **Hard gates:** all PASS — `sync late: 0`, `idle: 0`, `finalPartial: 0`, `overlaps: 0`, `staticFinal: 0` (`staticHidden: 24`), `roomLeft: 0`, `gapsLeft: 0`, `keywordsDropped: 0`, `emptyEnds: []`, `emptyRuns: []` (longest short gap `6` frames), `opening blank: 0`, `stillEnding: PASS` (frame `5344`).
+- **Type rules check** (`Rough cut 6k - 23 November/Type rules check - 23 November 2026.md`): **`4` failures total** (`byRule: [4, 0, 0, 0]`, down from 10 in 6j because `sizeShortfalls` now breaks equal-size ties toward settled crowded frames in a hold rather than frame 0 while a hero word is still zooming in): 4 Rule 1, 0 Rule 2, 0 Rule 3, 0 Rule 4.
+
+### 5. Files to consider cleaning up later (not deleted)
+- Older rough-cut folders in `~/Experiments/Big Toothy Grins Music Video/engine output/` (`Rough cut 6j - 23 November` and earlier) and `engine input/Keyword marks - Opus pass - 23 November 2026.json` were left untouched per the temp-only rule. No temp folder was needed.
