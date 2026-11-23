@@ -148,7 +148,7 @@ let el = 'No picture elements (song settings has no "picture_elements").';
 if (song.picture_elements) el = execFileSync('node', ['run_elements.mjs', inp(song.picture_elements), notes, finalScene], { cwd: engine, encoding: 'utf8' });
 else fs.copyFileSync(notes, finalScene);
 const finalObj = JSON.parse(fs.readFileSync(finalScene, 'utf8'));
-const overlapRepair = scanOverlap(finalObj, { until: revealF0, repair: true });
+const overlapRepair = scanOverlap(finalObj, { until: revealF0, repair: true, retireOccluded: true });
 const overlapFinal = scanOverlap(finalObj, { until: revealF0 });
 if (overlapFinal.overlaps.length) process.exitCode = 1;
 const appearance = songAppearance(finalObj, song, inp, Math.min(...map.words.map(w => w.start_s)));

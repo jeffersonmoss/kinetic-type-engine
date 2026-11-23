@@ -28,7 +28,7 @@ function intersects(a, b) {
 
 const visible = (w,f) => w.on <= f && (w.off == null || f < w.off);
 
-export function scanOverlap(scene, { from = 0, until = scene.meta.frames, repair = false } = {}) {
+export function scanOverlap(scene, { from = 0, until = scene.meta.frames, repair = false, retireOccluded = false } = {}) {
   const fps = scene.meta.fps ?? 30, words = scene.words.filter(w => !w.replaced_by && !w.reveal_copy_of);
   const byId = new Map(scene.words.map(w => [w.id,w]));
   const entries = words.map(w => ({ w, corners: rectangle(w), ink: inkOk(w), onset: Math.round((w.t ?? w.on/fps)*fps) }));
@@ -96,6 +96,12 @@ export function scanOverlap(scene, { from = 0, until = scene.meta.frames, repair
           for (const {w} of owners) if (visible(w,f)) w.off = f;
           retired.push(`${p.id} retired at frame ${f} for ${a.w.id} ${a.w.text}`);
           break;
+        }
+        if (repair && retireOccluded && !a.w.echo && a.onset + Math.ceil(fps*.3) < f &&
+            owners.some(x => x.w.on <= f && x.onset > a.onset)) {
+          a.w.off = f;
+          retired.push(`${a.w.id} ${a.w.text} retired at frame ${f} behind ${p.id}`);
+          continue;
         }
         hit(a,`panel:${p.id}`,`plaque ${p.id} (${owners.map(x => x.w.text).join(' ')})`);
       }
