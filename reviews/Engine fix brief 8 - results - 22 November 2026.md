@@ -42,7 +42,7 @@ Builder: the T2 engine chat (Claude, Opus 5.5). Nothing was rendered; the stills
 
 ## 4. Stills to render (rough cut 6d)
 
-1. 169.3 to 171.5 s: CIRCLE with IN beside it (item 49).
+1. 169.3 to 171.5 s: CIRCLE, then IN after it (item 49). Corrected 23 November: they show one after the other, not side by side.
 2. 84.3 to 85.0 s: HE unfolding (item 50).
 3. 23.0 to 23.8 s (AND) and 157.6 to 158.6 s (IT'S): swell releases (item 51).
 4. 123.7 to 124.4 s: sideways IN gone (item 52).

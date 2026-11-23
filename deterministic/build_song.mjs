@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 import './interp.js';
 import { checkSync, checkHolds } from './whole_song_checks.mjs';
 import { assemble, hideWhenGone, buildReveal, checkReveal, endOnWord, checkStillEnding } from './assemble_sections.mjs';
-import { tightenLone, hideEdgeClutter, hideUnreadable, hideFlythrough, loneHolds, LONE_HOLD, swellRelease, largestGreyToCream, fillEmptyFrames, swellSmallWords, floorZoomEntrances, pairHoldHides, emptyFrames, enforceMinSize, noOutlines, undoSizeForEmpty, hideStaticPartials, staticPartials, STATIC_RATE, STATIC_FRAMES } from './composition.mjs';
+import { tightenLone, hideEdgeClutter, hideUnreadable, hideFlythrough, SIDE_FILL, loneHolds, LONE_HOLD, swellRelease, largestGreyToCream, fillEmptyFrames, swellSmallWords, floorZoomEntrances, pairHoldHides, emptyFrames, enforceMinSize, noOutlines, undoSizeForEmpty, hideStaticPartials, staticPartials, STATIC_RATE, STATIC_FRAMES } from './composition.mjs';
 import { JERSEY_BOLD } from './style.mjs';
 import { keywordPlan, fastWordsOn, wordRanks } from './keywords.mjs';
 import { applyWordRoles } from './word_roles.mjs';
@@ -252,7 +252,7 @@ for (let pass = 0; pass < 4; pass++) {
 { const c2 = hideEdgeClutter(finalObj, onsetOf, { until: revealF0 }), u2 = hideUnreadable(finalObj, onsetOf, { until: revealF0 });
   clutter.log.push(...c2.log.map(x => `(after size) ${x}`)); unreadable.log.push(...u2.log.map(x => `(after size) ${x}`)); }
 // Brief 8 item 56: a word the camera flies through is hidden on those frames.
-const flythrough = hideFlythrough(finalObj, onsetOf, { until: revealF0 });
+const flythrough = hideFlythrough(finalObj, onsetOf, { until: revealF0, maxFrames: Math.floor((song.empty_gap_max_s ?? 0.25) * FPS + 1e-9) });
 // No outlines (brief 5, change 2): every word solid. Runs again after the song appearance pass, which adds the wordmarks.
 const palStyles = finalObj.meta.palette?.styles ?? [];
 const flatOf = id => palStyles.find(x => x.outline_twin === id)?.id ?? null;
@@ -305,6 +305,8 @@ for (const w of finalObj.words) { delete w.size_restore; delete w.size_hides; de
 const greyLargest = largestGreyToCream(finalObj, { until: revealF0 });
 // Brief 8 item 49: a single word holding alone over a second, with the drops sung inside that stretch (reported).
 const lone1 = loneHolds(finalObj, { until: revealF0, onsetOf });
+// Brief 9 item 27: stretches over the empty limit whose only word is a sideways one under 1.5 x the minimum (reported).
+const nearEmpty = emptyFrames(finalObj, { from: 0, until: revealF0, sideFill: SIDE_FILL }).filter(r => r.end - r.start + 1 > Math.floor((song.empty_gap_max_s ?? 0.25) * FPS + 1e-9));
 const staticFinal = staticPartials(finalObj, { until: frames });
 if (staticFinal.length) { process.exitCode = 1; console.error(`STATIC PARTLY ON SCREEN FAIL: ${staticFinal.map(x => `${x.w.id} ${x.w.text} ${x.start}-${x.end}`).join(', ')}`); }
 const emptyEnds = [0, frames - 1].filter(f => emptyFrames(finalObj, { from: f, until: f + 1 }).length);
@@ -369,10 +371,11 @@ md.push('', '## Opening and team wordmarks', '', appearance.intro,
     ...[...L.greyKeywords, ...L.greyNames, ...L.fontChanges, ...L.scores].map(x => `- ${x}`), ...(L.unmatched.length ? [`- Unmatched: ${L.unmatched.join(', ')}`] : [])); }
 md.push('', '## Hold-hide partners', '', `${partnerHides.length} changes.`, '', ...partnerHides.map(x => `- ${x}`));
 md.push('', '## Fly-through, swell release, largest word, lone holds (brief 8)', '',
-  `Fly-through hides: ${flythrough.log.length}${flythrough.focused.length ? `; words the camera flies through while they must be shown whole (not hidden): ${flythrough.focused.join(', ')}` : ''}.`, '', ...flythrough.log.map(x => `- ${x}`),
+  `Fly-through hides: ${flythrough.log.length}, of which ${flythrough.visible} change visible pixels${flythrough.focused.length ? `; words the camera flies through while they must be shown whole (not hidden): ${flythrough.focused.join(', ')}` : ''}.`, '', ...flythrough.log.map(x => `- ${x}`),
   '', `Swell releases: ${swellReleases.length}.`, '', ...swellReleases.map(x => `- ${x}`),
   '', `Grey words made cream as the largest word on screen: ${greyLargest.length}.`, '', ...greyLargest.map(x => `- ${x}`),
   '', `One word alone on screen for over ${LONE_HOLD} frames: ${lone1.length} stretches, ${lone1.filter(r => r.drops.length).length} with a dropped word sung inside.`, '',
+  ...nearEmpty.length ? ['', `Near-empty stretches (only a small sideways word on screen; reported, not failed): ${nearEmpty.map(r => `${(r.start / FPS).toFixed(2)}-${((r.end + 1) / FPS).toFixed(2)} s`).join(', ')}.`, ''] : [],
   ...lone1.map(r => `- ${r.w.id} ${r.w.text} alone ${(r.start / FPS).toFixed(2)}-${((r.end + 1) / FPS).toFixed(2)} s${r.drops.length ? `; FLAG: dropped inside it: ${r.drops.map(x => `${x.id} ${x.text} (${x.dropped})`).join(', ')}` : ''}`));
 md.push('', '## Zoom entrances (size floor)', '', `${zoomFloor.length} zoom entrances start larger, at no less than half the size minimum with room.`, '', ...zoomFloor.map(x => `- ${x}`));
 md.push('', '## Projected overlap', '', `${overlapFinal.overlaps.length} remaining intervals (${overlapFinal.overlaps.length ? 'FAIL' : 'PASS'}), scanned with each sung pulse at its peak. Pulses lowered or dropped: ${pulseLog.length}.`, '', ...pulseLog.map(x => `- Pulse: ${x}`),
@@ -416,7 +419,7 @@ console.log('entrances', JSON.stringify(counts['Whole song']), 'pop reasons', JS
 console.log('reveal check', JSON.stringify(revealCheck), 'still ending', JSON.stringify(stillEnding));
 if (overlapFinal.overlaps.length) console.error(`OVERLAP FAIL: ${overlapFinal.overlaps.length} intervals: ${overlapFinal.overlaps.slice(0, 8).join('; ')}`);
 console.log('roles', JSON.stringify({ greyKeywords: roles.log.greyKeywords.length, greyNames: roles.log.greyNames.length, fontChanges: roles.log.fontChanges.length, scores: roles.log.scores.length, keywordsDropped: finalObj.words.filter(w => w.keyword && w.dropped && !w.reveal_copy_of).length }));
-console.log('pulses tamed', pulseLog.length, 'zoom floors', zoomFloor.length, 'hold partners', partnerHides.length, 'fly-through hides', flythrough.log.length, 'swell releases', swellReleases.length, 'largest grey', greyLargest.length);
+console.log('pulses tamed', pulseLog.length, 'zoom floors', zoomFloor.length, 'hold partners', partnerHides.length, 'fly-through hides', flythrough.log.length, 'visible', flythrough.visible, 'swell releases', swellReleases.length, 'largest grey', greyLargest.length, 'near-empty sideways', nearEmpty.length);
 for (const r of lone1.filter(r => r.drops.length)) console.log(`LONE HOLD after a drop: ${r.w.id} ${r.w.text} ${(r.start / FPS).toFixed(2)}-${((r.end + 1) / FPS).toFixed(2)} s (${r.drops.map(x => `${x.id} ${x.text}`).join(', ')} dropped)`);
 console.log('size', JSON.stringify({ staticHidden: staticHide.log.length, staticFinal: staticFinal.length, grown: size.counts.grown, dropped: size.counts.dropped, hiddenSmall: size.counts.hidden, keptSmall: size.counts.keptSmall, importantSmall: size.counts.importantSmall, sizeUndone: sizeUndone.length, outlinesFlat: outlines.log.length, small: smallFinal.length, sparse: sparseFinal.length, lone: lone.log.length, clutter: clutter.log.length, unreadable: unreadable.log.length, unreadableFocus: unreadable.focused.length, emptyEnds, filled: fill.log.length, shortGaps: fill.short.length, longestShortGap: Math.max(0, ...fill.short.map(r => r.end - r.start + 1)), emptyRuns: fill.remaining.map(r => `${r.start}-${r.end}`) }));
 console.log('reveal', JSON.stringify(reveal), 'revealF0', revealF0, 'hidden', hideLog.filter(l => l.includes('hidden')).length);
