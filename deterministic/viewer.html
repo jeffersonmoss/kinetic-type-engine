@@ -27,6 +27,12 @@ await Promise.all(Object.entries(S.wordmarkFonts ?? {}).map(async ([family, src]
   const face = new FontFace(family, `url("${src}")`);
   document.fonts.add(await face.load());
 }));
+const wordmarkImages = Object.fromEntries(await Promise.all(Object.entries(S.wordmarkImages ?? {}).map(async ([key, src]) => {
+  const image = new Image();
+  image.src = src;
+  await image.decode();
+  return [key, image];
+})));
 const intro = await Promise.all((S.intro ?? []).map(async item => {
   if (!item.src) return item;
   const image = new Image();
@@ -49,6 +55,22 @@ function wordTexture(w) {
     const {family, colours: brand}=w.wordmark;
     const bg=brand.background ?? override.background ?? style.bg;
     if(bg){g.fillStyle=bg;g.fillRect(0,0,c.width,c.height);}
+    const img=w.wordmark.image && wordmarkImages[w.wordmark.image];
+    if(img){ // the team's own wordmark image: aspect kept, fitted where the lettering would be, tinted through its alpha
+      const k=Math.min(c.width*.94/img.naturalWidth,c.height*.9/img.naturalHeight);
+      const dw=Math.max(1,Math.round(img.naturalWidth*k)), dh=Math.max(1,Math.round(img.naturalHeight*k));
+      const x=Math.round((c.width-dw)/2), y=Math.round((c.height-dh)/2);
+      const tinted=colour=>{const L=document.createElement('canvas');L.width=dw;L.height=dh;const h=L.getContext('2d');
+        h.drawImage(img,0,0,dw,dh);if(colour){h.globalCompositeOperation='source-in';h.fillStyle=colour;h.fillRect(0,0,dw,dh);}return L;};
+      // Outlines (stroke, then an outer accent) by stamping the alpha silhouette around a ring: a cheap dilation.
+      const ring=(colour,r)=>{if(!colour||!(r>0))return;const L=tinted(colour);
+        for(let a=0;a<24;a++){const t=a*Math.PI/12;g.drawImage(L,x+Math.cos(t)*r,y+Math.sin(t)*r);}};
+      const sw=dh*.05;
+      ring(brand.accent,sw*2);ring(brand.stroke,sw);
+      g.drawImage(tinted(brand.tint ?? null),x,y);
+      const texture=new THREE.CanvasTexture(c);texture.colorSpace=THREE.SRGBColorSpace;texture.anisotropy=8;
+      return {texture,block:!!bg,canvas:c};
+    }
     const face=family ?? FAM[w.font] ?? 'Anton', weight=family ? 400 : WEIGHT[w.font] || 400;
     let size=w.fontPx*px;
     g.font=`${weight} ${size}px ${face}`;
@@ -270,6 +292,13 @@ function sampleCount(frame){
 function drawIntro(frame){
   const active=intro.filter(item=>item.start<=frame&&frame<item.end);
   if(!active.length)return;
+  // One motion path for the whole intro (engine fix brief 2, items 4 and 5): a steady exponential push and a linear
+  // drift, shared by every image, with each image sized and centred on its opaque content (item.box). Consecutive
+  // badges therefore coincide exactly through a dissolve and the motion carries on across it. No easing, no wobble.
+  const fps=S.meta.fps ?? 30, M=S.intro_motion ?? {push_per_s:.045,drift:.06};
+  const endF=Math.max(...intro.map(item=>item.end)), u=frame/Math.max(1,endF);
+  const grow=f=>Math.exp(Math.log1p(M.push_per_s)*f/fps);
+  const base=Math.max(H*.45,H*.82/grow(endF)), size=base*grow(frame);
   output.save();
   output.fillStyle='#000';output.fillRect(0,0,W,H);
   output.globalCompositeOperation='lighter';
@@ -279,14 +308,15 @@ function drawIntro(frame){
     const fadeOut=item.fade ? Math.min(1,(item.end-frame)/item.fade) : 1;
     output.globalAlpha=fadeIn*fadeOut;
     const slide=item.exit==='slide' ? Math.max(0,(progress-.88)/.12)**2 : 0;
-    const x=W/2+Math.sin(progress*Math.PI)*W*.025+slide*W;
-    const y=H/2-Math.sin(progress*Math.PI)*H*.02;
+    const x=W/2+(u-.5)*M.drift*W+slide*W;
+    const y=H/2-(u-.5)*M.drift*.5*H;
     if(item.image){
-      const scale=Math.min(W*.76/item.image.width,H*.76/item.image.height)*(.93+.07*progress);
-      const w=item.image.width*scale,h=item.image.height*scale;
-      output.drawImage(item.image,x-w/2,y-h/2,w,h);
+      const b=item.box ?? {x0:0,y0:0,x1:1,y1:1}, iw=item.image.width, ih=item.image.height;
+      const scale=size/Math.max((b.x1-b.x0)*iw,(b.y1-b.y0)*ih);
+      const w=iw*scale,h=ih*scale;
+      output.drawImage(item.image,x-(b.x0+b.x1)/2*w,y-(b.y0+b.y1)/2*h,w,h);
     }else{
-      output.fillStyle='#fff';output.font=`700 ${H*(.10+.012*progress)}px sans-serif`;
+      output.fillStyle='#fff';output.font=`700 ${size*.14}px sans-serif`;
       output.textAlign='center';output.textBaseline='middle';output.fillText(item.title,x,y,W*.8);
     }
   }
