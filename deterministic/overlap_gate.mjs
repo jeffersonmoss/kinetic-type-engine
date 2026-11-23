@@ -46,12 +46,26 @@ export function drawnScale(w, f, fps = 30) {
   }
   return s * k;
 }
-// A sung pulse whose throw would overlap a neighbour is lowered (w.pulse_peak 1.12, then 1.06), and if it still
-// overlaps, that pulse is dropped; a stamp landing likewise (w.stamp_peak 1.05, then no stamp). Returns a log. The
-// viewer reads w.pulse_peak and w.stamp_peak.
-export function tamePulses(scene, { until = scene.meta.frames } = {}) {
+// A sung pulse whose throw would overlap a neighbour (or a keep-clear prop, brief 18) is lowered (w.pulse_peak 1.12,
+// then 1.06), and if it still overlaps, that pulse is dropped; a stamp landing likewise (w.stamp_peak 1.05, then no
+// stamp). Returns a log. The viewer reads w.pulse_peak and w.stamp_peak.
+export function tamePulses(scene, { until = scene.meta.frames, onsetOf = null } = {}) {
   const fps = scene.meta.fps ?? 30, log = [], byId = new Map(scene.words.map(w => [w.id, w]));
   const pulsing = (w, a, b) => (w.pulses ?? []).filter(t => t * fps <= b + 1 && (t + RIP_T) * fps >= a - 1);
+  const tameOne = (w, a, b, reason) => {
+    const ts = w ? pulsing(w, a, b) : [];
+    // A stamp landing (scale 1.1 over its first 3 frames) is lowered to 1.05, then switched off.
+    if (w?.stamp && a >= w.on && a < w.on + 3 && (w.reveal_on == null || a < w.reveal_on)) {
+      if ((w.stamp_peak ?? 1.1) > 1.06) { w.stamp_peak = 1.05; log.push(`${w.id} ${w.text}: stamp landing lowered to 1.05 (${reason})`); }
+      else { w.stamp = false; delete w.stamp_peak; log.push(`${w.id} ${w.text}: stamp landing switched off (${reason})`); }
+      return true;
+    }
+    if (!ts.length) return false;
+    const peak = w.pulse_peak ?? THROW_PEAK;
+    if (peak > 1.07) { w.pulse_peak = peak > 1.13 ? 1.12 : 1.06; log.push(`${w.id} ${w.text}: pulse peak lowered to ${w.pulse_peak} (${reason})`); }
+    else { w.pulses = w.pulses.filter(t => !ts.includes(t)); log.push(`${w.id} ${w.text}: pulse at ${ts.map(t => t.toFixed(2)).join(', ')} s dropped (${reason})`); }
+    return true;
+  };
   for (let round = 0; round < 6; round++) {
     const hits = scanOverlap(scene, { until }).overlaps;
     let changed = false;
@@ -60,18 +74,18 @@ export function tamePulses(scene, { until = scene.meta.frames } = {}) {
       if (!m) continue;
       const a = Math.round(+m[1] * fps), b = Math.round(+m[2] * fps);
       for (const id of [m[3], m[4]].filter(Boolean)) {
-        const w = byId.get(id); const ts = w ? pulsing(w, a, b) : [];
-        // A stamp landing (scale 1.1 over its first 3 frames) is lowered to 1.05, then switched off.
-        if (w?.stamp && a >= w.on && a < w.on + 3 && (w.reveal_on == null || a < w.reveal_on)) {
-          if ((w.stamp_peak ?? 1.1) > 1.06) { w.stamp_peak = 1.05; log.push(`${id} ${w.text}: stamp landing lowered to 1.05 (${h})`); }
-          else { w.stamp = false; delete w.stamp_peak; log.push(`${id} ${w.text}: stamp landing switched off (${h})`); }
-          changed = true; continue;
-        }
-        if (!ts.length) continue;
-        const peak = w.pulse_peak ?? THROW_PEAK;
-        if (peak > 1.07) { w.pulse_peak = peak > 1.13 ? 1.12 : 1.06; log.push(`${id} ${w.text}: pulse peak lowered to ${w.pulse_peak} (${h})`); }
-        else { w.pulses = w.pulses.filter(t => !ts.includes(t)); log.push(`${id} ${w.text}: pulse at ${ts.map(t => t.toFixed(2)).join(', ')} s dropped (${h})`); }
-        changed = true;
+        if (tameOne(byId.get(id), a, b, h)) changed = true;
+      }
+    }
+    if (onsetOf && I.hasKeepClearProps?.(scene)) {
+      const propHits = checkPropWordOverlap(scene, onsetOf, { until }).violations;
+      for (const v of propHits) {
+        const w = byId.get(v.wordId);
+        if (!w) continue;
+        // Only tame if the word actually has drawnScale > 1 on at least one colliding frame.
+        let scaled = false;
+        for (let f = v.start; f <= v.end; f++) if (drawnScale(w, f, fps) > 1 + 1e-6) { scaled = true; break; }
+        if (scaled && tameOne(w, v.start, v.end, `prop ${v.propId} frames ${v.start}-${v.end}`)) changed = true;
       }
     }
     if (!changed) break;
@@ -224,33 +238,70 @@ function polyArea(poly) {
   return Math.abs(a) * 0.5;
 }
 
-// Engine fix brief 17 (Jefferson, 23 November 2026: "never let a prop cover a sung word"):
-// Fails the join if any visible screen-space prop's body box overlaps any part of a sung word's projected box during
-// that word's focus window ([min(appearance, onset), max(appearance, onset) + focusRead)). Backdrops are background
-// and are not checked here. Returns { violations, pass }.
-export function checkPropWordOverlap(scene, onsetOf, { until = scene.meta.frames, W = 1280, H = 720, focusRead = 15 } = {}) {
-  const props = scene.props ?? [];
-  if (!props.length) return { violations: [], pass: true };
+// Project word `w` at frame `f` into screen-space polygon (0..W x 0..H), matching checkPropWordOverlap.
+export function wordScreenPoly(w, f, pose, { vfov = 40, fps = 30, W = 1280, H = 720, byId = null, useDrawnScale = true } = {}) {
+  if (!visible(w, f) || (w.opacity ?? []).filter(([k]) => k <= f).at(-1)?.[1] <= 0.05) return null;
+  const X = I.wordXform(w, f);
+  const normal = sub(X(w.C.map((c, i) => c + w.N[i])), X(w.C));
+  if (dot(normal, sub(pose.position, X(w.C))) <= 0) return null;
+  let shape = rectangle(w).map(X);
+  const k = useDrawnScale ? drawnScale(w, f, fps) : 1;
+  if (k !== 1) { const c = X(w.C); shape = shape.map(pt => pt.map((x, i) => c[i] + (x - c[i]) * k)); }
+  for (const plane of I.wordClips(w, f, byId)) shape = clip(shape, pt => dot(plane.n, sub(pt, plane.P)));
+  const depth = pt => -dot(sub(pt, pose.position), pose.N);
+  let poly = clip(shape, pt => depth(pt) - 20).map(pt => I.project(pt, pose, vfov)).filter(Boolean).map(pt => [pt.x, pt.y]);
+  for (const axis of [0, 1]) for (const sign of [-1, 1]) poly = clip(poly, pt => 1 + sign * pt[axis]);
+  return poly.length >= 3 ? poly.map(([nx, ny]) => [(nx + 1) * W / 2, (1 - ny) * H / 2]) : null;
+}
+
+// Per-word keep-clear prop overlap frames over [f0, f1) (brief 18).
+export function wordPropOverlapFrames(scene, w, f0, f1, { W = 1280, H = 720, useMargin = false, byId = null, useDrawnScale = true, poseAt = null } = {}) {
+  if (!I.hasKeepClearProps?.(scene) || !inkOk(w)) return [];
   const fps = scene.meta.fps ?? 30, vfov = scene.meta.vfov ?? 40;
-  const backdrops = scene.backdrops ?? [];
+  const lookup = byId ?? new Map(scene.words.map(x => [x.id, x]));
+  const getPose = poseAt ?? (f => I.poseAt(scene.cams, f));
+  const a = Math.max(0, Math.floor(f0)), b = Math.min(scene.meta.frames, Math.ceil(f1));
+  const hits = [];
+  for (let f = a; f < b; f++) {
+    const activeProps = I.propKeepClearRects(scene, f, W, H, { useMargin });
+    if (!activeProps.length) continue;
+    const screenPoly = wordScreenPoly(w, f, getPose(f), { vfov, fps, W, H, byId: lookup, useDrawnScale });
+    if (!screenPoly) continue;
+    const wordArea = polyArea(screenPoly);
+    if (wordArea < 1) continue;
+    for (const pr of activeProps) {
+      let inter = screenPoly;
+      inter = clip(inter, pt => pt[0] - pr.x0);
+      inter = clip(inter, pt => pr.x1 - pt[0]);
+      inter = clip(inter, pt => pt[1] - pr.y0);
+      inter = clip(inter, pt => pr.y1 - pt[1]);
+      const ovArea = inter.length >= 3 ? polyArea(inter) : 0;
+      if (ovArea > 1) {
+        hits.push({ frame: f, propId: pr.p.id, prop: pr.p, x0: pr.x0, y0: pr.y0, x1: pr.x1, y1: pr.y1, area: ovArea, share: ovArea / wordArea, screenPoly });
+      }
+    }
+  }
+  return hits;
+}
+
+// Engine fix brief 17 & 18 (Jefferson, 23 November 2026: "never let a prop cover a sung word"):
+// Fails the join if any visible screen-space keep-clear prop's body box overlaps any part of a sung word's projected
+// box during that word's focus window ([min(appearance, onset), max(appearance, onset) + focusRead)). Backdrops and
+// props with keep_clear: false are not checked here. Set useMargin: true to check against hitBox + keep_clear_margin_px.
+export function checkPropWordOverlap(scene, onsetOf, { until = scene.meta.frames, W = 1280, H = 720, focusRead = 15, useMargin = false } = {}) {
+  if (!I.hasKeepClearProps?.(scene)) return { violations: [], pass: true };
+  const fps = scene.meta.fps ?? 30, vfov = scene.meta.vfov ?? 40;
   const byId = new Map(scene.words.map(w => [w.id, w]));
   const poseCache = new Map();
   const poseAt = f => poseCache.get(f) ?? poseCache.set(f, I.poseAt(scene.cams, f)).get(f);
   const propCache = new Map();
-  const propRectsAt = f => propCache.get(f) ?? propCache.set(f, props.map(p => {
-    const st = I.propScreenRects(p, f, backdrops, W, H);
-    if (!st || st.opacity <= 0.05) return null;
-    const x0 = Math.max(0, st.hit.x0), y0 = Math.max(0, st.hit.y0);
-    const x1 = Math.min(W, st.hit.x1), y1 = Math.min(H, st.hit.y1);
-    return x1 > x0 && y1 > y0 ? { p, x0, y0, x1, y1 } : null;
-  }).filter(Boolean)).get(f);
+  const propRectsAt = f => propCache.get(f) ?? propCache.set(f, I.propKeepClearRects(scene, f, W, H, { useMargin })).get(f);
   const violations = [];
   for (const { w, onsetF } of sungWords(scene, onsetOf)) {
     if (onsetF >= until || !inkOk(w)) continue;
     const A = appearanceFrame(w);
     const fa = Math.max(0, Math.min(A, onsetF));
     const fb = Math.min(until, Math.max(A, onsetF) + focusRead);
-    const corners = rectangle(w);
     const openRuns = new Map();
     const closeRun = (key, run) => {
       openRuns.delete(key);
@@ -266,39 +317,27 @@ export function checkPropWordOverlap(scene, onsetOf, { until = scene.meta.frames
     for (let f = fa; f < fb; f++) {
       const activeProps = propRectsAt(f);
       const hitProps = new Set();
-      if (activeProps.length && visible(w, f) && !((w.opacity ?? []).filter(([k]) => k <= f).at(-1)?.[1] <= 0.05)) {
-        const pose = poseAt(f);
-        const X = I.wordXform(w, f);
-        const normal = sub(X(w.C.map((c, i) => c + w.N[i])), X(w.C));
-        if (dot(normal, sub(pose.position, X(w.C))) > 0) {
-          let shape = corners.map(X);
-          const k = drawnScale(w, f, fps);
-          if (k !== 1) { const c = X(w.C); shape = shape.map(pt => pt.map((x, i) => c[i] + (x - c[i]) * k)); }
-          for (const plane of I.wordClips(w, f, byId)) shape = clip(shape, pt => dot(plane.n, sub(pt, plane.P)));
-          const depth = pt => -dot(sub(pt, pose.position), pose.N);
-          let poly = clip(shape, pt => depth(pt) - 20).map(pt => I.project(pt, pose, vfov)).filter(Boolean).map(pt => [pt.x, pt.y]);
-          for (const axis of [0, 1]) for (const sign of [-1, 1]) poly = clip(poly, pt => 1 + sign * pt[axis]);
-          const screenPoly = poly.map(([nx, ny]) => [(nx + 1) * W / 2, (1 - ny) * H / 2]);
-          const wordArea = screenPoly.length >= 3 ? polyArea(screenPoly) : 0;
-          if (wordArea >= 1) {
-            for (const pr of activeProps) {
-              let inter = screenPoly;
-              inter = clip(inter, pt => pt[0] - pr.x0);
-              inter = clip(inter, pt => pr.x1 - pt[0]);
-              inter = clip(inter, pt => pt[1] - pr.y0);
-              inter = clip(inter, pt => pr.y1 - pt[1]);
-              const ovArea = inter.length >= 3 ? polyArea(inter) : 0;
-              if (ovArea > 1) {
-                const share = ovArea / wordArea;
-                hitProps.add(pr.p.id);
-                const cur = openRuns.get(pr.p.id);
-                if (cur && cur.end === f - 1) {
-                  cur.end = f;
-                  if (share > cur.maxShare) { cur.maxShare = share; cur.maxAreaPx = ovArea; cur.peakFrame = f; }
-                } else {
-                  if (cur) closeRun(pr.p.id, cur);
-                  openRuns.set(pr.p.id, { p: pr.p, start: f, end: f, maxShare: share, maxAreaPx: ovArea, peakFrame: f });
-                }
+      if (activeProps.length) {
+        const screenPoly = wordScreenPoly(w, f, poseAt(f), { vfov, fps, W, H, byId });
+        const wordArea = screenPoly ? polyArea(screenPoly) : 0;
+        if (wordArea >= 1) {
+          for (const pr of activeProps) {
+            let inter = screenPoly;
+            inter = clip(inter, pt => pt[0] - pr.x0);
+            inter = clip(inter, pt => pr.x1 - pt[0]);
+            inter = clip(inter, pt => pt[1] - pr.y0);
+            inter = clip(inter, pt => pr.y1 - pt[1]);
+            const ovArea = inter.length >= 3 ? polyArea(inter) : 0;
+            if (ovArea > 1) {
+              const share = ovArea / wordArea;
+              hitProps.add(pr.p.id);
+              const cur = openRuns.get(pr.p.id);
+              if (cur && cur.end === f - 1) {
+                cur.end = f;
+                if (share > cur.maxShare) { cur.maxShare = share; cur.maxAreaPx = ovArea; cur.peakFrame = f; }
+              } else {
+                if (cur) closeRun(pr.p.id, cur);
+                openRuns.set(pr.p.id, { p: pr.p, start: f, end: f, maxShare: share, maxAreaPx: ovArea, peakFrame: f });
               }
             }
           }

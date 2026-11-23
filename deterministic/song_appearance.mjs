@@ -60,96 +60,28 @@ export function imageSize(file) {
 }
 
 export const WORDMARK_MARGIN = 0.25; // brief 12: even margin round a wordmark on a block, as a share of its ink height
-export function songAppearance(scene, song, resolve, firstOnset) {
+export const DEFAULT_KEEP_CLEAR_MARGIN = 24; // brief 18: default screen-pixel keep-clear margin around prop hitBox
+
+// Brief 17/18: compile optional song.backdrops and song.props into scene.backdrops, scene.props, and deduplicated
+// scene.stageImages. When a song sets neither backdrops nor props, none of those keys are added to `scene`.
+// Set embedImages: false to compile lightweight geometry only (for section-build keep-clear planning).
+export function compileStageLayers(scene, song, resolve, { embedImages = true } = {}) {
   const fps = scene.meta.fps ?? 30;
-  const introEnd = Math.round(firstOnset * fps);
   const frames = seconds => Math.round(seconds * fps);
   const songEndS = scene.meta.frames / fps;
-  let intro = 'No pre-vocal introduction needed.';
-  if (song.intro?.length && introEnd > 0) {
-    let start = 0;
-    scene.intro = song.intro.map(({ image, hold_s, dissolve_s = 0, dissolve_at_s, exit = 'cut' }, i, list) => {
-      const last = i === list.length - 1;
-      const hold = frames(hold_s), fade = frames(dissolve_s);
-      const transition = dissolve_at_s == null ? start + hold : frames(dissolve_at_s);
-      if (!(transition >= start + hold) || !(hold > 0) || !(fade >= 0) || !['cut','slide'].includes(exit) ||
-          (last && (fade || dissolve_at_s != null || transition > introEnd)) || start >= introEnd || (!last && transition + fade >= introEnd)) {
-        throw Error(`Invalid intro timing or exit in song settings.json, image ${i + 1}: ${image}`);
-      }
-      const end = last ? introEnd : transition + fade;
-      // box: the image's opaque content (alpha over half) as fractions, so the viewer sizes and centres the badge
-      // itself rather than the whole canvas; consecutive images then coincide through their dissolve.
-      const box = path.extname(image).toLowerCase() === '.png' ? pngAlphaBox(resolve(image)) : null;
-      const record = { start, end, fade, exit, fadeIn: frames(list[i-1]?.dissolve_s ?? 0), ...(box ? { box } : {}),
-        src: asset(image, resolve, IMAGE_TYPES) };
-      start = transition;
-      return record;
-    });
-    scene.intro_motion = { push_per_s: song.intro_push_per_s ?? 0.045, drift: song.intro_drift ?? 0.06 };
-    intro = `${scene.intro.length} song images from frame 0 through frame ${introEnd - 1}, sized and centred on their opaque content (${scene.intro.map(x => x.box ? `${(100 * (x.box.x1 - x.box.x0)).toFixed(0)}% x ${(100 * (x.box.y1 - x.box.y0)).toFixed(0)}% of the image` : 'whole image').join('; ')}), one shared push of ${(100 * scene.intro_motion.push_per_s).toFixed(1)}% per second (${(100 * (Math.exp(Math.log1p(scene.intro_motion.push_per_s) * firstOnset) - 1)).toFixed(0)}% over the ${firstOnset.toFixed(1)} s intro) and a ${(100 * scene.intro_motion.drift).toFixed(0)}% frame-width drift.`;
-  } else if (introEnd > 0) {
-    scene.intro = [{ start:0, end:introEnd, fade:0, fadeIn:0, exit:'cut', title:song.title.trim() }];
-    intro = `Title fallback from frame 0 through frame ${introEnd - 1}.`;
-  }
-  // Team wordmarks: a word that names a team (or its nickname) is drawn in that team's own lettering. `image` (the
-  // official wordmark as a PNG, JPEG, WebP or SVG, ideally on a transparent background) wins over `font`; with
-  // neither, the existing lettering is kept with the supplied colours and the report says so plainly.
-  const wordmarks = [], fonts = {}, images = {};
-  for (const [name, style] of Object.entries(song.team_wordmarks ?? {})) {
-    const matched = scene.words.filter(w => w.text.toUpperCase().replace(/^[^A-Z0-9]+|[^A-Z0-9]+$/g,'') === name.toUpperCase());
-    const family = `SongWordmark${wordmarks.length + 1}`;
-    const image = style.image ? `wordmark${wordmarks.length + 1}` : null;
-    if (image) images[image] = asset(style.image, resolve, IMAGE_TYPES);
-    else if (style.font) fonts[family] = asset(style.font, resolve, {
-      '.ttf':'font/ttf', '.otf':'font/otf', '.woff':'font/woff', '.woff2':'font/woff2',
-    });
-    // Brief 8 item 55: an image wordmark's letters are measured, not its box. The viewer fits the image into the box
-    // (94% of its width, 90% of its height); the letters are letter_share of the image height (song setting, else the
-    // PNG's alpha box for a transparent image, else 1). w.cap becomes that letter height, so Type rule 1 and the size
-    // pass judge the lettering.
-    const dims = image ? imageSize(resolve(style.image)) : null;
-    const share = style.letter_share ?? (dims?.alpha ? dims.alpha.y1 - dims.alpha.y0 : 1);
-    for (const w of matched) {
-      w.wordmark = { family: !image && style.font ? family : null, image, colours: style.colours ?? {}, ...(image ? { letter_share: share } : {}) };
-      // Brief 13: per-wordmark ripple style (e.g. ghost ripple for an image wordmark); a per-word override wins.
-      if (style.ripple && w.ripple === undefined) w.ripple = structuredClone(style.ripple);
-      if (dims) {
-        const k = Math.min(w.w * 0.94 / dims.width, w.h * 0.9 / dims.height);
-        w.cap = dims.height * k * share;
-        w.wordmark.pre_cap = w.cap; // letter height before any block cut, for the wordmark growth pass (brief 12/14)
-        w.wordmark.size = { w: dims.width, h: dims.height }; // natural dimensions (including SVG viewBox) for viewer.html
-        // Brief 12 item 1.1 & brief 16 item 1: cut every image wordmark's box cleanly to its ink shape (alpha box for a
-        // transparent PNG, else the full image/SVG viewBox) about its centre, never growing here so it adds no overlap.
-        // With a background block (`bg`), add WORDMARK_MARGIN x ink height on all four sides; without one (`!bg`), trim
-        // tightly to the ink (margin 0) so transparent wordmarks have no invisible side wings and size cleanly by ink box.
-        const bg = style.colours?.background ?? w.colours?.background;
-        const ink = dims.alpha ?? { x0: 0, y0: 0, x1: 1, y1: 1 };
-        const aspect = (dims.width * (ink.x1 - ink.x0)) / (dims.height * (ink.y1 - ink.y0));
-        const margin = bg ? WORDMARK_MARGIN : 0;
-        let inkH = dims.height * k * (ink.y1 - ink.y0);
-        const fit = Math.min(1, w.w / (inkH * (aspect + 2 * margin)), w.h / (inkH * (1 + 2 * margin)));
-        inkH *= fit;
-        w.w = inkH * (aspect + 2 * margin); w.h = inkH * (1 + 2 * margin); w.pad = margin * inkH;
-        w.cap = inkH * (style.letter_share ?? 1);
-        w.wordmark.ink = ink; w.wordmark.margin = margin;
-      }
-    }
-    const kinds = [...new Set(matched.map(w => (w.echo ? 'sung echo' : w.reveal_copy_of ? 'reveal copy' : 'lyric')))].join(', ');
-    const used = image ? `IMAGE ${style.image}` : style.font ? `FONT ${style.font}` : 'NEITHER: no wordmark image or font supplied; existing lettering retained with supplied colours';
-    wordmarks.push({ name, used: image ? 'image' : style.font ? 'font' : 'neither', words: matched.length,
-      line: `${name} (${matched.length} scene words${kinds ? `: ${kinds}` : ''}): ${used}` });
-  }
-  if (Object.keys(fonts).length) scene.wordmarkFonts = fonts;
-  if (Object.keys(images).length) scene.wordmarkImages = images;
+  if (!(song.backdrops?.length) && !(song.props?.length)) return { backdrops: [], props: [] };
 
-  // Brief 17 (23 November 2026): photographic backdrops and screen-space hoisted props.
-  // Images are deduplicated into scene.stageImages by resolved path so repeated chorus entries embed once.
+  const songMargin = song.keep_clear_margin_px ?? DEFAULT_KEEP_CLEAR_MARGIN;
+  if (!Number.isFinite(songMargin) || songMargin < 0) {
+    throw Error(`keep_clear_margin_px: must be a finite number >= 0 (got ${song.keep_clear_margin_px})`);
+  }
+
   const stageImages = {}, stageByPath = new Map();
   const stageAsset = file => {
     const filename = resolve(file);
     if (!stageByPath.has(filename)) {
       const key = `stage${stageByPath.size + 1}`;
-      stageImages[key] = asset(file, resolve, IMAGE_TYPES);
+      if (embedImages) stageImages[key] = asset(file, resolve, IMAGE_TYPES);
       stageByPath.set(filename, key);
     }
     return { key: stageByPath.get(filename), filename };
@@ -205,6 +137,12 @@ export function songAppearance(scene, song, resolve, firstOnset) {
     const scale = p.scale ?? 1, opacity = p.opacity ?? 1;
     const anchorX = p.anchor_x ?? 0, anchorY = p.anchor_y ?? 0;
     const moveS = p.move_s ?? 0.4, keyMode = p.key_mode ?? 'step';
+    if (p.keep_clear != null && typeof p.keep_clear !== 'boolean') throw Error(`props[${i}] (${id}): keep_clear must be boolean`);
+    const keepClear = p.keep_clear !== false;
+    const keepClearMarginPx = p.keep_clear_margin_px ?? songMargin;
+    if (!Number.isFinite(keepClearMarginPx) || keepClearMarginPx < 0) {
+      throw Error(`props[${i}] (${id}): keep_clear_margin_px must be a finite number >= 0`);
+    }
     if (!Number.isFinite(scale) || scale <= 0) throw Error(`props[${i}] (${id}): scale must be > 0`);
     if (!Number.isFinite(opacity) || opacity <= 0 || opacity > 1) throw Error(`props[${i}] (${id}): opacity must be in (0, 1]`);
     if (!['step', 'span'].includes(keyMode)) throw Error(`props[${i}] (${id}): key_mode must be "step" or "span"`);
@@ -319,15 +257,103 @@ export function songAppearance(scene, song, resolve, firstOnset) {
       id, image: key, label: path.basename(p.image),
       w: dims.width, h: dims.height,
       anchorX, anchorY, scale, layer, opacity,
+      keepClear, keepClearMarginPx,
       x0, y0, segments, windows, hitBox, rippleBox,
       ...(p.ripple ? { ripple: structuredClone(p.ripple) } : {}),
       ...(pulses.length ? { pulses } : {}),
     };
     props.push(rec);
-    propLines.push(`${id} ${p.image} (${dims.width}x${dims.height}, anchor (${anchorX},${anchorY}), layer ${layer}, ref ${p.ref != null ? JSON.stringify(p.ref) : 'screen'}${p.stay ? ', stay' : ''}): ${rawKeys.length} keys (${keyMode}), ${pulses.length} pulses, hitBox [${Math.round(hitBox.x0)}..${Math.round(hitBox.x1)}, ${Math.round(hitBox.y0)}..${Math.round(hitBox.y1)}]`);
+    propLines.push(`${id} ${p.image} (${dims.width}x${dims.height}, anchor (${anchorX},${anchorY}), layer ${layer}, keep_clear ${keepClear ? `on (margin ${keepClearMarginPx} px)` : 'off'}, ref ${p.ref != null ? JSON.stringify(p.ref) : 'screen'}${p.stay ? ', stay' : ''}): ${rawKeys.length} keys (${keyMode}), ${pulses.length} pulses, hitBox [${Math.round(hitBox.x0)}..${Math.round(hitBox.x1)}, ${Math.round(hitBox.y0)}..${Math.round(hitBox.y1)}]`);
   }
   if (props.length) scene.props = props;
-  if (Object.keys(stageImages).length) scene.stageImages = stageImages;
+  if (embedImages && Object.keys(stageImages).length) scene.stageImages = stageImages;
+  return { backdrops: backdropLines, props: propLines };
+}
+
+export function songAppearance(scene, song, resolve, firstOnset, { stageCompiled = null } = {}) {
+  const fps = scene.meta.fps ?? 30;
+  const introEnd = Math.round(firstOnset * fps);
+  const frames = seconds => Math.round(seconds * fps);
+  let intro = 'No pre-vocal introduction needed.';
+  if (song.intro?.length && introEnd > 0) {
+    let start = 0;
+    scene.intro = song.intro.map(({ image, hold_s, dissolve_s = 0, dissolve_at_s, exit = 'cut' }, i, list) => {
+      const last = i === list.length - 1;
+      const hold = frames(hold_s), fade = frames(dissolve_s);
+      const transition = dissolve_at_s == null ? start + hold : frames(dissolve_at_s);
+      if (!(transition >= start + hold) || !(hold > 0) || !(fade >= 0) || !['cut','slide'].includes(exit) ||
+          (last && (fade || dissolve_at_s != null || transition > introEnd)) || start >= introEnd || (!last && transition + fade >= introEnd)) {
+        throw Error(`Invalid intro timing or exit in song settings.json, image ${i + 1}: ${image}`);
+      }
+      const end = last ? introEnd : transition + fade;
+      // box: the image's opaque content (alpha over half) as fractions, so the viewer sizes and centres the badge
+      // itself rather than the whole canvas; consecutive images then coincide through their dissolve.
+      const box = path.extname(image).toLowerCase() === '.png' ? pngAlphaBox(resolve(image)) : null;
+      const record = { start, end, fade, exit, fadeIn: frames(list[i-1]?.dissolve_s ?? 0), ...(box ? { box } : {}),
+        src: asset(image, resolve, IMAGE_TYPES) };
+      start = transition;
+      return record;
+    });
+    scene.intro_motion = { push_per_s: song.intro_push_per_s ?? 0.045, drift: song.intro_drift ?? 0.06 };
+    intro = `${scene.intro.length} song images from frame 0 through frame ${introEnd - 1}, sized and centred on their opaque content (${scene.intro.map(x => x.box ? `${(100 * (x.box.x1 - x.box.x0)).toFixed(0)}% x ${(100 * (x.box.y1 - x.box.y0)).toFixed(0)}% of the image` : 'whole image').join('; ')}), one shared push of ${(100 * scene.intro_motion.push_per_s).toFixed(1)}% per second (${(100 * (Math.exp(Math.log1p(scene.intro_motion.push_per_s) * firstOnset) - 1)).toFixed(0)}% over the ${firstOnset.toFixed(1)} s intro) and a ${(100 * scene.intro_motion.drift).toFixed(0)}% frame-width drift.`;
+  } else if (introEnd > 0) {
+    scene.intro = [{ start:0, end:introEnd, fade:0, fadeIn:0, exit:'cut', title:song.title.trim() }];
+    intro = `Title fallback from frame 0 through frame ${introEnd - 1}.`;
+  }
+  // Team wordmarks: a word that names a team (or its nickname) is drawn in that team's own lettering. `image` (the
+  // official wordmark as a PNG, JPEG, WebP or SVG, ideally on a transparent background) wins over `font`; with
+  // neither, the existing lettering is kept with the supplied colours and the report says so plainly.
+  const wordmarks = [], fonts = {}, images = {};
+  for (const [name, style] of Object.entries(song.team_wordmarks ?? {})) {
+    const matched = scene.words.filter(w => w.text.toUpperCase().replace(/^[^A-Z0-9]+|[^A-Z0-9]+$/g,'') === name.toUpperCase());
+    const family = `SongWordmark${wordmarks.length + 1}`;
+    const image = style.image ? `wordmark${wordmarks.length + 1}` : null;
+    if (image) images[image] = asset(style.image, resolve, IMAGE_TYPES);
+    else if (style.font) fonts[family] = asset(style.font, resolve, {
+      '.ttf':'font/ttf', '.otf':'font/otf', '.woff':'font/woff', '.woff2':'font/woff2',
+    });
+    // Brief 8 item 55: an image wordmark's letters are measured, not its box. The viewer fits the image into the box
+    // (94% of its width, 90% of its height); the letters are letter_share of the image height (song setting, else the
+    // PNG's alpha box for a transparent image, else 1). w.cap becomes that letter height, so Type rule 1 and the size
+    // pass judge the lettering.
+    const dims = image ? imageSize(resolve(style.image)) : null;
+    const share = style.letter_share ?? (dims?.alpha ? dims.alpha.y1 - dims.alpha.y0 : 1);
+    for (const w of matched) {
+      w.wordmark = { family: !image && style.font ? family : null, image, colours: style.colours ?? {}, ...(image ? { letter_share: share } : {}) };
+      // Brief 13: per-wordmark ripple style (e.g. ghost ripple for an image wordmark); a per-word override wins.
+      if (style.ripple && w.ripple === undefined) w.ripple = structuredClone(style.ripple);
+      if (dims) {
+        const k = Math.min(w.w * 0.94 / dims.width, w.h * 0.9 / dims.height);
+        w.cap = dims.height * k * share;
+        w.wordmark.pre_cap = w.cap; // letter height before any block cut, for the wordmark growth pass (brief 12/14)
+        w.wordmark.size = { w: dims.width, h: dims.height }; // natural dimensions (including SVG viewBox) for viewer.html
+        // Brief 12 item 1.1 & brief 16 item 1: cut every image wordmark's box cleanly to its ink shape (alpha box for a
+        // transparent PNG, else the full image/SVG viewBox) about its centre, never growing here so it adds no overlap.
+        // With a background block (`bg`), add WORDMARK_MARGIN x ink height on all four sides; without one (`!bg`), trim
+        // tightly to the ink (margin 0) so transparent wordmarks have no invisible side wings and size cleanly by ink box.
+        const bg = style.colours?.background ?? w.colours?.background;
+        const ink = dims.alpha ?? { x0: 0, y0: 0, x1: 1, y1: 1 };
+        const aspect = (dims.width * (ink.x1 - ink.x0)) / (dims.height * (ink.y1 - ink.y0));
+        const margin = bg ? WORDMARK_MARGIN : 0;
+        let inkH = dims.height * k * (ink.y1 - ink.y0);
+        const fit = Math.min(1, w.w / (inkH * (aspect + 2 * margin)), w.h / (inkH * (1 + 2 * margin)));
+        inkH *= fit;
+        w.w = inkH * (aspect + 2 * margin); w.h = inkH * (1 + 2 * margin); w.pad = margin * inkH;
+        w.cap = inkH * (style.letter_share ?? 1);
+        w.wordmark.ink = ink; w.wordmark.margin = margin;
+      }
+    }
+    const kinds = [...new Set(matched.map(w => (w.echo ? 'sung echo' : w.reveal_copy_of ? 'reveal copy' : 'lyric')))].join(', ');
+    const used = image ? `IMAGE ${style.image}` : style.font ? `FONT ${style.font}` : 'NEITHER: no wordmark image or font supplied; existing lettering retained with supplied colours';
+    wordmarks.push({ name, used: image ? 'image' : style.font ? 'font' : 'neither', words: matched.length,
+      line: `${name} (${matched.length} scene words${kinds ? `: ${kinds}` : ''}): ${used}` });
+  }
+  if (Object.keys(fonts).length) scene.wordmarkFonts = fonts;
+  if (Object.keys(images).length) scene.wordmarkImages = images;
+
+  // Brief 17/18: photographic backdrops and screen-space hoisted props (reuse earlier compileStageLayers if already run).
+  const stage = stageCompiled ?? compileStageLayers(scene, song, resolve, { embedImages: true });
+  const backdropLines = stage.backdrops, propLines = stage.props;
 
   let blank = 0;
   for (let f = 0; f < scene.meta.frames; f++) {

@@ -208,6 +208,55 @@ export function fitPose(pose, pts, vfov, mx = 0.94, my = 0.90) {
   const target = add(pose.target, add(mul(pose.R, uc), mul(pose.U, vc)));
   return { target, R: pose.R, U: pose.U, N: pose.N, dist };
 }
+
+// Pose with the same orientation that fits all `pts` inside an arbitrary NDC rectangle `box = { x0, x1, y0, y1 }`
+// (brief 18: camera framing into a prop keep-clear band). Returns null when the box is degenerate.
+export function fitPoseInBox(pose, pts, vfov, box) {
+  if (!pts.length || !(box.x1 > box.x0 + 1e-4) || !(box.y1 > box.y0 + 1e-4)) return null;
+  const tv = Math.tan((vfov * Math.PI) / 360), th = tv * 16 / 9;
+  const loc = pts.map(p => { const d = sub(p, pose.target); return [dot(d, pose.R), dot(d, pose.U), dot(d, pose.N)]; });
+  const maxN = Math.max(...loc.map(l => l[2]));
+  const feasible = d => {
+    if (!(d > maxN + 25)) return null;
+    let uLo = -Infinity, uHi = Infinity, vLo = -Infinity, vHi = Infinity;
+    for (const [u, v, n] of loc) {
+      const dep = d - n;
+      uLo = Math.max(uLo, u - box.x1 * dep * th);
+      uHi = Math.min(uHi, u - box.x0 * dep * th);
+      vLo = Math.max(vLo, v - box.y1 * dep * tv);
+      vHi = Math.min(vHi, v - box.y0 * dep * tv);
+    }
+    if (uLo <= uHi && vLo <= vHi) return { tu: (uLo + uHi) / 2, tv: (vLo + vHi) / 2 };
+    return null;
+  };
+  let hi = Math.max(pose.dist || 100, maxN + 100);
+  let guard = 0;
+  while (!feasible(hi) && guard++ < 40) hi *= 1.6;
+  if (!feasible(hi)) return null;
+  let lo = maxN + 25;
+  for (let i = 0; i < 40; i++) {
+    const m = (lo + hi) / 2;
+    if (feasible(m)) hi = m;
+    else lo = m;
+  }
+  const c = feasible(hi);
+  const target = add(pose.target, add(mul(pose.R, c.tu), mul(pose.U, c.tv)));
+  return { target, R: pose.R, U: pose.U, N: pose.N, dist: hi };
+}
+
+// Pick the maximal clear rectangle avoiding `obstacles` that fits `pts` at the smallest camera distance (largest text).
+export function fitPoseInClearArea(pose, pts, vfov, obstacles, { W = 1280, H = 720, mx = 0.94, my = 0.90, minW = 80, minH = 80 } = {}) {
+  const I = globalThis.KT_INTERP;
+  if (!obstacles?.length) return { pose: fitPose(pose, pts, vfov, mx, my), rect: null };
+  const rects = I.clearRectsFromObstacles(obstacles, { W, H, mx, my, minW, minH });
+  let best = null;
+  for (const r of rects) {
+    const p = fitPoseInBox(pose, pts, vfov, r.ndc);
+    if (!p) continue;
+    if (!best || p.dist < best.pose.dist - 1e-6) best = { pose: p, rect: r };
+  }
+  return best;
+}
 export const samePose = (a, b) => a && b && Math.abs(a.dist - b.dist) < 1e-6 && a.target.every((x, i) => Math.abs(x - b.target[i]) < 1e-6);
 
 export function repairShown(scene, onsetOf, { until = Infinity } = {}) {
@@ -308,13 +357,17 @@ export function repairShown(scene, onsetOf, { until = Infinity } = {}) {
       const pts = [];
       for (const s of group) { const f = Math.min(holdEnd - 1, Math.max(appearanceFrame(s.w), K.f1) + SHOWN_FRAMES - 1); const cs = cornersAt(s.w, f) ?? cornersAt(s.w, appearanceFrame(s.w)); if (cs) pts.push(...cs); }
       if (pts.length) {
-        const P = fitPose(K.to, pts, vfov);
-        if (P.dist > 0) {
+        const obs = I.hasKeepClearProps?.(scene)
+          ? I.keepClearObstaclesInRange(scene, K.f1, Number.isFinite(holdEnd) ? holdEnd : Math.min(scene.meta.frames ?? until, K.f1 + 30))
+          : [];
+        const fitted = obs.length ? fitPoseInClearArea(K.to, pts, vfov, obs) : null;
+        const P = fitted ? fitted.pose : fitPose(K.to, pts, vfov);
+        if (P && P.dist > 0) {
           const old = K.to;
           if (opening) keys[0].from = P;
           else K.to = P;
           if (!opening && n >= 0 && samePose(keys[n].from, old)) keys[n].from = P;
-          done = `${w.id} ${w.text}: ${opening ? 'opening hold' : `hold after key ${K.f0}-${K.f1}`} reframed to fit the ${group.length} words that appear in it (${group.map(s => s.w.text).join(' ')}), distance ${old.dist.toFixed(0)} -> ${P.dist.toFixed(0)}`;
+          done = `${w.id} ${w.text}: ${opening ? 'opening hold' : `hold after key ${K.f0}-${K.f1}`} reframed${obs.length ? ' (prop keep-clear)' : ''} to fit the ${group.length} words that appear in it (${group.map(s => s.w.text).join(' ')}), distance ${old.dist.toFixed(0)} -> ${P.dist.toFixed(0)}`;
         }
       }
     }

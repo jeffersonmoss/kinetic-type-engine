@@ -301,8 +301,91 @@
     return false;
   }
 
+  // ---- Keep-clear zones for screen-space props (engine fix brief 18, 23 November 2026) ----
+  const DEFAULT_KEEP_CLEAR_MARGIN = 24;
+
+  function hasKeepClearProps(scene) {
+    return !!(scene?.props?.some(p => p.keepClear !== false && (p.layer === 'under_words' || p.layer === 'over_words')));
+  }
+
+  // Active keep-clear obstacle rects in screen pixels at `frame` for every visible keep-clear prop.
+  function propKeepClearRects(scene, frame, W = 1280, H = 720, { useMargin = true } = {}) {
+    const props = scene?.props ?? [];
+    if (!props.length) return [];
+    const bds = scene.backdrops ?? [];
+    const out = [];
+    for (const p of props) {
+      if (p.keepClear === false) continue;
+      if (p.layer !== 'under_words' && p.layer !== 'over_words') continue;
+      const st = propScreenRects(p, frame, bds, W, H);
+      if (!st || st.opacity <= 0.05) continue;
+      if (!(st.hit.x1 > 0 && st.hit.x0 < W && st.hit.y1 > 0 && st.hit.y0 < H)) continue;
+      const m = useMargin ? (p.keepClearMarginPx ?? DEFAULT_KEEP_CLEAR_MARGIN) : 0;
+      const x0 = clamp(st.hit.x0 - m, 0, W), y0 = clamp(st.hit.y0 - m, 0, H);
+      const x1 = clamp(st.hit.x1 + m, 0, W), y1 = clamp(st.hit.y1 + m, 0, H);
+      if (x1 > x0 && y1 > y0) out.push({ p, x0, y0, x1, y1, hit: st.hit });
+    }
+    return out;
+  }
+
+  // Union of each active keep-clear prop's screen-space obstacle rect across integer frames [f0, f1).
+  function keepClearObstaclesInRange(scene, f0, f1, W = 1280, H = 720, { useMargin = true } = {}) {
+    if (!hasKeepClearProps(scene)) return [];
+    const a = Math.max(0, Math.floor(f0));
+    const b = Math.max(a + 1, Math.ceil(f1));
+    const byProp = new Map();
+    for (let f = a; f < b; f++) {
+      for (const r of propKeepClearRects(scene, f, W, H, { useMargin })) {
+        const cur = byProp.get(r.p.id);
+        if (!cur) byProp.set(r.p.id, { p: r.p, x0: r.x0, y0: r.y0, x1: r.x1, y1: r.y1 });
+        else {
+          cur.x0 = Math.min(cur.x0, r.x0);
+          cur.y0 = Math.min(cur.y0, r.y0);
+          cur.x1 = Math.max(cur.x1, r.x1);
+          cur.y1 = Math.max(cur.y1, r.y1);
+        }
+      }
+    }
+    return [...byProp.values()];
+  }
+
+  // Maximal clear rectangles inside the safe screen frame avoiding every obstacle rect.
+  function clearRectsFromObstacles(obstacles, { W = 1280, H = 720, mx = 0.94, my = 0.90, minW = 48, minH = 48 } = {}) {
+    const safe = { x0: W * (1 - mx) / 2, y0: H * (1 - my) / 2, x1: W * (1 + mx) / 2, y1: H * (1 + my) / 2 };
+    let rects = [safe];
+    const eps = 1e-6;
+    for (const o of obstacles ?? []) {
+      const next = [];
+      for (const r of rects) {
+        if (o.x1 <= r.x0 + eps || o.x0 >= r.x1 - eps || o.y1 <= r.y0 + eps || o.y0 >= r.y1 - eps) {
+          next.push(r);
+          continue;
+        }
+        if (o.x0 > r.x0 + eps) next.push({ x0: r.x0, y0: r.y0, x1: Math.min(r.x1, o.x0), y1: r.y1 });
+        if (o.x1 < r.x1 - eps) next.push({ x0: Math.max(r.x0, o.x1), y0: r.y0, x1: r.x1, y1: r.y1 });
+        if (o.y0 > r.y0 + eps) next.push({ x0: r.x0, y0: r.y0, x1: r.x1, y1: Math.min(r.y1, o.y0) });
+        if (o.y1 < r.y1 - eps) next.push({ x0: r.x0, y0: Math.max(r.y0, o.y1), x1: r.x1, y1: r.y1 });
+      }
+      // Prune rectangles wholly contained inside another rectangle in `next`.
+      rects = next.filter((a, i) => !next.some((b, j) => j !== i &&
+        b.x0 <= a.x0 + eps && b.y0 <= a.y0 + eps && b.x1 >= a.x1 - eps && b.y1 >= a.y1 - eps &&
+        (b.x0 < a.x0 - eps || b.y0 < a.y0 - eps || b.x1 > a.x1 + eps || b.y1 > a.y1 + eps || j < i)));
+    }
+    return rects
+      .map(r => {
+        const w = r.x1 - r.x0, h = r.y1 - r.y0;
+        return {
+          ...r, w, h, area: w * h,
+          ndc: { x0: r.x0 / W * 2 - 1, x1: r.x1 / W * 2 - 1, y0: 1 - r.y1 / H * 2, y1: 1 - r.y0 / H * 2 },
+        };
+      })
+      .filter(r => r.w >= minW && r.h >= minH)
+      .sort((a, b) => b.area - a.area);
+  }
+
   globalThis.KT_INTERP = Object.freeze({
     ease, movePose, poseAt, project, quaternion, slerp, rotateAxis, wordState, wordShift, wordXform, wordMoving, wordClips,
     SHARP_EASE, backdropRect, backdropOpacity, propOpacityAt, propPoseAt, propScreenRects, stageVisible,
+    DEFAULT_KEEP_CLEAR_MARGIN, hasKeepClearProps, propKeepClearRects, keepClearObstaclesInRange, clearRectsFromObstacles,
   });
 })();

@@ -1,5 +1,6 @@
-import { songAppearance } from './song_appearance.mjs';
+import { songAppearance, compileStageLayers } from './song_appearance.mjs';
 import { scanOverlap, repairShownAndOverlap, tamePulses, checkPropWordOverlap } from './overlap_gate.mjs';
+import { frameClearOfProps, resolvePropOverlaps } from './keep_clear.mjs';
 // Build a whole song with the deterministic engine (song-agnostic driver, 22 November 2026; generalised from the Room for
 // One prototype's "videos/Room for One - whole song.mjs", W2 commit 4e2d2b0). See KIT.md.
 //   1. An optional approved opening scene is used as is (Room for One: build #144).
@@ -118,6 +119,17 @@ if (opening) {
 // only its own words file and window and writes only its own folder, so the order they finish in cannot change the
 // result; they are joined in section order below exactly as before.
 const JOBS = Math.max(1, Number(opt('--jobs', 6)));
+// Brief 18: if the song has keep-clear props, write lightweight stage geometry for section builds so layout and camera
+// planning can target the clear band's aspect ratio and keep focused words clear. No-props songs skip this completely.
+let sectionStageFile = null;
+if (song.props?.length) {
+  const stageShell = { meta: { fps: FPS, frames: Math.round(SONG_END * FPS) } };
+  compileStageLayers(stageShell, song, inp, { embedImages: false });
+  if (globalThis.KT_INTERP.hasKeepClearProps?.(stageShell)) {
+    sectionStageFile = path.join(OUT, 'sections', 'stage-keep-clear.json');
+    fs.writeFileSync(sectionStageFile, JSON.stringify({ backdrops: stageShell.backdrops ?? [], props: stageShell.props ?? [] }));
+  }
+}
 const jobs = song.sections.map((sec, k) => {
   const w = sectionWords(sec);
   const label = `Section ${sec.n} - ${sec.name}`;
@@ -127,7 +139,7 @@ const jobs = song.sections.map((sec, k) => {
   const isFirst = !opening && k === 0, isLast = k === song.sections.length - 1;
   const clipEnd = isLast ? SONG_END : w.song_end_of_hook + READ_TAIL_S;
   const build = !skipBuild && (!onlySections || onlySections.includes(sec.n));
-  const argv = ['build_best.mjs', '--words', wordsFile, '--window', `${isFirst ? 0 : w.start_s},${w.song_end_of_hook},${clipEnd}`, '--N', String(N), '--out', dir, '--map', mapPath, '--palette', palettePath, '--title', song.title];
+  const argv = ['build_best.mjs', '--words', wordsFile, '--window', `${isFirst ? 0 : w.start_s},${w.song_end_of_hook},${clipEnd}`, '--N', String(N), '--out', dir, '--map', mapPath, '--palette', palettePath, '--title', song.title, ...(sectionStageFile ? ['--stage', sectionStageFile] : [])];
   return { sec, w, label, dir, isFirst, build, argv, seconds: 0, out: '' };
 });
 {
@@ -228,6 +240,24 @@ if (song.picture_elements) el = execFileSync('node', ['run_elements.mjs', inp(so
 else fs.copyFileSync(notes, workScene);
 const finalObj = JSON.parse(fs.readFileSync(workScene, 'utf8'));
 fs.rmSync(workScene, { force: true });
+// Brief 18: when the song has backdrops/props, compile stage layers before the whole-song framing/composition passes
+// so camera framing, shown-whole repair, size growth, wordmark growth, static-partial slides and room placement all
+// respect active keep-clear zones. Songs without backdrops or props skip this completely (byte-identical).
+const stageEarly = (song.backdrops?.length || song.props?.length)
+  ? compileStageLayers(finalObj, song, inp, { embedImages: true })
+  : null;
+const keepClearFrame = globalThis.KT_INTERP.hasKeepClearProps?.(finalObj)
+  ? frameClearOfProps(finalObj, onsetOf, {
+    until: revealF0,
+    settings: {
+      ...(song.min_word_h != null ? { minH: song.min_word_h } : {}),
+      ...(song.room_factor != null ? { roomFactor: song.room_factor } : {}),
+      ...(song.crowded_words != null ? { crowdedWords: song.crowded_words } : {}),
+      ...(song.crowded_area != null ? { crowdedArea: song.crowded_area } : {}),
+    },
+    minEndHold: MIN_END_HOLD,
+  })
+  : { log: [], holdsReframed: 0, holdsSplit: 0 };
 // The final joined scene is repaired for both rules together (shown whole and projected overlap), alternating until
 // neither repair changes anything; the checks below then judge the scene exactly as it is written.
 let joint = repairShownAndOverlap(finalObj, onsetOf, { until: revealF0, retireOccluded: true });
@@ -297,7 +327,7 @@ const overlapRepair = { retired: joint.overlapLog };
     cf[key] = { family: f.family, src: `data:${type};base64,${fs.readFileSync(file).toString('base64')}` };
   }
   if (Object.keys(cf).length) finalObj.customFonts = cf; }
-const appearance = songAppearance(finalObj, song, inp, Math.min(...map.words.map(w => w.start_s)));
+const appearance = songAppearance(finalObj, song, inp, Math.min(...map.words.map(w => w.start_s)), { stageCompiled: stageEarly });
 if (!appearance.pass) process.exitCode = 1;
 outlines.log.push(...noOutlines(finalObj, { flatOf }).log);
 // Brief 8 item 55: image wordmarks are sized by their letters (set by the song appearance pass), grown if small.
@@ -348,6 +378,21 @@ for (const w of finalObj.words) { delete w.size_restore; delete w.size_hides; de
 { const again = hideStaticPartials(finalObj, onsetOf, { until: frames });
   staticHide.log.push(...again.log.map(x => `(after the fills) ${x}`)); staticHide.focused = [...new Set([...staticHide.focused, ...again.focused])];
   if (again.log.length) fill.remaining = emptyFrames(finalObj, { from: 0, until: frames }).filter(r => r.end - r.start + 1 > emptyMaxF); }
+// Brief 18: final targeted pass to clear any remaining focus-window overlap against keep-clear props (camera move
+// transitions, entrance sweeps, pulses/stamps, or post-fill words), preferring framing over scaling down.
+const keepClearResolve = globalThis.KT_INTERP.hasKeepClearProps?.(finalObj)
+  ? resolvePropOverlaps(finalObj, onsetOf, { until: frames, settings: finalObj.meta.size_rule ?? {}, minEndHold: MIN_END_HOLD })
+  : { log: [], belowMin: [], unresolved: [] };
+// If keepClearResolve moved a camera key or word and opened room for a previously dropped word, put it back before the
+// room gate runs (placeInRoom already enforces prop keep-clear margin).
+if (keepClearResolve.log.length) {
+  const roomAfter = placeInRoom(finalObj, onsetOf, { until: revealF0, settings: finalObj.meta.size_rule ?? {} });
+  roomLog.push(...roomAfter);
+  if (roomAfter.some(r => r.room)) {
+    const c4 = hideEdgeClutter(finalObj, onsetOf, { until: revealF0 }), u4 = hideUnreadable(finalObj, onsetOf, { until: revealF0 });
+    clutter.log.push(...c4.log.map(x => `(after keep-clear room) ${x}`)); unreadable.log.push(...u4.log.map(x => `(after keep-clear room) ${x}`));
+  }
+}
 // Brief 8 item 54: the largest word on screen is never grey.
 const greyLargest = largestGreyToCream(finalObj, { until: revealF0 });
 // Brief 8 item 49: a single word holding alone over a second, with the drops sung inside that stretch (reported).
@@ -379,11 +424,14 @@ if (emptyEnds.length) { process.exitCode = 1; console.error(`EMPTY ${emptyEnds.m
 if (fill.remaining.length) { process.exitCode = 1; console.error(`EMPTY STRETCH OVER ${EMPTY_MAX_S} s FAIL (not waivable): ${fill.remaining.map(r => `${r.start}-${r.end}`).join(', ')}`); }
 // The overlap gate judges the scene as written, after the size, outline and fill passes (brief 5).
 // Sung pulses are checked at their peak (brief 7 item 7); one that would overlap is lowered or dropped.
-const pulseLog = tamePulses(finalObj, { until: revealF0 });
+const pulseLog = tamePulses(finalObj, { until: revealF0, onsetOf });
 const overlapFinal = { overlaps: scanOverlap(finalObj, { until: revealF0 }).overlaps };
 if (overlapFinal.overlaps.length) process.exitCode = 1;
-// Brief 17 item 10: a prop must never cover any part of a sung word during its focus window.
+// Brief 17 item 10 & brief 18: a keep-clear prop must never cover any part of a sung word during its focus window.
 const propOverlap = checkPropWordOverlap(finalObj, onsetOf, { until: frames });
+const propMargin = globalThis.KT_INTERP.hasKeepClearProps?.(finalObj)
+  ? checkPropWordOverlap(finalObj, onsetOf, { until: frames, useMargin: true })
+  : { violations: [], pass: true };
 if (!propOverlap.pass) {
   process.exitCode = 1;
   console.error(`PROP COVERS SUNG WORD FAIL: ${propOverlap.violations.length} intervals: ${propOverlap.violations.slice(0, 8).map(v => v.summary).join('; ')}`);
@@ -462,11 +510,17 @@ md.push('', '## Zoom entrances (size floor)', '', `${zoomFloor.length} zoom entr
 md.push('', '## Projected overlap', '', `${overlapFinal.overlaps.length} remaining intervals (${overlapFinal.overlaps.length ? 'FAIL' : 'PASS'}), scanned with each sung pulse at its peak. Pulses lowered or dropped: ${pulseLog.length}.`, '', ...pulseLog.map(x => `- Pulse: ${x}`),
   ...overlapRepair.retired.map(x => `- Repair: ${x}`), ...overlapFinal.overlaps.map(x => `- ${x}`));
 if (appearance.backdrops.length || appearance.props.length) {
-  md.push('', '## Backdrops and props (brief 17)', '',
+  md.push('', '## Backdrops and props (brief 17 & 18)', '',
     `Backdrops: ${appearance.backdrops.length}. Props: ${appearance.props.length}.`, '',
     ...appearance.backdrops.map(x => `- Backdrop: ${x}`),
     ...appearance.props.map(x => `- Prop: ${x}`), '',
-    `Prop covers sung word during focus window (hard gate): ${propOverlap.violations.length} intervals (${propOverlap.pass ? 'PASS' : 'FAIL'}).`,
+    `Keep-clear framing (brief 18): ${keepClearFrame.holdsReframed} holds reframed, ${keepClearFrame.holdsSplit} holds split; ${keepClearResolve.log.length} targeted prop-clearance repairs; ${keepClearResolve.belowMin.length} words scaled below legibility minimum; ${keepClearResolve.unresolved.length} unresolved.`,
+    ...keepClearFrame.log.map(x => `- Frame: ${x}`),
+    ...keepClearResolve.log.map(x => `- Resolve: ${x}`),
+    ...keepClearResolve.belowMin.map(x => `- BELOW MIN: ${x}`),
+    ...keepClearResolve.unresolved.map(x => `- UNRESOLVED: ${x}`), '',
+    `Prop covers sung word during focus window (hard gate, raw hitBox): ${propOverlap.violations.length} intervals (${propOverlap.pass ? 'PASS' : 'FAIL'}).`,
+    `Keep-clear margin check (hitBox + keep_clear_margin_px, reported): ${propMargin.violations.length} intervals.`,
     ...propOverlap.violations.map(v => `- FAIL: ${v.summary}`));
 }
 md.push('', '## Ending', '', `Still ending (camera still for the last ${MIN_END_HOLD} frames, no word moving on the last frame): ${stillEnding.pass ? 'PASS' : `FAIL: ${stillEnding.problems.join('; ')}`}.`, '');

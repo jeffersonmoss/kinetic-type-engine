@@ -1,4 +1,4 @@
-import { scanOverlap, OVERLAP_GATE } from './overlap_gate.mjs';
+import { scanOverlap, checkPropWordOverlap, OVERLAP_GATE } from './overlap_gate.mjs';
 // Single-build assembler, Best-of-200 selector, seed variants, pins, and CLI (rulebook 4.4, 13.4, 18.6.2, 18.8).
 import fs from 'node:fs';
 import path from 'node:path';
@@ -14,11 +14,13 @@ import { planJoints, applyRepeatRunGroups } from './plan_joints.mjs';
 import { evaluateScene } from './checks.mjs';
 import { repairShown, gateFailures } from './shown_gate.mjs';
 import { staticFocusRuns } from './composition.mjs';
+import { frameClearOfProps } from './keep_clear.mjs';
 // Hard gate (Jefferson, rough cut 4): no severity fallback, demotion or ruling waives it.
 export const SHOWN_GATE = '13.1.0_every_sung_word_shown_whole';
 // Readable size and sparse frames (engine fix brief 3, items 2 and 4): ranked right after the shown-whole gate.
 export const SIZE_CHECK = '13.1.20_readable_size_and_sparse_frames';
 export const STATIC_CHECK = '13.1.21_static_partly_on_screen_focus';
+export const PROP_OVERLAP_GATE = '13.1.22_prop_covers_sung_word';
 import { renderProvenanceMarkdown } from './provenance.mjs';
 import { plaqueSheet, trailSheet } from './debug_svg.mjs';
 
@@ -54,6 +56,7 @@ export function buildSingle({
   pinnedShots = null,
   preservePinnedTiming = false,
   joints = true,
+  stage = null,
 }) {
   const [startSec, endSec, revealUntil] = win;
   const fullSalt = `${salt}#${buildIndex}`;
@@ -67,7 +70,7 @@ export function buildSingle({
   const styleDecisions = assignStyles(shots, palette, seed, { pinnedShots });
 
   // Stage 4: plaques.
-  const plaques = composePlaques(shots, metrics, seed, { mortar, pinnedShots });
+  const plaques = composePlaques(shots, metrics, seed, { mortar, pinnedShots, stage, fps });
   // Spec 32.3: each repeat run lands as one still group (layout unchanged).
   if (joints) applyRepeatRunGroups(shots, map.tempo_bpm);
 
@@ -223,6 +226,14 @@ export function buildSingle({
   for (const w of scene.words) if (sungT.has(w.id)) w.t = sungT.get(w.id);
   const onsetOf = w => (w.t != null ? Math.round(w.t * fps) : null);
   const gateUntil = Math.min(...scene.words.map(w => w.reveal_on ?? Infinity));
+  // Brief 18: when section build receives keep-clear stage geometry, reframe prop-active holds into the clear area
+  // before shown-whole repair and evaluation.
+  const hasStageProps = !!(stage && globalThis.KT_INTERP?.hasKeepClearProps?.(stage));
+  if (hasStageProps) {
+    scene.backdrops = stage.backdrops;
+    scene.props = stage.props;
+    frameClearOfProps(scene, onsetOf, { until: Math.min(gateUntil, scene.meta.frames) });
+  }
   const shownRepair = jointPlan ? repairShown(scene, onsetOf, { until: gateUntil }) : { before: 0, after: 0, log: [], remaining: [] };
 
   // Stage 10: hard checks and score.
@@ -273,6 +284,16 @@ export function buildSingle({
       if (!evaluation.failedChecks.includes(SHOWN_GATE)) evaluation.failedChecks.unshift(SHOWN_GATE);
       evaluation.passed = false;
     }
+  }
+  if (hasStageProps) {
+    const propCheck = checkPropWordOverlap(scene, onsetOf, { until: Math.min(gateUntil, scene.meta.frames) });
+    if (!propCheck.pass) {
+      evaluation.checks[PROP_OVERLAP_GATE] = { failures: propCheck.violations.map(v => v.summary) };
+      evaluation.failedChecks.push(PROP_OVERLAP_GATE);
+      evaluation.passed = false;
+    }
+    delete scene.backdrops;
+    delete scene.props;
   }
 
   // Build structured build log (4.1, 18.7.4) and pin snapshot (18.8.8).
@@ -525,6 +546,7 @@ export function buildBest({
   wordsMode = 'pop',
   ease = 'asymmetric',
   pinsLog = null,
+  stage = null,
 }) {
   checkPalette(palette);
   checkSlots(metrics);
@@ -539,6 +561,7 @@ export function buildBest({
       clipName, window: win, vfov, fps, family, mortar, panel, wordsMode, ease,
       pinnedShots: pinsLog.pins,
       preservePinnedTiming: easeOnlyFork,
+      stage,
     });
     return {
       chosen: res,
@@ -557,6 +580,7 @@ export function buildBest({
       wordsInput, map, metrics, palette, title, salt,
       buildIndex: bi,
       clipName, window: win, vfov, fps, family, mortar, panel, wordsMode, ease,
+      stage,
     });
     all.push(res);
   }
@@ -707,6 +731,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToP
   const pick = args.pick != null ? Number(args.pick) : 1;
   const N = args.N != null ? Number(args.N) : 200;
   const pinsLog = args.pins ? JSON.parse(fs.readFileSync(args.pins, 'utf8')) : null;
+  const stage = args.stage ? JSON.parse(fs.readFileSync(args.stage, 'utf8')) : null;
 
   const wordsInput = JSON.parse(fs.readFileSync(wordsFileResolved, 'utf8'));
   const map = JSON.parse(fs.readFileSync(mapFile, 'utf8'));
@@ -716,7 +741,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToP
 
   const result = buildBest({
     wordsInput, map, metrics, palette, title, salt, N, pick, clipName,
-    window: win, mortar, panel, wordsMode: wordsModeResolved, ease, pinsLog,
+    window: win, mortar, panel, wordsMode: wordsModeResolved, ease, pinsLog, stage,
   });
 
   const commandLine = `node build_best.mjs ${rawArgv.map(s => (/\s/.test(s) ? `"${s}"` : s)).join(' ')}`;

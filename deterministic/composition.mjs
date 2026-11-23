@@ -6,8 +6,8 @@
 //     is hidden for the rest of that hold (opacity 0, restored when the hold ends). It never touches a focused word.
 import './interp.js';
 import * as G from './shown_gate.mjs';
-import { appearanceFrame, sungWords, letterHeight, fullyShown, cornersAt, fitPose, samePose, gateFailures, SIZE_DELAY } from './shown_gate.mjs';
-import { scanOverlap } from './overlap_gate.mjs';
+import { appearanceFrame, sungWords, letterHeight, fullyShown, cornersAt, fitPose, fitPoseInClearArea, samePose, gateFailures, SIZE_DELAY } from './shown_gate.mjs';
+import { scanOverlap, wordPropOverlapFrames } from './overlap_gate.mjs';
 import { JERSEY_FONTS } from './style.mjs';
 import { isGrey, ungrey } from './word_roles.mjs';
 
@@ -50,7 +50,12 @@ export function tightenLone(scene, onsetOf, { until = scene.meta.frames } = {}) 
     const K = scene.cams[h.k], cs = cornersAt(w, D);
     if (!cs) continue;
     // Centre on the word, then come in until its letters reach LONE_MIN (never past the reading margins of fitPose).
-    const fit = fitPose(K.to, cs, vfov, LONE_WIDTH, 0.9);
+    // Brief 18: when a keep-clear prop is active in this hold, frame inside the clear band instead of centring.
+    const propObs = I.hasKeepClearProps?.(scene) ? I.keepClearObstaclesInRange(scene, h.start, h.end) : [];
+    const fit = propObs.length
+      ? fitPoseInClearArea(K.to, cs, vfov, propObs, { mx: 0.94, my: 0.90 })?.pose
+      : fitPose(K.to, cs, vfov, LONE_WIDTH, 0.9);
+    if (!fit) continue;
     const atFit = letterHeight(w, D, complete(fit), vfov);
     if (!atFit) continue;
     const dist = Math.max(fit.dist, fit.dist * atFit / LONE_MIN);
@@ -63,9 +68,11 @@ export function tightenLone(scene, onsetOf, { until = scene.meta.frames } = {}) 
     const ovBefore = scanOverlap(JSON.parse(JSON.stringify({ ...scene, cams: JSON.parse(snapshot) })), { from, until: to }).overlaps.length;
     const ovAfter = scanOverlap(scene, { from, until: to }).overlaps.length;
     const c = cost(gateFailures(scene, onsetOf, { until }));
-    if (c <= base && ovAfter <= ovBefore) {
+    const [wFa, wFb] = focusWindow(w, onsetOf, scene.meta.fps ?? 30);
+    const propClear = !propObs.length || wordPropOverlapFrames(scene, w, wFa, wFb, { useMargin: true }).length === 0;
+    if (c <= base && ovAfter <= ovBefore && propClear) {
       base = c;
-      log.push(`${w.id} ${w.text}: lone in hold ${h.start}-${h.end}, letters ${(100 * size).toFixed(1)}% -> ${(100 * letterHeight(w, D, I.poseAt(scene.cams, D), vfov)).toFixed(1)}% of the frame height, centred`);
+      log.push(`${w.id} ${w.text}: lone in hold ${h.start}-${h.end}, letters ${(100 * size).toFixed(1)}% -> ${(100 * letterHeight(w, D, I.poseAt(scene.cams, D), vfov)).toFixed(1)}% of the frame height, ${propObs.length ? 'in clear band' : 'centred'}`);
     } else { scene.cams = JSON.parse(snapshot); void oldNext; }
   }
   return { log };
@@ -793,6 +800,10 @@ export function placeInRoom(scene, onsetOf, { until = scene.meta.frames, setting
           const oHoldOk = sh.some(x => x.size >= x.min - 1e-9 && x.h.start <= o && o < x.h.end);
           if (sh.some(x => x.focused && !(oHoldOk && x.h.start > o) && x.size < x.min - 1e-9)) continue;
           if (ghostOverlap(w, lo, hi)) continue;
+          if (I.hasKeepClearProps?.(scene)) {
+            const [pfa, pfb] = focusWindow(w, onsetOf, fps);
+            if (wordPropOverlapFrames(scene, w, pfa, Math.min(until, pfb), { useMargin: true }).length) continue;
+          }
           if (staticPartials(scene, { words: [w], until }).some(r => r.start <= o + G.SHOWN_FRAMES)) continue;
           // Hide any later hold where this restored word would be under size (when another word of size stays on screen).
           for (const x of sh) {
@@ -873,6 +884,12 @@ export function enforceMinSize(scene, onsetOf, { until = scene.meta.frames, sett
     for (const key of ['w', 'h', 'cap', 'fontPx', 'pad']) if (typeof w[key] === 'number') w[key] *= k;
   };
   const ownFailures = w => gateFailures({ ...scene, words: [w] }, onsetOf, { until }).filter(x => x.kind === 'partial' || x.kind === 'unshown').length;
+  const hasProps = I.hasKeepClearProps?.(scene);
+  const propOv = w => {
+    if (!hasProps) return 0;
+    const [pfa, pfb] = focusWindow(w, onsetOf, fps);
+    return wordPropOverlapFrames(scene, w, pfa, Math.min(until, pfb), { useMargin: true }).length;
+  };
   const drops = [];
   for (const w of scene.words) {
     if (wordmarks ? !(w.wordmark?.image && !w.reveal_copy_of && !w.echo && !w.dropped) : !resizable(w)) continue;
@@ -882,14 +899,14 @@ export function enforceMinSize(scene, onsetOf, { until = scene.meta.frames, sett
     const k = Math.max(...short.map(x => x.min / x.size)) * 1.03, was = Math.max(...short.map(x => x.size));
     if (k <= MAX_GROW && growable(w)) {
       const lo = Math.max(0, w.on), hi = Math.min(until, w.off ?? until);
-      const ovBefore = overlapsWithDrops(lo, hi, w.id), failBefore = ownFailures(w);
+      const ovBefore = overlapsWithDrops(lo, hi, w.id), failBefore = ownFailures(w), propBefore = propOv(w);
       const keep = JSON.stringify({ C: w.C, w: w.w, h: w.h, cap: w.cap, fontPx: w.fontPx, pad: w.pad, motion: w.motion });
       const clipped = (w.clip ?? []).length > 0;
       let done = false;
       for (const pv of PIVOTS) {
         grow(w, k, pv);
         if (clipped) w.motion = (w.motion ?? []).map(m => m.kind === 'shift' ? { ...m, from: mul(m.from, k), to: mul(m.to, k) } : m);
-        if ((!clipped || clipEntranceOk(scene, w)) && overlapsWithDrops(lo, hi, w.id) <= ovBefore && ownFailures(w) <= failBefore) {
+        if ((!clipped || clipEntranceOk(scene, w)) && overlapsWithDrops(lo, hi, w.id) <= ovBefore && ownFailures(w) <= failBefore && propOv(w) <= propBefore) {
           counts.grown++; done = true;
           log.push(`${w.id} ${w.text}: grown x${k.toFixed(2)}${pv[0] || pv[1] ? ` from its ${['', 'left', 'right'][pv[0] === -1 ? 1 : pv[0] === 1 ? 2 : 0]}${pv[0] && pv[1] ? ' ' : ''}${['', 'bottom', 'top'][pv[1] === -1 ? 1 : pv[1] === 1 ? 2 : 0]} ${pv[0] && pv[1] ? 'corner' : 'edge'}` : ''} (letters ${(100 * was).toFixed(1)}% under the ${(100 * Math.max(...short.map(x => x.min))).toFixed(1)}% minimum)`);
           break;
@@ -921,14 +938,14 @@ export function enforceMinSize(scene, onsetOf, { until = scene.meta.frames, sett
     // its grown box would overlap (they are dropped for good, `dropped: "room"`, never brought back by the empty-screen
     // undo). Only when a keyword or a name is in the way, or growing fails for another reason, is it dropped.
     if (short.some(x => x.focused) && w.keyword && k <= MAX_GROW && growable(w)) {
-      const lo = Math.max(0, w.on), hi = Math.min(until, w.off ?? until), failBefore = ownFailures(w);
+      const lo = Math.max(0, w.on), hi = Math.min(until, w.off ?? until), failBefore = ownFailures(w), propBefore = propOv(w);
       const keep = JSON.stringify({ C: w.C, w: w.w, h: w.h, cap: w.cap, fontPx: w.fontPx, pad: w.pad, motion: w.motion });
       const byId = new Map(scene.words.map(x => [x.id, x])), clipped = (w.clip ?? []).length > 0;
       let made = null;
       for (const pv of PIVOTS) {
         grow(w, k, pv);
         if (clipped) w.motion = (w.motion ?? []).map(m => m.kind === 'shift' ? { ...m, from: mul(m.from, k), to: mul(m.to, k) } : m);
-        if ((!clipped || clipEntranceOk(scene, w)) && ownFailures(w) <= failBefore) {
+        if ((!clipped || clipEntranceOk(scene, w)) && ownFailures(w) <= failBefore && propOv(w) <= propBefore) {
           const mine = scanOverlap(scene, { from: lo, until: hi }).overlaps.filter(o => o.includes(` ${w.id} `) || o.includes(`: ${w.id} `));
           const ids = [...new Set(mine.flatMap(o => [...o.matchAll(/\b(w\d+[a-z0-9]*) /g)].map(m => m[1])))].filter(id => id !== w.id);
           const partners = ids.map(id => byId.get(id));
@@ -1289,12 +1306,18 @@ function slideWhole(scene, w, onsetOf, until, mustEnd) {
   // Flagg slid first to partly shown, then wholly out of frame).
   const own = () => gateFailures({ ...scene, words: [w] }, onsetOf, { until }).reduce((t, x) => t + (x.kind === 'partial' ? 100 : x.kind === 'unshown' ? 1 : 0), 0);
   const stuck = () => staticPartials(scene, { words: [w], until }).some(r => r.start <= mustEnd);
-  const ovBefore = ov(), C0 = w.C;
+  const hasProps = globalThis.KT_INTERP.hasKeepClearProps?.(scene);
+  const propOv = () => {
+    if (!hasProps) return 0;
+    const [pfa, pfb] = focusWindow(w, onsetOf, scene.meta.fps ?? 30);
+    return wordPropOverlapFrames(scene, w, pfa, Math.min(until, pfb), { useMargin: true }).length;
+  };
+  const ovBefore = ov(), propBefore = propOv(), C0 = w.C;
   const dirs = [[w.R, w.w, 'along its line'], [mul(w.R, -1), w.w, 'back along its line'], [w.U, w.h, 'up its plaque'], [mul(w.U, -1), w.h, 'down its plaque']].filter(([d]) => across(d));
   for (const k of [0.25, 0.5, 0.75, 1, 1.5, 2, 3]) for (const [dir, size, name] of dirs) {
     w.C = add(C0, mul(dir, k * size));
     const o = own();
-    if (!stuck() && ov() <= ovBefore && o === 0) return `${name} by ${k} of its ${size === w.w ? 'width' : 'height'}`;
+    if (!stuck() && ov() <= ovBefore && o === 0 && propOv() <= propBefore) return `${name} by ${k} of its ${size === w.w ? 'width' : 'height'}`;
   }
   w.C = C0;
   return null;
@@ -1412,6 +1435,13 @@ export function growWordmarks(scene, onsetOf, { until = scene.meta.frames } = {}
     }
     const o = onsetOf(w) ?? w.on, h = hs.find(x => x.start <= fr && fr < x.end);
     const on0 = w.on, b = Math.min(until, w.off ?? until), ov0 = ov(w, Math.max(0, on0), b), f0 = ownFail(w);
+    const hasProps = I.hasKeepClearProps?.(scene);
+    const propOv = () => {
+      if (!hasProps) return 0;
+      const [pfa, pfb] = focusWindow(w, onsetOf, scene.meta.fps ?? 30);
+      return wordPropOverlapFrames(scene, w, pfa, Math.min(until, pfb), { useMargin: true }).length;
+    };
+    const prop0 = propOv();
     // For a lone static-entrance wordmark that switches on before its hold lands, also allow starting cleanly at the
     // hold start (still <= sung onset, 0 frames late) if pre-hold frames would overlap the outgoing plaque.
     const onCands = alone && !(w.motion ?? []).length && h && h.start > on0 && h.start <= o ? [on0, h.start] : [on0];
@@ -1432,7 +1462,7 @@ export function growWordmarks(scene, onsetOf, { until = scene.meta.frames } = {}
           }
           for (const key of ['w', 'h', 'cap', 'fontPx', 'pad']) if (typeof w[key] === 'number') w[key] *= k;
           const a = Math.max(0, w.on);
-          if (inSafeMargins(w, fr) && ov(w, a, b) <= ov0 && ownFail(w) <= f0 && !staticPartials(scene, { words: [w], until }).length) {
+          if (inSafeMargins(w, fr) && ov(w, a, b) <= ov0 && ownFail(w) <= f0 && propOv() <= prop0 && !staticPartials(scene, { words: [w], until }).length) {
             done = { k, pu, pv, candOn, ib: inkBoxAt(w, fr) };
             break;
           }

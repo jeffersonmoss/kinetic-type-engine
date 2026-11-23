@@ -9,6 +9,8 @@ import { pngAlphaBox } from './png_alpha.mjs';
 import { songAppearance, imageSize } from './song_appearance.mjs';
 import { emptyFrames } from './composition.mjs';
 import { checkPropWordOverlap, scanOverlap } from './overlap_gate.mjs';
+import { fullyShown, fitPoseInBox, fitPoseInClearArea, letterHeight } from './shown_gate.mjs';
+import { frameClearOfProps, resolvePropOverlaps } from './keep_clear.mjs';
 
 const I = globalThis.KT_INTERP;
 
@@ -268,5 +270,149 @@ describe('brief 17: photographic backdrops and hoisted props', () => {
     }, f => path.resolve(tmpDir, f), 0);
     const afterRes = checkPropWordOverlap(sceneAfterFocus, w => Math.round(w.t * 30));
     assert.equal(afterRes.pass, true);
+  });
+});
+
+describe('brief 18: words keep clear of screen-space props', () => {
+  it('computes keep-clear rects with keep_clear_margin_px, honours keep_clear: false opt-out, and follows keyed motion', () => {
+    const scene = makeTestScene({ frames: 180, fps: 30, wordX: 0, wordY: 0, wordW: 100, wordH: 60, onsetF: 60, wordOn: 55, wordOff: 120 });
+    songAppearance(scene, {
+      title: 'Keep Clear Geometry',
+      keep_clear_margin_px: 30,
+      backdrops: [{ image: 'backdrop.png', from_s: 0, to_s: 6.0 }],
+      props: [
+        // Active keep-clear prop: moves from y=55 (screen y=440) up to y=15 (screen y=120) at t=3.0 (f=90)
+        { id: 'hoist', image: 'prop.png', ref: 0, x: 80, anchor_y: 100, keys: [{ t: 0, y: 55 }, { t: 3.0, y: 15, dur_s: 0.2 }] },
+        // Opt-out prop sitting right over the centre: must be ignored by keep-clear and checkPropWordOverlap
+        { id: 'overlay', image: 'prop.png', ref: 0, x: 60, anchor_y: 100, keep_clear: false, keys: [{ t: 0, y: 20 }] },
+      ],
+    }, f => path.resolve(tmpDir, f), 0);
+
+    assert.equal(scene.props[0].keepClear, true);
+    assert.equal(scene.props[0].keepClearMarginPx, 30);
+    assert.equal(scene.props[1].keepClear, false);
+
+    // At f=30 (low hoist): hit x=[672..928], y=[440..888] -> with 30 px margin: x=[642..958], y=[410..720]
+    const obsLow = I.propKeepClearRects(scene, 30, 1280, 720, { useMargin: true });
+    assert.equal(obsLow.length, 1);
+    assert.equal(obsLow[0].p.id, 'hoist');
+    assert.equal(Math.round(obsLow[0].x0), 642);
+    assert.equal(Math.round(obsLow[0].y0), 410);
+
+    // At f=120 (high hoist): y=15 -> screen y=120 -> with 30 px margin: y0=90
+    const obsHigh = I.propKeepClearRects(scene, 120, 1280, 720, { useMargin: true });
+    assert.equal(obsHigh.length, 1);
+    assert.equal(Math.round(obsHigh[0].y0), 90);
+
+    // Maximal clear rectangles: low hoist has big top band AND left band; high hoist's top band shrinks away
+    const rectsLow = I.clearRectsFromObstacles(obsLow);
+    assert.ok(rectsLow.some(r => r.x1 <= 643 && r.h > 600), 'expected full-height left band');
+    assert.ok(rectsLow.some(r => r.y1 <= 411 && r.w > 1100), 'expected wide top band when hoist is low');
+    const rectsHigh = I.clearRectsFromObstacles(obsHigh);
+    assert.ok(rectsHigh.some(r => r.x1 <= 643 && r.h > 600), 'expected full-height left band when hoist is high');
+    assert.ok(!rectsHigh.some(r => r.y1 <= 91 && r.h > 100), 'top band should no longer be tall when hoist is high');
+
+    // Opt-out prop does not fail checkPropWordOverlap even though it covers the centred word
+    const optOutScene = makeTestScene({ frames: 150, fps: 30, wordX: 0, wordY: 0, wordW: 100, wordH: 60, onsetF: 60, wordOn: 55, wordOff: 120 });
+    songAppearance(optOutScene, {
+      title: 'Opt Out Only',
+      backdrops: [{ image: 'backdrop.png', from_s: 0, to_s: 5.0 }],
+      props: [{ id: 'bg-prop', image: 'prop.png', ref: 0, x: 64, anchor_y: 100, keep_clear: false, keys: [{ t: 0, y: 20 }] }],
+    }, f => path.resolve(tmpDir, f), 0);
+    assert.equal(I.hasKeepClearProps(optOutScene), false);
+    assert.equal(checkPropWordOverlap(optOutScene, w => Math.round(w.t * 30)).pass, true);
+    const fr = frameClearOfProps(optOutScene, w => Math.round(w.t * 30));
+    assert.equal(fr.holdsReframed, 0);
+  });
+
+  it('reframes colliding holds into the clear band without shrinking words, passing both raw hitBox and margin checks', () => {
+    const scene = makeTestScene({ frames: 150, fps: 30, wordX: 0, wordY: 0, wordW: 140, wordH: 70, onsetF: 60, wordOn: 55, wordOff: 120 });
+    // Prop body at x=80..112 -> screen x=640..896; y=15..71 -> screen y=120..568 (covers right half of centred word)
+    songAppearance(scene, {
+      title: 'Reframe Clear Test',
+      backdrops: [{ image: 'backdrop.png', from_s: 0, to_s: 5.0 }],
+      props: [{ id: 'banner', image: 'prop.png', ref: 0, x: 76, anchor_y: 100, keys: [{ t: 0, y: 15 }] }],
+    }, f => path.resolve(tmpDir, f), 0);
+
+    const onsetOf = w => Math.round(w.t * 30);
+    const before = checkPropWordOverlap(scene, onsetOf);
+    assert.equal(before.pass, false);
+    const wCapBefore = scene.words[0].cap;
+
+    const res = frameClearOfProps(scene, onsetOf, { until: 150 });
+    assert.ok(res.holdsReframed >= 1, 'expected hold to be reframed');
+    // Word geometry untouched (camera framing preferred over shrinking word!)
+    assert.equal(scene.words[0].cap, wCapBefore);
+    // Word stays wholly in frame and clears both raw hitBox and hitBox + 24 px margin
+    assert.equal(fullyShown(scene.words[0], 60, I.poseAt(scene.cams, 60), 40), true);
+    assert.equal(checkPropWordOverlap(scene, onsetOf, { useMargin: false }).pass, true);
+    assert.equal(checkPropWordOverlap(scene, onsetOf, { useMargin: true }).pass, true);
+  });
+
+  it('scales down a word that cannot fit in the clear area via framing alone and reports below-min words rather than overlapping', () => {
+    // Two props flanking the centre so only a narrow 240 px strip in the middle (x=520..760) is clear, while the
+    // camera is locked to a single wide word + another word pinned on the left so camera framing alone cannot fit.
+    const scene = makeTestScene({ frames: 150, fps: 30, wordX: 0, wordY: 0, wordW: 520, wordH: 70, onsetF: 60, wordOn: 55, wordOff: 120 });
+    // Add a tall prop covering x=360..1240, y=0..720 so only a narrow left strip x=0..336 is clear!
+    songAppearance(scene, {
+      title: 'Scale Fallback Test',
+      keep_clear_margin_px: 12,
+      props: [{
+        id: 'wall',
+        image: 'prop.png',
+        x: 360,
+        y: 0,
+        anchor_y: 100,
+        scale: 22,
+        hit_box: { x0: 0, y0: 100, x1: 40, y1: 160 },
+        keys: [{ t: 0, y: 0 }],
+      }],
+    }, f => path.resolve(tmpDir, f), 0);
+
+    const onsetOf = w => Math.round(w.t * 30);
+    // Skip framing and test resolvePropOverlaps directly on a wide word that must scale down to fit x=0..348
+    const res = resolvePropOverlaps(scene, onsetOf, { until: 150, settings: { minH: 0.09 } });
+    assert.equal(checkPropWordOverlap(scene, onsetOf, { useMargin: false }).pass, true, 'must clear prop rather than overlap');
+    assert.ok(res.log.length > 0, 'expected resolve log entries');
+    // Verify word is still shown whole
+    assert.equal(fullyShown(scene.words[0], 60, I.poseAt(scene.cams, 60), 40), true);
+    const h = letterHeight(scene.words[0], 60, I.poseAt(scene.cams, 60), 40);
+    if (h < 0.09) assert.ok(res.belowMin.length > 0, 'words scaled below minimum must be reported in belowMin');
+  });
+
+  it('tracks keyed hoist motion across multiple holds (low hoist -> top band, high hoist -> left band)', () => {
+    const dist = 500;
+    const pose = { target: [0, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], dist };
+    const scene = {
+      meta: { fps: 30, frames: 240, vfov: 40 },
+      cams: [
+        { f0: 0, f1: 0, verb: 'cut', from: pose, to: pose },
+        { f0: 100, f1: 108, verb: 'sweep', ease: { a: 2, b: 3, x0: 0.4 }, from: pose, to: { ...pose, target: [400, 0, 0] } },
+      ],
+      plaques: [
+        { id: 'p1', C: [0, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 600, h: 300, surface: 'panel', on: 0, off: 100 },
+        { id: 'p2', C: [400, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 600, h: 300, surface: 'panel', on: 100, off: null },
+      ],
+      words: [
+        { id: 'w01', text: 'WIDEPHRASE', plaque: 'p1', C: [0, -80, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 380, h: 80, cap: 64, font: 'anton', fontPx: 1, style: 'cream', on: 20, off: 90, t: 1.0, joint: { prim: 'pop', f0: 20, f1: 20 } },
+        { id: 'w02', text: 'HIGH', plaque: 'p2', C: [400, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 180, h: 90, cap: 72, font: 'anton', fontPx: 1, style: 'cream', on: 130, off: 220, t: 4.5, joint: { prim: 'pop', f0: 130, f1: 130 } },
+      ],
+    };
+    songAppearance(scene, {
+      title: 'Two Hold Hoist',
+      backdrops: [{ image: 'backdrop.png', from_s: 0, to_s: 8.0 }],
+      // Low at y=55 (screen y=440) during hold 1; hoists up to y=10 (screen y=80) at t=3.5 (f=105) for hold 2!
+      props: [{ id: 'banner', image: 'prop.png', ref: 0, x: 76, anchor_y: 100, keys: [{ t: 0, y: 55 }, { t: 3.5, y: 10, dur_s: 0.2 }] }],
+    }, f => path.resolve(tmpDir, f), 0);
+
+    const onsetOf = w => Math.round(w.t * 30);
+    assert.equal(checkPropWordOverlap(scene, onsetOf).pass, false);
+    const fr = frameClearOfProps(scene, onsetOf, { until: 240 });
+    assert.equal(fr.holdsReframed, 2);
+    assert.equal(checkPropWordOverlap(scene, onsetOf, { useMargin: false }).pass, true);
+    assert.equal(checkPropWordOverlap(scene, onsetOf, { useMargin: true }).pass, true);
+    // Hold 1 (wide word, low hoist) fits top band; Hold 2 (high hoist) fits left band
+    assert.match(fr.log[0], /top clear band/);
+    assert.match(fr.log[1], /left clear band/);
   });
 });

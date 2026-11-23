@@ -15,7 +15,7 @@
 import fs from 'node:fs';
 import { wordBox } from './compose_plaques.mjs';
 import { JERSEY_FONTS, TEXT_COLOURS, contrast, teamStyleIds } from './style.mjs';
-import { scanOverlap } from './overlap_gate.mjs';
+import { scanOverlap, wordPropOverlapFrames } from './overlap_gate.mjs';
 import * as G from './shown_gate.mjs';
 
 const set = s => new Set(s.split(/\s+/).filter(Boolean));
@@ -217,6 +217,14 @@ export function teamColourNames(scene, { song, palette, metricsPath, until = sce
     let how = 'letters';
     if (mode === 'block' && metrics) {
       const a = Math.max(0, w.on), b = Math.min(until, w.off ?? until), before = mine(w, a, b), whole = wholeFrames(w);
+      const hasProps = I.hasKeepClearProps?.(scene);
+      const propOv = () => {
+        if (!hasProps) return 0;
+        const o = onsetOf(w) ?? Math.round((w.t ?? w.on / (scene.meta.fps ?? 30)) * (scene.meta.fps ?? 30));
+        const A = G.appearanceFrame(w);
+        return wordPropOverlapFrames(scene, w, Math.max(0, Math.min(A, o)), Math.min(until, Math.max(A, o) + 15), { useMargin: true }).length;
+      };
+      const propBefore = propOv();
       const pad0 = w.pad ?? 0.08 * w.cap;
       // Brief 12 item 1.2 ("we don't do thin lines"): the team-colour margin round the letters is at least
       // BLOCK_MIN_PAD x the letter height. Tried: full block padding (0.28), then the minimum (0.18), each grown about
@@ -231,7 +239,7 @@ export function teamColourNames(scene, { song, palette, metricsPath, until = sce
         back(); const pad = p * w.cap;
         if (pad0 < pad) { const dw = 2 * (pad - pad0); w.w += dw; w.h += dw; w.pad = pad; }
         setBlock();
-        if (mine(w, a, b) <= before && wholeFrames(w).length >= whole.length) { how = p === 0.28 ? 'block' : 'minimum block'; break; }
+        if (mine(w, a, b) <= before && wholeFrames(w).length >= whole.length && propOv() <= propBefore) { how = p === 0.28 ? 'block' : 'minimum block'; break; }
       }
       if (how === 'letters') {
         back();

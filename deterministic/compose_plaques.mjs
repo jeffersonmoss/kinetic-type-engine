@@ -137,14 +137,22 @@ function slotAssignments(n) {
   return slotAssignments(n - 1).flatMap(a => SLOTS.map(s => [...a, s]));
 }
 
-function scoreCandidate({ words, W, height, dValues, clusters, caps, contrast, rowCaps, rowCount }) {
+function scoreCandidate({ words, W, height, dValues, clusters, caps, contrast, rowCaps, rowCount, targetAspect = null }) {
   const area = words.reduce((n, w) => n + w.boxW * w.boxH, 0);
   const fill = area / (W * height);
   const fidelity = Math.max(0, 1 - dValues.reduce((n, x) => n + Math.abs(Math.log(x)), 0) / dValues.length / Math.log(1.30));
   const heroIndex = clusters.reduce((best, c, i) => (c.anchor.E ?? 0) > (clusters[best].anchor.E ?? 0) ? i : best, 0);
   const hero = caps[heroIndex] >= Math.max(...caps) - 1e-6 ? 1 : 0;
   const aspect = W / height;
-  const aspectScore = aspect < 1 ? Math.max(0, (aspect - 0.6) / 0.4) : aspect <= 2.6 ? 1 : Math.max(0, (4 - aspect) / 1.4);
+  let aspectScore;
+  if (targetAspect != null) {
+    const lo = Math.max(0.55, targetAspect * 0.65), hi = Math.max(1.25, targetAspect * 1.45);
+    aspectScore = aspect < lo ? Math.max(0, (aspect - 0.35) / Math.max(0.1, lo - 0.35))
+      : aspect <= hi ? 1
+      : Math.max(0, (hi + 1.4 - aspect) / 1.4);
+  } else {
+    aspectScore = aspect < 1 ? Math.max(0, (aspect - 0.6) / 0.4) : aspect <= 2.6 ? 1 : Math.max(0, (4 - aspect) / 1.4);
+  }
   const sameText = new Set(clusters.map(c => c.anchor.text)).size === 1;
   const wall = rowCount === 3 && Math.max(...rowCaps) / Math.min(...rowCaps) <= 1.3 && !sameText ? 1 : 0;
   const Q = 0.35 * fill + 0.25 * fidelity + 0.20 * hero + 0.20 * aspectScore + 0.10 * contrast - 0.30 * wall;
@@ -156,7 +164,7 @@ export function enumerateRows(
   clusters,
   W,
   metrics,
-  { mortar = 0.30, inlineJitter = [], lineJitter = [], align = 'left', rowAligns = null, adlibShot = false, allowRelaxed = false } = {}
+  { mortar = 0.30, inlineJitter = [], lineJitter = [], align = 'left', rowAligns = null, adlibShot = false, allowRelaxed = false, targetAspect = null } = {}
 ) {
   if (!clusters.length) throw Error('A plaque needs at least one cluster');
   const all = [];
@@ -237,6 +245,7 @@ export function enumerateRows(
           clusters, caps, contrast,
           rowCaps: rows.map(r => r.maxCap),
           rowCount: rows.length,
+          targetAspect,
         });
         all.push({
           layout: `rows-${count}`,
@@ -495,13 +504,15 @@ export function enumeratePerp(
 }
 
 // Compose all plaques for all shots (section 7).
-export function composePlaques(shots, metrics, seed, { mortar = 0.30, pinnedShots = null } = {}) {
+export function composePlaques(shots, metrics, seed, { mortar = 0.30, pinnedShots = null, stage = null, fps = 30 } = {}) {
   const tierMeasure = { S: 0.8, M: 0.8, L: 1.0, XL: 1.25 };
   const lastArrCluster = new Map();
   const lastLayoutShot = new Map();
   const lastSingleSlotShot = new Map();
   let clusterCounter = 0;
   const plaques = [];
+  const I = globalThis.KT_INTERP;
+  const stageActive = !!(stage && I?.hasKeepClearProps?.(stage));
 
   for (let si = 0; si < shots.length; si++) {
     const shot = shots[si];
@@ -636,9 +647,24 @@ export function composePlaques(shots, metrics, seed, { mortar = 0.30, pinnedShot
           for (const c of grp) groupedClusterIndices.add(shot.clusters.indexOf(c));
         }
       }
+      // Brief 18: if a keep-clear prop narrows the available screen area during this shot, steer row aspect ratios
+      // toward the clear band's shape so plaques stack taller rather than stretching wide across the prop.
+      let targetAspect = null;
+      if (stageActive && shot.words?.length) {
+        const f0 = Math.round(Math.min(...shot.words.map(w => w.t)) * fps);
+        const f1 = Math.round(Math.max(...shot.words.map(w => w.end ?? w.t)) * fps) + 15;
+        const obs = I.keepClearObstaclesInRange(stage, f0, f1);
+        if (obs.length) {
+          const rects = I.clearRectsFromObstacles(obs, { minW: 80, minH: 80 });
+          if (rects.length) {
+            const mainAspect = rects[0].w / rects[0].h;
+            if (mainAspect < 1.35) targetAspect = mainAspect;
+          }
+        }
+      }
       // Enumerate in fixed order: rows-1, rows-2, rows-3, two-up, perp (7.4).
       let candidates = [
-        ...enumerateRows(shot.clusters, W, metrics, { mortar, inlineJitter, lineJitter, rowAligns, adlibShot: shot.adlib }),
+        ...enumerateRows(shot.clusters, W, metrics, { mortar, inlineJitter, lineJitter, rowAligns, adlibShot: shot.adlib, targetAspect }),
         ...enumerateTwoUp(shot.clusters, W, metrics, { mortar, inlineJitter, lineJitter, adlibShot: shot.adlib }),
         ...enumeratePerp(shot.clusters, W, metrics, { mortar, inlineJitter, lineJitter, rowAligns, adlibShot: shot.adlib, groupedClusterIndices }),
       ];
@@ -646,7 +672,7 @@ export function composePlaques(shots, metrics, seed, { mortar = 0.30, pinnedShot
       if (!candidates.length) {
         // Fallback: relax row d_r >= 0.78 floor and pick the candidate closest to valid.
         const relaxed = enumerateRows(shot.clusters, W, metrics, {
-          mortar, inlineJitter, lineJitter, rowAligns, adlibShot: shot.adlib, allowRelaxed: true,
+          mortar, inlineJitter, lineJitter, rowAligns, adlibShot: shot.adlib, allowRelaxed: true, targetAspect,
         });
         if (!relaxed.length) {
           // Last resort: drop perp-left rider arrangements that failed across all slots.
@@ -657,7 +683,7 @@ export function composePlaques(shots, metrics, seed, { mortar = 0.30, pinnedShot
             }
           }
           candidates = enumerateRows(shot.clusters, W, metrics, {
-            mortar, inlineJitter, lineJitter, rowAligns, adlibShot: shot.adlib, allowRelaxed: true,
+            mortar, inlineJitter, lineJitter, rowAligns, adlibShot: shot.adlib, allowRelaxed: true, targetAspect,
           });
         } else {
           relaxed.sort((a, b) => b.minD - a.minD || b.Q - a.Q);
