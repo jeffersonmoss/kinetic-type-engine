@@ -7,9 +7,9 @@ import zlib from 'node:zlib';
 import './interp.js';
 import { pngAlphaBox } from './png_alpha.mjs';
 import { songAppearance, imageSize } from './song_appearance.mjs';
-import { emptyFrames } from './composition.mjs';
+import { emptyFrames, placeInRoom, enforceMinSize, staticPartials } from './composition.mjs';
 import { checkPropWordOverlap, scanOverlap } from './overlap_gate.mjs';
-import { fullyShown, fitPoseInBox, fitPoseInClearArea, letterHeight } from './shown_gate.mjs';
+import { fullyShown, fitPoseInBox, fitPoseInClearArea, letterHeight, gateFailures } from './shown_gate.mjs';
 import { frameClearOfProps, resolvePropOverlaps } from './keep_clear.mjs';
 
 const I = globalThis.KT_INTERP;
@@ -414,5 +414,147 @@ describe('brief 18: words keep clear of screen-space props', () => {
     // Hold 1 (wide word, low hoist) fits top band; Hold 2 (high hoist) fits left band
     assert.match(fr.log[0], /top clear band/);
     assert.match(fr.log[1], /left clear band/);
+  });
+});
+
+describe('brief 19: room pass priority, beneficiary lock, and whole-life static-partial gate', () => {
+  it('never puts back a filler dropped to make room for a keyword while that keyword is still dropped, and tries keywords before fillers', () => {
+    const dist = 500;
+    const pose = { target: [0, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], dist };
+    // Filler appears BEFORE keyword in scene.words. Keyword cannot fit (too wide to reach min size inside frame),
+    // while filler would easily fit in its planned spot. Filler has dropped: 'room', dropped_for: 'w02'.
+    const scene = {
+      meta: { fps: 30, frames: 120, vfov: 40 },
+      cams: [{ f0: 0, f1: 0, verb: 'cut', from: pose, to: pose }],
+      plaques: [{ id: 'p1', C: [0, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 900, h: 300, surface: 'panel', on: 0, off: null }],
+      words: [
+        {
+          id: 'w01', text: 'IT', plaque: 'p1', keyword: false, dropped: 'room', dropped_for: 'w02',
+          C: [0, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1],
+          w: 60, h: 60, cap: 50, font: 'anton', fontPx: 1, style: 'cream',
+          on: 20, off: 100, t: 1.0, opacity: [[0, 0]], joint: { prim: 'pop', f0: 20, f1: 20 },
+        },
+        {
+          id: 'w02', text: 'UNFITTABLYWIDEKEYWORD', plaque: 'p1', keyword: true, dropped: 'size',
+          C: [0, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1],
+          w: 640, h: 20, cap: 15, font: 'anton', fontPx: 1, style: 'cream',
+          on: 20, off: 100, t: 1.0, opacity: [[0, 0]], joint: { prim: 'pop', f0: 20, f1: 20 },
+        },
+      ],
+    };
+    const onsetOf = w => Math.round(w.t * 30);
+    const res = placeInRoom(scene, onsetOf, { until: 120 });
+    // Keyword tried first, then filler skipped because keyword w02 is still dropped
+    assert.equal(res[0].w.id, 'w02');
+    assert.equal(res[0].room, false);
+    assert.equal(res[1].w.id, 'w01');
+    assert.equal(res[1].room, false);
+    assert.match(res[1].how, /w02 UNFITTABLYWIDEKEYWORD.*still dropped/);
+    assert.equal(scene.words[0].dropped, 'room');
+    assert.equal(scene.words[1].dropped, 'size');
+
+    // Once the keyword CAN fit (make it normal width), keyword is put back first and filler is now allowed to be put back clear of it!
+    scene.words[1].w = 140; scene.words[1].h = 60; scene.words[1].cap = 50;
+    const res2 = placeInRoom(scene, onsetOf, { until: 120 });
+    assert.equal(res2[0].w.id, 'w02');
+    assert.equal(res2[0].room, true);
+    assert.equal(scene.words[1].dropped, undefined);
+    assert.equal(res2[1].w.id, 'w01');
+    assert.equal(res2[1].room, true);
+    assert.equal(scene.words[0].dropped, undefined);
+    assert.equal(scene.words[0].dropped_for, undefined);
+    assert.deepEqual(scanOverlap(scene, { until: 120 }).overlaps, []);
+  });
+
+  it('tries keywords before fillers when both compete for the only remaining clear spot', () => {
+    const dist = 500; // halfW ~ 323.5, halfH ~ 182.0
+    const pose = { target: [0, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], dist };
+    // Two big blockers leave only a single central slot [-110..110, -45..45]; filler appears BEFORE keyword in scene.words.
+    const scene = {
+      meta: { fps: 30, frames: 120, vfov: 40 },
+      cams: [{ f0: 0, f1: 0, verb: 'cut', from: pose, to: pose }],
+      plaques: [{ id: 'p1', C: [0, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 900, h: 400, surface: 'panel', on: 0, off: null }],
+      words: [
+        { id: 'bTop', text: 'TOP', plaque: 'p1', C: [0, 115, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 620, h: 120, cap: 96, font: 'anton', fontPx: 1, style: 'cream', on: 0, off: 120, t: 0.1 },
+        { id: 'bBot', text: 'BOT', plaque: 'p1', C: [0, -115, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 620, h: 120, cap: 96, font: 'anton', fontPx: 1, style: 'cream', on: 0, off: 120, t: 0.1 },
+        { id: 'bL', text: 'L', plaque: 'p1', C: [-220, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 190, h: 100, cap: 80, font: 'anton', fontPx: 1, style: 'cream', on: 0, off: 120, t: 0.1 },
+        { id: 'bR', text: 'R', plaque: 'p1', C: [220, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 190, h: 100, cap: 80, font: 'anton', fontPx: 1, style: 'cream', on: 0, off: 120, t: 0.1 },
+        { id: 'w01', text: 'IT', plaque: 'p1', keyword: false, dropped: 'size', C: [0, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 200, h: 80, cap: 64, font: 'anton', fontPx: 1, style: 'cream', on: 20, off: 100, t: 1.0, opacity: [[0, 0]] },
+        { id: 'w02', text: 'PROUD', plaque: 'p1', keyword: true, dropped: 'size', C: [0, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 200, h: 80, cap: 64, font: 'anton', fontPx: 1, style: 'cream', on: 20, off: 100, t: 1.0, opacity: [[0, 0]] },
+      ],
+    };
+    const onsetOf = w => Math.round(w.t * 30);
+    const res = placeInRoom(scene, onsetOf, { until: 120 });
+    assert.equal(res[0].w.id, 'w02');
+    assert.equal(res[0].room, true, 'keyword must claim the sole clear spot first');
+    assert.equal(res[1].w.id, 'w01');
+    assert.equal(res[1].room, false, 'filler stays dropped once keyword takes the spot');
+    assert.equal(scene.words.find(w => w.id === 'w02').dropped, undefined);
+    assert.equal(scene.words.find(w => w.id === 'w01').dropped, 'size');
+  });
+
+  it('rejects any room placement that would be static and partly on screen later in its life', () => {
+    const dist = 500; // halfW ~ 323.5
+    const pose1 = { target: [0, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], dist };
+    // At frame 45 (well past onset 30 + SHOWN_FRAMES=6 = 36!), camera cuts right so target.x=300:
+    // anything near x=0..60 sits static and partly on screen (left edge of frame at x ~ -23.5)!
+    // Put blockers everywhere except right around x=0 so no offset avoids the frame-45 static partial.
+    const pose2 = { target: [300, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], dist };
+    const scene = {
+      meta: { fps: 30, frames: 90, vfov: 40 },
+      cams: [
+        { f0: 0, f1: 0, verb: 'cut', from: pose1, to: pose1 },
+        { f0: 45, f1: 45, verb: 'cut', from: pose2, to: pose2 },
+      ],
+      plaques: [{ id: 'p1', C: [0, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 1200, h: 400, surface: 'panel', on: 0, off: null }],
+      words: [
+        { id: 'bTop', text: 'TOP', plaque: 'p1', C: [0, 115, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 620, h: 120, cap: 96, font: 'anton', fontPx: 1, style: 'cream', on: 0, off: 45, t: 0.1 },
+        { id: 'bBot', text: 'BOT', plaque: 'p1', C: [0, -115, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 620, h: 120, cap: 96, font: 'anton', fontPx: 1, style: 'cream', on: 0, off: 45, t: 0.1 },
+        { id: 'bL', text: 'L', plaque: 'p1', C: [-180, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 230, h: 100, cap: 80, font: 'anton', fontPx: 1, style: 'cream', on: 0, off: 45, t: 0.1 },
+        { id: 'bR', text: 'R', plaque: 'p1', C: [160, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 230, h: 100, cap: 80, font: 'anton', fontPx: 1, style: 'cream', on: 0, off: 45, t: 0.1 },
+        // Dropped word at x=-10, width 100 (x=-60..40): wholly inside pose1 (frames 25..44),
+        // but 63% on screen and static on pose2 (frames 45..89) — past onset + SHOWN_FRAMES!
+        {
+          id: 'w09', text: 'IT', plaque: 'p1', keyword: false, dropped: 'size',
+          C: [-10, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1],
+          w: 100, h: 70, cap: 56, font: 'anton', fontPx: 1, style: 'cream',
+          on: 25, off: 90, t: 1.0, opacity: [[0, 0]], joint: { prim: 'pop', f0: 25, f1: 25 },
+        },
+      ],
+    };
+    const onsetOf = w => Math.round(w.t * 30);
+    const res = placeInRoom(scene, onsetOf, { until: 90 });
+    assert.equal(res.length, 1);
+    assert.equal(res[0].room, false, 'must stay dropped when only available spot causes a later static partial');
+    assert.equal(scene.words.find(w => w.id === 'w09').dropped, 'size');
+    assert.deepEqual(staticPartials(scene, { until: 90 }), []);
+    assert.deepEqual(gateFailures(scene, onsetOf, { until: 90 }).filter(x => x.kind === 'partial'), []);
+  });
+
+  it('enforceMinSize records dropped_for on room-dropped fillers so placeInRoom locks them while the keyword stays dropped', () => {
+    const dist = 500; // halfW ~ 323.5, halfH ~ 182.0
+    const pose1 = { target: [0, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], dist };
+    // Hold 1: 4 words (crowded -> minH 0.09, boxCoverage < 0.30). w02 PROUD (cap=26, ~7.1%) sits at the bottom-right
+    // corner hemmed by frame bottom, keyword wC on its right, and keyword wA above, so its ONLY way to grow x1.30
+    // is left into filler w01 IT. Dropping w01 IT drops visible words from 4 -> 3 (uncrowded -> min 13.5%), so w02
+    // PROUD at ~9.3% still falls short and is dropped as 'size' while w01 IT stays dropped='room', dropped_for='w02'.
+    const scene = {
+      meta: { fps: 30, frames: 90, vfov: 40 },
+      cams: [{ f0: 0, f1: 0, verb: 'cut', from: pose1, to: pose1 }],
+      plaques: [{ id: 'p1', C: [0, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 900, h: 400, surface: 'panel', on: 0, off: null }],
+      words: [
+        { id: 'wA', text: 'WAVE', plaque: 'p1', keyword: true, C: [40, -100, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 280, h: 70, cap: 56, font: 'anton', fontPx: 1, style: 'cream', on: 0, off: 90, t: 0.2 },
+        { id: 'wC', text: 'FLAG', plaque: 'p1', keyword: true, C: [200, -155, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 180, h: 50, cap: 40, font: 'anton', fontPx: 1, style: 'cream', on: 0, off: 90, t: 0.3 },
+        { id: 'w01', text: 'IT', plaque: 'p1', keyword: false, C: [-100, -158, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 120, h: 35, cap: 26, font: 'anton', fontPx: 1, style: 'cream', on: 10, off: 90, t: 0.6 },
+        { id: 'w02', text: 'PROUD', plaque: 'p1', keyword: true, C: [35, -158, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 135, h: 35, cap: 26, font: 'anton', fontPx: 1, style: 'cream', on: 10, off: 90, t: 0.65 },
+      ],
+    };
+    const onsetOf = w => Math.round(w.t * 30);
+    enforceMinSize(scene, onsetOf, { until: 90 });
+    const it = scene.words.find(w => w.id === 'w01');
+    const proud = scene.words.find(w => w.id === 'w02');
+    assert.equal(it.dropped, 'room');
+    assert.equal(it.dropped_for, 'w02');
+    assert.equal(proud.dropped, 'size');
   });
 });

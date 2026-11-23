@@ -412,6 +412,7 @@ const nearEmpty = emptyFrames(finalObj, { from: 0, until: revealF0, sideFill: SI
 // non-focused side can be hidden to close the gap).
 const roomLeft = (() => { const copy = JSON.parse(JSON.stringify(finalObj)); return placeInRoom(copy, onsetOf, { until: revealF0, settings: finalObj.meta.size_rule ?? {} }).filter(r => r.room); })();
 const gapsLeft = phraseGaps(finalObj, onsetOf, { until: revealF0, settings: finalObj.meta.size_rule ?? {}, maxFrames: emptyMaxF }).filter(g => g.canShowAll || g.hideSide);
+for (const w of finalObj.words) delete w.dropped_for;
 if (roomLeft.length) { process.exitCode = 1; console.error(`ROOM FOR A DROPPED WORD FAIL: ${roomLeft.map(r => `${r.w.id} ${r.w.text}`).join(', ')}`); }
 if (gapsLeft.length) { process.exitCode = 1; console.error(`ROOM FOR A PHRASE GAP FAIL: ${gapsLeft.map(g => `${g.left.id} ${g.left.text} .. [${g.fitting.map(w => `${w.id} ${w.text}`).join(', ')}] .. ${g.right.id} ${g.right.text} (${g.h.start}-${g.h.end})`).join('; ')}`); }
 // Drop review gate (brief 10 item 44): every keyword still dropped after the room gate is listed beside the final scene

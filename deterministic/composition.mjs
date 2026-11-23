@@ -725,16 +725,20 @@ const clipEntranceOk = (scene, w) => {
   }
   return true;
 };
-// Room for a dropped word (brief 10 item 37, brief 16 item 3: applies to every dropped word, keyword or non-keyword).
-// Any word dropped for size, static partial or room is put back when there is room: a placement on its own plaque
-// plane, same orientation, at least its minimum letter size in the hold where it is sung (matching sizeShortfalls),
-// centre within 3 of its widths or heights of its planned spot, whole and readable in frame from its appearance through
-// its onset, overlapping no other word over its life (size drops shown as ghosts) and not static and partly on screen.
-// Its entrance becomes a pop (motion and clip planes removed); if pre-onset frames fail before the camera lands, it
-// tries starting at its sung onset (0 frames late). Any later hold where it falls under size is hidden when another
-// word of size stays on screen. Returns one record per checked drop: { w, room, how }.
+// Room for a dropped word (brief 10 item 37, brief 16 item 3, brief 19 items 3-5: applies to every dropped word,
+// keyword or non-keyword). Keywords are tried before fillers in every room pass. A filler dropped to make room for a
+// keyword (`dropped: 'room'`, `dropped_for`) is never put back while that keyword is still dropped. Any word put back
+// must have a placement on its own plaque plane, same orientation, at least its minimum letter size in the hold where
+// it is sung (matching sizeShortfalls), centre within 3 of its widths or heights of its planned spot, passing
+// shown-whole, projected overlap (size drops shown as ghosts), keep-clear prop clearance (when props exist), and
+// static-partly-shown over its whole life, or it stays dropped. Its entrance becomes a pop (motion and clip planes
+// removed); if pre-onset frames fail before the camera lands, it tries starting at its sung onset (0 frames late). Any
+// later hold where it falls under size is hidden when another word of size stays on screen. Returns one record per
+// checked drop: { w, room, how }.
 export function placeInRoom(scene, onsetOf, { until = scene.meta.frames, settings = {} } = {}) {
   const S = { ...SIZE_DEFAULTS, ...settings }, I = globalThis.KT_INTERP, vfov = scene.meta.vfov ?? 40, fps = scene.meta.fps ?? 30, out = [];
+  const lifeUntil = Math.max(until, scene.meta.frames ?? until);
+  const byId = new Map(scene.words.map(x => [x.id, x]));
   const poses = new Map(), poseAt = f => poses.get(f) ?? poses.set(f, I.poseAt(scene.cams, f)).get(f);
   const hs = holds(scene, until);
   const crowdedAt = f => {
@@ -770,14 +774,25 @@ export function placeInRoom(scene, onsetOf, { until = scene.meta.frames, setting
   };
   const steps = [0, 0.25, -0.25, 0.5, -0.5, 0.75, -0.75, 1, -1, 1.5, -1.5, 2, -2, 3, -3];
   const offsets = steps.flatMap(du => steps.map(dv => [du, dv])).sort((p, q) => Math.hypot(...p) - Math.hypot(...q));
-  for (const w of scene.words) {
-    if (w.reveal_copy_of || w.echo || !['size', 'static', 'room'].includes(w.dropped)) continue;
+  // Brief 19 items 3 & 4: try keywords before fillers in every room pass (stable within each group),
+  // and never put back a word dropped to make room for another word while that beneficiary is still dropped.
+  const candidates = scene.words
+    .filter(w => !w.reveal_copy_of && !w.echo && ['size', 'static', 'room'].includes(w.dropped))
+    .sort((a, b) => (b.keyword ? 1 : 0) - (a.keyword ? 1 : 0));
+  for (const w of candidates) {
     const o = onsetOf(w);
     if (o == null || o >= until) continue;
+    if (w.dropped === 'room' && w.dropped_for) {
+      const beneficiary = byId.get(w.dropped_for);
+      if (beneficiary?.dropped) {
+        out.push({ w, room: false, wasDrop: w.dropped, how: `dropped to make room for ${beneficiary.id} ${beneficiary.text}, which is still dropped` });
+        continue;
+      }
+    }
     const wasDrop = w.dropped;
-    const keep = JSON.stringify({ C: w.C, w: w.w, h: w.h, cap: w.cap, fontPx: w.fontPx, pad: w.pad, on: w.on, motion: w.motion ?? null, clip: w.clip ?? null, opacity: w.opacity ?? null, dropped: w.dropped, size_restore: w.size_restore });
+    const keep = JSON.stringify({ C: w.C, w: w.w, h: w.h, cap: w.cap, fontPx: w.fontPx, pad: w.pad, on: w.on, motion: w.motion ?? null, clip: w.clip ?? null, opacity: w.opacity ?? null, dropped: w.dropped, dropped_for: w.dropped_for ?? null, size_restore: w.size_restore ?? null });
     const restore = () => { const k = JSON.parse(keep); for (const [key, v] of Object.entries(k)) { if (v == null) delete w[key]; else w[key] = v; } };
-    delete w.opacity; delete w.dropped; delete w.size_restore; w.motion = []; w.clip = [];
+    delete w.opacity; delete w.dropped; delete w.dropped_for; delete w.size_restore; w.motion = []; w.clip = [];
     const h0 = letterHeight(w, o, poseAt(o), vfov);
     if (!(h0 > 0)) { restore(); out.push({ w, room: false, wasDrop, how: 'not in front of the camera at its onset' }); continue; }
     // Determine the required scale across both the onset frame and any focus hold containing it (so restored words meet
@@ -794,6 +809,7 @@ export function placeInRoom(scene, onsetOf, { until = scene.meta.frames, setting
         w.on = candOn;
         const A = Math.max(w.on, appearanceFrame(w)), lo = Math.max(0, w.on), hi = Math.min(until, w.off ?? until);
         for (const [du, dv] of offsets) {
+          delete w.opacity;
           w.C = add(C0, add(mul(w.R, du * w.w), mul(w.U, dv * w.h)));
           let whole = true;
           for (let f = A, e = Math.max(A + G.SHOWN_FRAMES - 1, o); f <= e && whole; f++) {
@@ -810,7 +826,6 @@ export function placeInRoom(scene, onsetOf, { until = scene.meta.frames, setting
             const [pfa, pfb] = focusWindow(w, onsetOf, fps);
             if (wordPropOverlapFrames(scene, w, pfa, Math.min(until, pfb), { useMargin: true }).length) continue;
           }
-          if (staticPartials(scene, { words: [w], until }).some(r => r.start <= o + G.SHOWN_FRAMES)) continue;
           // Hide any later hold where this restored word would be under size (when another word of size stays on screen).
           for (const x of sh) {
             if (x.size >= x.min - 1e-9 || (x.focused && !(oHoldOk && x.h.start > o))) continue;
@@ -820,6 +835,10 @@ export function placeInRoom(scene, onsetOf, { until = scene.meta.frames, setting
             for (let f = a; f < b && ok; f += 2) if (drawn(w, f)) ok = big(f);
             if (ok) { (w.size_hides ??= []).push([a, b, JSON.stringify(w.opacity ?? null)]); hide(w, a, b); }
           }
+          // Brief 19 item 5: any word put back by any room pass must pass static-partly-shown and shown-whole
+          // (and overlap above) for its whole life, or it stays dropped.
+          if (staticPartials(scene, { words: [w], until: lifeUntil }).length) { delete w.opacity; continue; }
+          if (gateFailures({ ...scene, words: [w] }, onsetOf, { until }).some(x => x.kind === 'partial' || x.kind === 'unshown')) { delete w.opacity; continue; }
           const appliedMin = sh.find(x => x.h.start <= o && o < x.h.end)?.min ?? (min0 / 1.03);
           how = `${du || dv ? `moved ${du ? `${du} of its width along its line` : ''}${du && dv ? ' and ' : ''}${dv ? `${dv} of its height up its plaque` : ''}` : 'in its planned spot'}${k > 1.0001 ? `, grown x${k.toFixed(2)}` : ''}${candOn !== on0 ? `, on moved ${on0}->${candOn} (onset)` : ''}, letters ${(100 * h0 * k).toFixed(1)}% (minimum ${(100 * appliedMin).toFixed(1)}%), entering as a pop`;
           break;
@@ -968,7 +987,7 @@ export function enforceMinSize(scene, onsetOf, { until = scene.meta.frames, sett
         Object.assign(w, JSON.parse(keep));
       }
       if (made) {
-        for (const x of made) { x.dropped = 'room'; x.opacity = [[0, 0]]; counts.dropped++; log.push(`${x.id} ${x.text}: dropped (filler) to make room for the keyword ${w.id} ${w.text}`); }
+        for (const x of made) { x.dropped = 'room'; x.dropped_for = w.id; x.opacity = [[0, 0]]; counts.dropped++; log.push(`${x.id} ${x.text}: dropped (filler) to make room for the keyword ${w.id} ${w.text}`); }
         counts.grown++;
         log.push(`${w.id} ${w.text}: grown x${k.toFixed(2)} after dropping ${made.map(x => x.text).join(', ')} (keyword; letters ${(100 * was).toFixed(1)}%)`);
         sh = shownHolds(w); short = sh.filter(x => x.size < x.min - 1e-9); if (!short.length) continue;
