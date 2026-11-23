@@ -10,22 +10,23 @@ const asset = (file, resolve, types) => {
 
 export function songAppearance(scene, song, resolve, firstOnset) {
   const fps = scene.meta.fps ?? 30;
-  const introEnd = Math.ceil(firstOnset * fps);
+  const introEnd = Math.round(firstOnset * fps);
   const frames = seconds => Math.round(seconds * fps);
   let intro = 'No pre-vocal introduction needed.';
   if (song.intro?.length && introEnd > 0) {
     let start = 0;
-    scene.intro = song.intro.map(({ image, hold_s, dissolve_s = 0, exit = 'cut' }, i, list) => {
+    scene.intro = song.intro.map(({ image, hold_s, dissolve_s = 0, dissolve_at_s, exit = 'cut' }, i, list) => {
       const last = i === list.length - 1;
       const hold = frames(hold_s), fade = frames(dissolve_s);
-      if (!(hold > 0) || !(fade >= 0) || !['cut','slide'].includes(exit) ||
-          (last && fade) || start >= introEnd || (!last && start + hold + fade >= introEnd)) {
+      const transition = dissolve_at_s == null ? start + hold : frames(dissolve_at_s);
+      if (!(transition >= start + hold) || !(hold > 0) || !(fade >= 0) || !['cut','slide'].includes(exit) ||
+          (last && (fade || dissolve_at_s != null || transition > introEnd)) || start >= introEnd || (!last && transition + fade >= introEnd)) {
         throw Error(`Invalid intro timing or exit in song settings.json, image ${i + 1}: ${image}`);
       }
-      const end = last ? introEnd : start + hold + fade;
+      const end = last ? introEnd : transition + fade;
       const record = { start, end, fade, exit, fadeIn: frames(list[i-1]?.dissolve_s ?? 0),
         src: asset(image, resolve, { '.png':'image/png', '.jpg':'image/jpeg', '.jpeg':'image/jpeg', '.webp':'image/webp', '.svg':'image/svg+xml' }) };
-      start += hold;
+      start = transition;
       return record;
     });
     intro = `${scene.intro.length} song images from frame 0 through frame ${introEnd - 1}.`;
