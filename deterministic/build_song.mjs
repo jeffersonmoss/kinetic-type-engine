@@ -18,7 +18,8 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import './interp.js';
 import { checkSync, checkHolds } from './whole_song_checks.mjs';
-import { assemble, hideWhenGone, buildReveal, checkReveal } from './assemble_sections.mjs';
+import { assemble, hideWhenGone, buildReveal, checkReveal, endOnWord, checkStillEnding } from './assemble_sections.mjs';
+import { tightenLone, hideEdgeClutter } from './composition.mjs';
 import { severity, worstReadingLoss, SHOWN_GATE } from './build_best.mjs';
 import { repairShown, gateFailures } from './shown_gate.mjs';
 import { entranceCounts } from './entrance_counts.mjs';
@@ -112,9 +113,17 @@ for (const sec of song.sections) {
 const frames = Math.round(SONG_END * FPS);
 const { scene, seams, partReveal } = assemble(parts, { fps: FPS, frames, end: SONG_END, gapFrac: song.seam_gap ?? 0.3 });
 // Reveal timing: the last section's own reveal frame (on its beat); viewing direction from that key's end pose.
-const revealF0 = partReveal?.f0 ?? Math.max(...scene.words.map(w => w.on)) + 30;
+// Ending (engine fix brief 3, item 1): song settings "ending" {reveal: false, hold: "<word>" | "last"} ends on that word
+// held still to the last frame; otherwise the reveal pulls back, starting early enough to land and hold still for at
+// least ending.min_hold_s (0.5 s) before the end. The song never ends mid-move (checkStillEnding).
+const REVEAL_ON = song.ending?.reveal ?? true;
+const MIN_END_HOLD = Math.round((song.ending?.min_hold_s ?? 0.5) * FPS), MIN_PULL = FPS;
+const plannedRevealF0 = partReveal?.f0 ?? Math.max(...scene.words.map(w => w.on)) + 30;
+const revealF0 = REVEAL_ON ? Math.min(plannedRevealF0, frames - MIN_END_HOLD - MIN_PULL) : frames;
 const hideLog = hideWhenGone(scene, { until: revealF0 });
-const reveal = buildReveal(scene, { f0: revealF0, pullFrames: REVEAL_PULL_S * FPS, endFrame: frames, maxHoldFrames: REVEAL_HOLD_S * FPS, minCoverage: REVEAL_MIN_COVERAGE });
+const reveal = REVEAL_ON
+  ? buildReveal(scene, { f0: revealF0, pullFrames: REVEAL_PULL_S * FPS, endFrame: frames, maxHoldFrames: REVEAL_HOLD_S * FPS, minHoldFrames: MIN_END_HOLD, minCoverage: REVEAL_MIN_COVERAGE })
+  : { off: true, ...endOnWord(scene, { hold: song.ending?.hold ?? 'last', endFrame: frames, fps: FPS, minHoldFrames: MIN_END_HOLD }) };
 // The focused word is shown whole (Jefferson, rough cut 4): sections were repaired one by one in build_best; the joined
 // scene is swept again (the opening and the seams were never repaired) before any post-pass. The opening's words take
 // their sung times from its words file.
@@ -150,7 +159,17 @@ else fs.copyFileSync(notes, finalScene);
 const finalObj = JSON.parse(fs.readFileSync(finalScene, 'utf8'));
 // The final joined scene is repaired for both rules together (shown whole and projected overlap), alternating until
 // neither repair changes anything; the checks below then judge the scene exactly as it is written.
-const joint = repairShownAndOverlap(finalObj, onsetOf, { until: revealF0, retireOccluded: true });
+let joint = repairShownAndOverlap(finalObj, onsetOf, { until: revealF0, retireOccluded: true });
+// Composition (engine fix brief 3, items 17 and 18): lone focus words come closer (each change kept only when the gates
+// are no worse), the two repairs settle again, then edge clutter is hidden hold by hold.
+const lone = tightenLone(finalObj, onsetOf, { until: revealF0 });
+if (lone.log.length) {
+  const again = repairShownAndOverlap(finalObj, onsetOf, { until: revealF0, retireOccluded: true });
+  joint = { ...again, shownLog: [...joint.shownLog, ...again.shownLog], overlapLog: [...joint.overlapLog, ...again.overlapLog] };
+}
+const clutter = hideEdgeClutter(finalObj, onsetOf, { until: revealF0 });
+const stillEnding = checkStillEnding(finalObj, { minHoldFrames: MIN_END_HOLD });
+if (!stillEnding.pass) process.exitCode = 1;
 const overlapRepair = { retired: joint.overlapLog };
 const overlapFinal = { overlaps: joint.overlaps };
 if (overlapFinal.overlaps.length) process.exitCode = 1;
@@ -159,17 +178,18 @@ if (!appearance.pass) process.exitCode = 1;
 fs.writeFileSync(finalScene, JSON.stringify(finalObj, null, 1));
 const syncCheck = checkSync(finalObj, sung), holdCheck = checkHolds(finalObj, sung, { until: revealF0 });
 const shownFinal = gateFailures(finalObj, onsetOf, { until: revealF0 });
-const partialFinal = shownFinal.filter(x => x.kind === 'partial'), droppedFinal = shownFinal.filter(x => x.kind !== 'partial');
+const partialFinal = shownFinal.filter(x => x.kind === 'partial'), droppedFinal = shownFinal.filter(x => x.kind === 'unshown');
+const smallFinal = shownFinal.filter(x => x.kind === 'small'), sparseFinal = shownFinal.filter(x => x.kind === 'sparse');
 const counts = entranceCounts(finalObj);
 if (!syncCheck.pass || !holdCheck.pass || partialFinal.length) process.exitCode = 1;
-const revealCheck = checkReveal(finalObj, { frame: frames - 1 });
+const revealCheck = REVEAL_ON ? checkReveal(finalObj, { frame: frames - 1 }) : { pass: true, off: true, frame: frames - 1, coverage: null };
 if (!revealCheck.pass) process.exitCode = 1;
 // Reveal safety: a dropped chain fails the build, and no moved plaque's original may be in frame on the frame before
 // the switch to the moved copies (it would teleport).
-const droppedChains = reveal.compaction?.dropped ?? [];
+const droppedChains = REVEAL_ON ? reveal.compaction?.dropped ?? [] : [];
 if (droppedChains.length) process.exitCode = 1;
 const teleports = [];
-{
+if (REVEAL_ON) {
   const I = globalThis.KT_INTERP, pose = I.poseAt(finalObj.cams, revealF0 - 1);
   for (const c of finalObj.words.filter(w => w.reveal_copy_of)) {
     const o = finalObj.words.find(w => w.id === c.reveal_copy_of);
@@ -195,8 +215,15 @@ md.push('', '## Opening and team wordmarks', '', appearance.intro,
   `Wordmark use: ${['image', 'font', 'neither'].map(k => `${k}: ${appearance.wordmarkUse.filter(x => x.used === k).map(x => x.name).join(', ') || 'none'}`).join('; ')}.`);
 md.push('', '## Projected overlap', '', `${overlapFinal.overlaps.length} remaining intervals (${overlapFinal.overlaps.length ? 'FAIL' : 'PASS'}).`, '',
   ...overlapRepair.retired.map(x => `- Repair: ${x}`), ...overlapFinal.overlaps.map(x => `- ${x}`));
-md.push('', '## Reveal', '', `Starts at frame ${revealF0} (${(revealF0 / FPS).toFixed(2)} s), pulls back until frame ${reveal.f1} (${(reveal.f1 / FPS).toFixed(2)} s), then holds still for ${((frames - reveal.f1) / FPS).toFixed(2)} s to the end. Compacted layout (assemble_sections.mjs compactLayout): ${reveal.compaction?.chains} chains; gaps between chains in the true layout ${JSON.stringify(reveal.compaction?.gapsBefore)} units; largest gap between consecutive plaques after compaction ${reveal.compaction?.largestGapAfter} units; dropped ${reveal.compaction?.dropped.length ?? 0}. The reveal shows ${reveal.tail} of ${reveal.of} plaques. Reveal check on frame ${revealCheck.frame} (needs 20%; the reveal was laid out for ${(REVEAL_MIN_COVERAGE * 100).toFixed(0)}%): ${(revealCheck.coverage * 100).toFixed(1)}% of the frame covered, ${revealCheck.plaquesInFrame} of ${revealCheck.plaquesShown} shown plaques in frame, ${revealCheck.pass ? 'PASS' : 'FAIL'}.`, '', ...(reveal.compaction?.log ?? []).map(l => `- ${l}`), '');
-md.push(`Reveal safety: ${droppedChains.length} dropped plaques (${droppedChains.length ? 'FAIL' : 'PASS'}); ${teleports.length} moved plaques in frame on the frame before the switch (${teleports.length ? `FAIL: ${teleports.join(', ')}` : 'PASS'}).`, '');
+md.push('', '## Ending', '', `Still ending (camera still for the last ${MIN_END_HOLD} frames, no word moving on the last frame): ${stillEnding.pass ? 'PASS' : `FAIL: ${stillEnding.problems.join('; ')}`}.`, '');
+if (!REVEAL_ON) md.push(`Reveal off (song settings ending). The song ends on ${reveal.word}, at rest from frame ${reveal.restFrame} (${(reveal.restFrame / FPS).toFixed(2)} s) and held still to the last frame.${reveal.sungAfter.length ? ` Words sung after it (${reveal.sungAfter.join(', ')}) play first; the camera cuts back at frame ${reveal.cutBack}.` : ''}`, '');
+else md.push('## Reveal', '', `${revealF0 < plannedRevealF0 ? `Moved earlier from frame ${plannedRevealF0} so the pull-back lands and holds still before the end. ` : ''}${reveal.stoppedAt ? `The pull-back stops at the ${(REVEAL_MIN_COVERAGE * 100).toFixed(0)}% coverage floor, centred (distance ${reveal.stoppedAt.from.toFixed(0)} -> ${reveal.stoppedAt.to.toFixed(0)}; the whole layout would cover ${(reveal.stoppedAt.coverageWhole * 100).toFixed(1)}%). ` : ''}Starts at frame ${revealF0} (${(revealF0 / FPS).toFixed(2)} s), pulls back until frame ${reveal.f1} (${(reveal.f1 / FPS).toFixed(2)} s), then holds still for ${((frames - reveal.f1) / FPS).toFixed(2)} s to the end. Compacted layout (assemble_sections.mjs compactLayout): ${reveal.compaction?.chains} chains; gaps between chains in the true layout ${JSON.stringify(reveal.compaction?.gapsBefore)} units; largest gap between consecutive plaques after compaction ${reveal.compaction?.largestGapAfter} units; dropped ${reveal.compaction?.dropped.length ?? 0}. The reveal shows ${reveal.tail} of ${reveal.of} plaques. Reveal check on frame ${revealCheck.frame} (needs 20%; the reveal was laid out for ${(REVEAL_MIN_COVERAGE * 100).toFixed(0)}%): ${(revealCheck.coverage * 100).toFixed(1)}% of the frame covered, ${revealCheck.plaquesInFrame} of ${revealCheck.plaquesShown} shown plaques in frame, ${revealCheck.pass ? 'PASS' : 'FAIL'}.`, '', ...(reveal.compaction?.log ?? []).map(l => `- ${l}`), '');
+if (REVEAL_ON) md.push(`Reveal safety: ${droppedChains.length} dropped plaques (${droppedChains.length ? 'FAIL' : 'PASS'}); ${teleports.length} moved plaques in frame on the frame before the switch (${teleports.length ? `FAIL: ${teleports.join(', ')}` : 'PASS'}).`, '');
+md.push('## Readable size and composition', '',
+  `Words sung while still small (letters under 10% of the frame height at onset + 3 frames; reported, not gated): ${smallFinal.length}.`, ...smallFinal.map(x => `- ${x.id} ${x.text} at ${(x.onsetF / FPS).toFixed(2)} s: ${x.why}`), '',
+  `Sparse frames (two small consecutive words far apart, no anchor word in view): ${sparseFinal.length}.`, ...sparseFinal.map(x => `- ${x.id} ${x.text} at ${(x.onsetF / FPS).toFixed(2)} s: ${x.why}`), '',
+  `Lone focus words brought closer: ${lone.log.length}.`, ...lone.log.map(x => `- ${x}`), '',
+  `Edge clutter hidden (non-focus words under half in frame during a hold): ${clutter.log.length}.`, ...clutter.log.map(x => `- ${x}`), '');
 md.push('## Flagged for Jefferson', '', ...(flagged.length ? flagged.map((f, i) => `${i + 1}. ${f}`) : ['None.']), '');
 const sp = finalObj.meta.sung_pulses ?? { added: [], skipped: [] };
 const popWhy = {};
@@ -216,7 +243,8 @@ console.log('sung pulses', JSON.stringify(sp.added.map(a => `${a.text}@${a.t}`))
 console.log('sync', JSON.stringify({ late: syncCheck.late.length, dropped: syncCheck.dropped.length }), 'idle', JSON.stringify(holdCheck.holds));
 console.log('shown whole', JSON.stringify({ sweepBefore: shownSweep.before, sweepAfter: shownSweep.after, finalPartial: partialFinal.length, finalDropped: droppedFinal.length }), 'echoes', finalObj.words.filter(w => w.echo).length);
 console.log('entrances', JSON.stringify(counts['Whole song']), 'pop reasons', JSON.stringify(popWhy));
-console.log('reveal check', JSON.stringify(revealCheck));
+console.log('reveal check', JSON.stringify(revealCheck), 'still ending', JSON.stringify(stillEnding));
+console.log('size', JSON.stringify({ small: smallFinal.length, sparse: sparseFinal.length, lone: lone.log.length, clutter: clutter.log.length }));
 console.log('reveal', JSON.stringify(reveal), 'revealF0', revealF0, 'hidden', hideLog.filter(l => l.includes('hidden')).length);
 console.log(el.split('\n').filter(l => /CHECKS|FAIL|^  /.test(l)).join('\n'));
 console.log('wordmarks', JSON.stringify(appearance.wordmarkUse.map(({ name, used, words }) => ({ name, used, words }))), 'opening blank', appearance.blank);

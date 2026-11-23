@@ -60,7 +60,7 @@ function wordTexture(w) {
       const k=Math.min(c.width*.94/img.naturalWidth,c.height*.9/img.naturalHeight);
       const dw=Math.max(1,Math.round(img.naturalWidth*k)), dh=Math.max(1,Math.round(img.naturalHeight*k));
       const x=Math.round((c.width-dw)/2), y=Math.round((c.height-dh)/2);
-      const tinted=colour=>{const L=document.createElement('canvas');L.width=dw;L.height=dh;const h=L.getContext('2d');
+      const tinted=colour=>{const L=document.createElement('canvas');L.width=dw;L.height=dh;const h=L.getContext('2d');h.imageSmoothingQuality='high';
         h.drawImage(img,0,0,dw,dh);if(colour){h.globalCompositeOperation='source-in';h.fillStyle=colour;h.fillRect(0,0,dw,dh);}return L;};
       // Outlines (stroke, then an outer accent) by stamping the alpha silhouette around a ring: a cheap dilation.
       const ring=(colour,r)=>{if(!colour||!(r>0))return;const L=tinted(colour);
@@ -226,7 +226,7 @@ function visibility(f){
     const {data:w,front,back,ripple}=wm;
     const vis=visible(w,f);
     front.visible=vis;
-    if(w.opacity){const o=opacityAt(w,f);front.material.opacity=o;if(back)back.material.opacity=o;}
+    if(w.opacity){const o=opacityAt(w,f);front.material.opacity=o;if(back)back.material.opacity=o;if(o<=.01)front.visible=false;} // fully hidden (edge clutter): no depth write either
     const scale=stampScale(w,f)*(window.KT_RIPPLE?throwScale(w,f):pulseScale(w,f));
     if(ripple){ripple.visible=false;wm.rippleScale=1;const fps=S.meta.fps??30;for(const t of w.pulses){const d=(f-t*fps)/fps;
       if(vis&&d>=0&&d<RIP_T){const x=d/RIP_T;ripple.visible=true;wm.rippleScale=1+x;ripple.material.opacity=Math.pow(1-x,1.5);}}}
