@@ -165,7 +165,9 @@ export function hideUnreadable(scene, onsetOf, { until = scene.meta.frames } = {
 // before stay on until the next word is visible, when that adds no projected overlap. Remaining empty runs are listed.
 function anyVisible(scene, f, pose, vfov) {
   const I = globalThis.KT_INTERP;
-  return scene.words.some(w => {
+  // Something on screen: an intro overlay (badge, title card), a picture element or a word.
+  if ((scene.intro ?? []).some(x => f >= x.start && f < x.end)) return true;
+  return [...scene.words, ...(scene.elements ?? [])].some(w => {
     const on = (w.on <= f && (w.off == null || f < w.off)) || (w.reveal_on != null && f >= w.reveal_on);
     if (!on || opacityAt(w, f) <= 0.05) return false;
     const X = I.wordXform(w, f), c = X(w.C), n = X(add(w.C, w.N)).map((x, i) => x - c[i]);

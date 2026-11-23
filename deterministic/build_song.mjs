@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 import './interp.js';
 import { checkSync, checkHolds } from './whole_song_checks.mjs';
 import { assemble, hideWhenGone, buildReveal, checkReveal, endOnWord, checkStillEnding } from './assemble_sections.mjs';
-import { tightenLone, hideEdgeClutter, hideUnreadable, fillEmptyFrames } from './composition.mjs';
+import { tightenLone, hideEdgeClutter, hideUnreadable, fillEmptyFrames, emptyFrames } from './composition.mjs';
 import { keywordPlan, fastWordsOn } from './keywords.mjs';
 import { severity, worstReadingLoss, SHOWN_GATE } from './build_best.mjs';
 import { repairShown, gateFailures } from './shown_gate.mjs';
@@ -182,15 +182,8 @@ if (lone.log.length) {
   joint = { ...again, shownLog: [...joint.shownLog, ...again.shownLog], overlapLog: [...joint.overlapLog, ...again.overlapLog] };
 }
 const clutter = hideEdgeClutter(finalObj, onsetOf, { until: revealF0 });
-// Brief 4: text upside down, mirrored or seen from behind is hidden outside its focus window; then no frame between the
-// intro and the end may be empty (outgoing words stay on through the gap where that adds no overlap).
+// Brief 4: text upside down, mirrored or seen from behind is hidden outside its focus window.
 const unreadable = hideUnreadable(finalObj, onsetOf, { until: revealF0 });
-const introEndF = Math.round(Math.min(...map.words.map(w => w.start_s)) * FPS);
-// Song setting empty_gap_max_s (default 0.5 s, a best guess): the longest empty stretch allowed mid-song.
-const EMPTY_MAX_S = song.empty_gap_max_s ?? 0.5, emptyMaxF = Math.round(EMPTY_MAX_S * FPS);
-const fill = fillEmptyFrames(finalObj, { from: introEndF, until: frames, onsetOf, maxFrames: emptyMaxF });
-// No section pick, fallback or song setting waives this (Jefferson, 22 November 2026: dead screen is the kiss of death).
-if (fill.remaining.length) { process.exitCode = 1; console.error(`EMPTY STRETCH OVER ${EMPTY_MAX_S} s FAIL (not waivable): ${fill.remaining.map(r => `${r.start}-${r.end}`).join(', ')}`); }
 const stillEnding = checkStillEnding(finalObj, { minHoldFrames: MIN_END_HOLD });
 if (!stillEnding.pass) process.exitCode = 1;
 const overlapRepair = { retired: joint.overlapLog };
@@ -198,6 +191,15 @@ const overlapFinal = { overlaps: joint.overlaps };
 if (overlapFinal.overlaps.length) process.exitCode = 1;
 const appearance = songAppearance(finalObj, song, inp, Math.min(...map.words.map(w => w.start_s)));
 if (!appearance.pass) process.exitCode = 1;
+// After the song appearance pass, which adds the intro overlays (badge, title card) that count as on screen.
+// Something on screen (Jefferson, 22 November 2026): no empty stretch longer than song setting empty_gap_max_s (default
+// 0.25 s: 7 frames at 30 fps, so 8 or more empty frames in a row fail), and the first and last frames are never empty.
+const EMPTY_MAX_S = song.empty_gap_max_s ?? 0.25, emptyMaxF = Math.floor(EMPTY_MAX_S * FPS + 1e-9);
+const fill = fillEmptyFrames(finalObj, { from: 0, until: frames, onsetOf, maxFrames: emptyMaxF });
+const emptyEnds = [0, frames - 1].filter(f => emptyFrames(finalObj, { from: f, until: f + 1 }).length);
+if (emptyEnds.length) { process.exitCode = 1; console.error(`EMPTY ${emptyEnds.map(f => f ? 'LAST' : 'FIRST').join(' AND ')} FRAME FAIL (not waivable)`); }
+// No section pick, fallback or song setting waives this (Jefferson, 22 November 2026: dead screen is the kiss of death).
+if (fill.remaining.length) { process.exitCode = 1; console.error(`EMPTY STRETCH OVER ${EMPTY_MAX_S} s FAIL (not waivable): ${fill.remaining.map(r => `${r.start}-${r.end}`).join(', ')}`); }
 fs.writeFileSync(finalScene, JSON.stringify(finalObj, null, 1));
 const syncCheck = checkSync(finalObj, sung), holdCheck = checkHolds(finalObj, sung, { until: revealF0 });
 const shownFinal = gateFailures(finalObj, onsetOf, { until: revealF0 });
@@ -250,7 +252,7 @@ md.push('## Readable size and composition', '',
   `Lone focus words brought closer: ${lone.log.length}.`, ...lone.log.map(x => `- ${x}`), '',
   `Edge clutter hidden (non-focus words with letters cut by the frame edge during a hold): ${clutter.log.length}.`, ...clutter.log.map(x => `- ${x}`), '',
   `Unreadable text hidden (upside down, mirrored or from behind, outside its focus window): ${unreadable.log.length}.${unreadable.focused.length ? ` Focus words shown that way (not hidden): ${unreadable.focused.join(', ')}.` : ''}`, ...unreadable.log.map(x => `- ${x}`), '',
-  `Empty stretches over ${EMPTY_MAX_S} s (${emptyMaxF} frames) between the intro and the end: ${fill.short.length} shorter gaps allowed (longest ${Math.max(0, ...fill.short.map(r => r.end - r.start + 1))} frames). ${fill.remaining.length ? `FAIL, ${fill.remaining.length} runs: ${fill.remaining.map(r => `${r.start}-${r.end} (${(r.start / FPS).toFixed(2)} s)`).join(', ')}` : 'PASS, none'}. Filled: ${fill.log.length}.`, ...fill.log.map(x => `- ${x}`), '');
+  `First and last frames: ${emptyEnds.length ? `FAIL, empty frame ${emptyEnds.join(' and ')}` : 'PASS, something on screen'}. Empty stretches over ${EMPTY_MAX_S} s (${emptyMaxF} frames), whole song: ${fill.short.length} shorter gaps allowed (longest ${Math.max(0, ...fill.short.map(r => r.end - r.start + 1))} frames). ${fill.remaining.length ? `FAIL, ${fill.remaining.length} runs: ${fill.remaining.map(r => `${r.start}-${r.end} (${(r.start / FPS).toFixed(2)} s)`).join(', ')}` : 'PASS, none'}. Filled: ${fill.log.length}.`, ...fill.log.map(x => `- ${x}`), '');
 md.push('## Flagged for Jefferson', '', ...(flagged.length ? flagged.map((f, i) => `${i + 1}. ${f}`) : ['None.']), '');
 const sp = finalObj.meta.sung_pulses ?? { added: [], skipped: [] };
 const popWhy = {};
@@ -271,7 +273,7 @@ console.log('sync', JSON.stringify({ late: syncCheck.late.length, dropped: syncC
 console.log('shown whole', JSON.stringify({ sweepBefore: shownSweep.before, sweepAfter: shownSweep.after, finalPartial: partialFinal.length, finalDropped: droppedFinal.length }), 'echoes', finalObj.words.filter(w => w.echo).length);
 console.log('entrances', JSON.stringify(counts['Whole song']), 'pop reasons', JSON.stringify(popWhy));
 console.log('reveal check', JSON.stringify(revealCheck), 'still ending', JSON.stringify(stillEnding));
-console.log('size', JSON.stringify({ small: smallFinal.length, sparse: sparseFinal.length, lone: lone.log.length, clutter: clutter.log.length, unreadable: unreadable.log.length, unreadableFocus: unreadable.focused.length, filled: fill.log.length, shortGaps: fill.short.length, longestShortGap: Math.max(0, ...fill.short.map(r => r.end - r.start + 1)), emptyRuns: fill.remaining.map(r => `${r.start}-${r.end}`) }));
+console.log('size', JSON.stringify({ small: smallFinal.length, sparse: sparseFinal.length, lone: lone.log.length, clutter: clutter.log.length, unreadable: unreadable.log.length, unreadableFocus: unreadable.focused.length, emptyEnds, filled: fill.log.length, shortGaps: fill.short.length, longestShortGap: Math.max(0, ...fill.short.map(r => r.end - r.start + 1)), emptyRuns: fill.remaining.map(r => `${r.start}-${r.end}`) }));
 console.log('reveal', JSON.stringify(reveal), 'revealF0', revealF0, 'hidden', hideLog.filter(l => l.includes('hidden')).length);
 console.log(el.split('\n').filter(l => /CHECKS|FAIL|^  /.test(l)).join('\n'));
 console.log('wordmarks', JSON.stringify(appearance.wordmarkUse.map(({ name, used, words }) => ({ name, used, words }))), 'opening blank', appearance.blank);
