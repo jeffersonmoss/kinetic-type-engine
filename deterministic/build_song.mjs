@@ -21,7 +21,7 @@ import { checkSync, checkHolds } from './whole_song_checks.mjs';
 import { assemble, hideWhenGone, buildReveal, checkReveal, endOnWord, checkStillEnding } from './assemble_sections.mjs';
 import { tightenLone, hideEdgeClutter, hideUnreadable, fillEmptyFrames, emptyFrames, enforceMinSize, noOutlines, undoSizeForEmpty } from './composition.mjs';
 import { JERSEY_BOLD } from './style.mjs';
-import { keywordPlan, fastWordsOn } from './keywords.mjs';
+import { keywordPlan, fastWordsOn, wordRanks } from './keywords.mjs';
 import { severity, worstReadingLoss, SHOWN_GATE } from './build_best.mjs';
 import { repairShown, gateFailures } from './shown_gate.mjs';
 import { entranceCounts } from './entrance_counts.mjs';
@@ -187,15 +187,37 @@ if (lone.log.length) {
   const again = repairShownAndOverlap(finalObj, onsetOf, { until: revealF0, retireOccluded: true });
   joint = { ...again, shownLog: [...joint.shownLog, ...again.shownLog], overlapLog: [...joint.overlapLog, ...again.overlapLog] };
 }
-// Size (engine fix brief 5): every word big enough to be seen or not shown; song settings min_word_h (letters as a share
-// of the frame height, default 0.092: the larger HE at 41 s in Big Toothy Grins rough cut 5), room_factor (1.5),
-// crowded_words (3) and crowded_area (0.30).
-const size = enforceMinSize(finalObj, onsetOf, { until: revealF0, settings: {
-  ...(song.min_word_h != null ? { minH: song.min_word_h } : {}), ...(song.room_factor != null ? { roomFactor: song.room_factor } : {}),
-  ...(song.crowded_words != null ? { crowdedWords: song.crowded_words } : {}), ...(song.crowded_area != null ? { crowdedArea: song.crowded_area } : {}) } });
 const clutter = hideEdgeClutter(finalObj, onsetOf, { until: revealF0 });
 // Brief 4: text upside down, mirrored or seen from behind is hidden outside its focus window.
 const unreadable = hideUnreadable(finalObj, onsetOf, { until: revealF0 });
+// Size runs after the clutter and unreadable hides (they thin the frames it judges as crowded or not), and those two run
+// again after it, since a grown word may now be cut by an edge in a later hold.
+// Size (engine fix brief 5, Type rules 1 and 2): every word big enough to be seen or not shown; song settings min_word_h
+// (letters as a share of the frame height, default 0.09, change 5: the larger HE at 40.6 s in rough cut 5), room_factor (1.5),
+// crowded_words (3) and crowded_area (0.30).
+// Type rule 2: importance by keyword mode's ranking (names, numbers and player names 3, line-end rhyme word 2, rest 1).
+const keyNames = [...Object.keys(song.team_wordmarks ?? {}), ...Object.values(song.display_numbers ?? {}), ...palettePins, ...(song.player_names ?? [])];
+const ranks = wordRanks(map.words, song.fast_words ?? {}, { names: keyNames });
+const normT = t => String(t).toUpperCase().replace(/[^A-Z0-9']/g, '');
+for (const w of finalObj.words) {
+  if (w.t == null || w.reveal_copy_of) continue;
+  const i = map.words.findIndex(m => Math.abs(m.start_s - w.t) < 0.05 && (normT(display(m.text)) === normT(w.text) || normT(m.text) === normT(w.text)));
+  if (i >= 0 && ranks[i] >= 2) w.important = true;
+}
+// Repeated until it settles (at most 4 passes): a drop thins the frame, which can make its neighbours' frames uncrowded and
+// raise their minimum to room_factor x min_word_h.
+const size = { log: [], counts: { grown: 0, dropped: 0, hidden: 0, keptSmall: 0, importantSmall: 0 }, passes: 0 };
+for (let pass = 0; pass < 4; pass++) {
+  const r = enforceMinSize(finalObj, onsetOf, { until: revealF0, settings: {
+  ...(song.min_word_h != null ? { minH: song.min_word_h } : {}), ...(song.room_factor != null ? { roomFactor: song.room_factor } : {}),
+  ...(song.crowded_words != null ? { crowdedWords: song.crowded_words } : {}), ...(song.crowded_area != null ? { crowdedArea: song.crowded_area } : {}) } });
+  size.settings = r.settings; size.passes++;
+  size.log.push(...r.log.map(x => pass ? `(pass ${pass + 1}) ${x}` : x));
+  for (const k of Object.keys(size.counts)) size.counts[k] += r.counts[k] ?? 0;
+  if (!r.counts.grown && !r.counts.dropped && !r.counts.hidden) break;
+}
+{ const c2 = hideEdgeClutter(finalObj, onsetOf, { until: revealF0 }), u2 = hideUnreadable(finalObj, onsetOf, { until: revealF0 });
+  clutter.log.push(...c2.log.map(x => `(after size) ${x}`)); unreadable.log.push(...u2.log.map(x => `(after size) ${x}`)); }
 // No outlines (brief 5, change 2): every word solid. Runs again after the song appearance pass, which adds the wordmarks.
 const palStyles = finalObj.meta.palette?.styles ?? [];
 const flatOf = id => palStyles.find(x => x.outline_twin === id)?.id ?? null;
@@ -216,7 +238,7 @@ const EMPTY_MAX_S = song.empty_gap_max_s ?? 0.25, emptyMaxF = Math.floor(EMPTY_M
 // stretch the fills cannot clear is undone on the real scene before the real fills (so no fill is built around a word
 // that then comes back).
 const sizeUndone = [];
-for (let round = 0; round < 2; round++) {
+for (let round = 0; round < 12; round++) {
   const trial = JSON.parse(JSON.stringify(finalObj));
   const left = fillEmptyFrames(trial, { from: 0, until: frames, onsetOf, maxFrames: emptyMaxF }).remaining;
   const undone = undoSizeForEmpty(finalObj, left);
@@ -224,7 +246,7 @@ for (let round = 0; round < 2; round++) {
   if (!undone.length) break;
 }
 const fill = fillEmptyFrames(finalObj, { from: 0, until: frames, onsetOf, maxFrames: emptyMaxF });
-for (const w of finalObj.words) { delete w.size_restore; delete w.size_hides; }
+for (const w of finalObj.words) { delete w.size_restore; delete w.size_hides; delete w.size_kept_holds; }
 const emptyEnds = [0, frames - 1].filter(f => emptyFrames(finalObj, { from: f, until: f + 1 }).length);
 if (emptyEnds.length) { process.exitCode = 1; console.error(`EMPTY ${emptyEnds.map(f => f ? 'LAST' : 'FIRST').join(' AND ')} FRAME FAIL (not waivable)`); }
 // No section pick, fallback or song setting waives this (Jefferson, 22 November 2026: dead screen is the kiss of death).
@@ -282,7 +304,7 @@ md.push('## Readable size and composition', '',
   `Words sung while still small (letters under 10% of the frame height at onset + 3 frames; reported, not gated): ${smallFinal.length}.`, ...smallFinal.map(x => `- ${x.id} ${x.text} at ${(x.onsetF / FPS).toFixed(2)} s: ${x.why}`), '',
   `Sparse frames (two small consecutive words far apart, no anchor word in view): ${sparseFinal.length}.`, ...sparseFinal.map(x => `- ${x.id} ${x.text} at ${(x.onsetF / FPS).toFixed(2)} s: ${x.why}`), '',
   `Lone focus words brought closer: ${lone.log.length}.`, ...lone.log.map(x => `- ${x}`), '',
-  `Size (brief 5, big enough or not shown; minimum ${size.settings.minH} of the frame height when crowded, ${size.settings.roomFactor} x that with room): ${size.counts.grown} grown, ${size.counts.dropped} dropped, ${size.counts.hidden} hidden for a later hold, ${size.counts.keptSmall} kept small to avoid an empty screen; ${sizeUndone.length} drops or hides undone because they left a stretch over ${EMPTY_MAX_S} s empty that the fills could not clear.`, ...size.log.map(x => `- ${x}`), ...sizeUndone.map(x => `- undone: ${x}`), '',
+  `Size (brief 5, big enough or not shown; minimum ${size.settings.minH} of the frame height when crowded, ${size.settings.roomFactor} x that with room): ${size.counts.grown} grown, ${size.counts.dropped} dropped, ${size.counts.hidden} hidden for a later hold, ${size.counts.keptSmall} kept small to avoid an empty screen; ${size.counts.importantSmall} important words kept under size (Type rule 2 forbids dropping them); ${sizeUndone.length} drops or hides undone because they left a stretch over ${EMPTY_MAX_S} s empty that the fills could not clear.`, ...size.log.map(x => `- ${x}`), ...sizeUndone.map(x => `- undone: ${x}`), '',
   `No outlines (brief 5, change 2: every word solid): ${outlines.log.length} changed.`, ...outlines.log.map(x => `- ${x}`), '',
   `Edge clutter hidden (non-focus words with letters cut by the frame edge during a hold): ${clutter.log.length}.`, ...clutter.log.map(x => `- ${x}`), '',
   `Unreadable text hidden (upside down, mirrored or from behind, outside its focus window): ${unreadable.log.length}.${unreadable.focused.length ? ` Focus words shown that way (not hidden): ${unreadable.focused.join(', ')}.` : ''}`, ...unreadable.log.map(x => `- ${x}`), '',
@@ -307,7 +329,7 @@ console.log('sync', JSON.stringify({ late: syncCheck.late.length, dropped: syncC
 console.log('shown whole', JSON.stringify({ sweepBefore: shownSweep.before, sweepAfter: shownSweep.after, finalPartial: partialFinal.length, finalDropped: droppedFinal.length }), 'echoes', finalObj.words.filter(w => w.echo).length);
 console.log('entrances', JSON.stringify(counts['Whole song']), 'pop reasons', JSON.stringify(popWhy));
 console.log('reveal check', JSON.stringify(revealCheck), 'still ending', JSON.stringify(stillEnding));
-console.log('size', JSON.stringify({ grown: size.counts.grown, dropped: size.counts.dropped, hiddenSmall: size.counts.hidden, keptSmall: size.counts.keptSmall, sizeUndone: sizeUndone.length, outlinesFlat: outlines.log.length, small: smallFinal.length, sparse: sparseFinal.length, lone: lone.log.length, clutter: clutter.log.length, unreadable: unreadable.log.length, unreadableFocus: unreadable.focused.length, emptyEnds, filled: fill.log.length, shortGaps: fill.short.length, longestShortGap: Math.max(0, ...fill.short.map(r => r.end - r.start + 1)), emptyRuns: fill.remaining.map(r => `${r.start}-${r.end}`) }));
+console.log('size', JSON.stringify({ grown: size.counts.grown, dropped: size.counts.dropped, hiddenSmall: size.counts.hidden, keptSmall: size.counts.keptSmall, importantSmall: size.counts.importantSmall, sizeUndone: sizeUndone.length, outlinesFlat: outlines.log.length, small: smallFinal.length, sparse: sparseFinal.length, lone: lone.log.length, clutter: clutter.log.length, unreadable: unreadable.log.length, unreadableFocus: unreadable.focused.length, emptyEnds, filled: fill.log.length, shortGaps: fill.short.length, longestShortGap: Math.max(0, ...fill.short.map(r => r.end - r.start + 1)), emptyRuns: fill.remaining.map(r => `${r.start}-${r.end}`) }));
 console.log('reveal', JSON.stringify(reveal), 'revealF0', revealF0, 'hidden', hideLog.filter(l => l.includes('hidden')).length);
 console.log(el.split('\n').filter(l => /CHECKS|FAIL|^  /.test(l)).join('\n'));
 console.log('wordmarks', JSON.stringify(appearance.wordmarkUse.map(({ name, used, words }) => ({ name, used, words }))), 'opening blank', appearance.blank);

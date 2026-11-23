@@ -26,23 +26,9 @@ export function fastWordsOn(settings) {
   return f.enabled !== false && (f.mode ?? 'keywords') !== 'all_words';
 }
 
-// words: [{text, start_s, end_s, line}] in sung order (the corrected song map's words). names: extra name or number
-// texts (team wordmarks, pinned words, display numbers). Returns { on, stretches, dropped: Set of word indexes, log }.
-export function keywordPlan(words, settings = {}, { names = [] } = {}) {
-  const opt = { ...FAST_DEFAULTS, ...settings };
-  const out = { on: fastWordsOn(settings), stretches: [], dropped: new Set(), log: [] };
-  if (!out.on || !words.length) return out;
-  const half = opt.window_s / 2;
-  const rate = words.map(w => words.filter(x => Math.abs(x.start_s - w.start_s) <= half).length / opt.window_s);
-  // Stretches with hysteresis.
-  for (let i = 0; i < words.length; i++) {
-    if (rate[i] <= opt.rate_on) continue;
-    let j = i;
-    while (j + 1 < words.length && rate[j + 1] >= opt.rate_off) j++;
-    const start = words[i].start_s, end = words[j].end_s ?? words[j].start_s;
-    if (end - start >= opt.min_stretch_s) out.stretches.push({ from: i, to: j, start, end, peak: Math.max(...rate.slice(i, j + 1)) });
-    i = j;
-  }
+// Importance (shared with the Type rules, brief 5 change 3: "Only non-important words are dropped"): rank 3 for names,
+// numbers and kept words, 2 for the rhyme word at a line end, 1 for the rest.
+function ranker(words, opt, names) {
   const keepSet = new Set([...(opt.keep ?? []), ...names].map(norm));
   const dropSet = new Set([...FUNCTION_WORDS, ...(opt.drop ?? [])].map(norm));
   // Names: the map is in sentence case, so a capital at a line start says nothing. A word is a name when it is written
@@ -61,6 +47,31 @@ export function keywordPlan(words, settings = {}, { names = [] } = {}) {
     if (lineEnd.has(i)) return 2;
     return 1;
   };
+  return { keepSet, dropSet, lineEnd, rank };
+}
+export function wordRanks(words, settings = {}, { names = [] } = {}) {
+  const { rank } = ranker(words, { ...FAST_DEFAULTS, ...settings }, names);
+  return words.map((w, i) => rank(i));
+}
+
+// words: [{text, start_s, end_s, line}] in sung order (the corrected song map's words). names: extra name or number
+// texts (team wordmarks, pinned words, display numbers). Returns { on, stretches, dropped: Set of word indexes, log }.
+export function keywordPlan(words, settings = {}, { names = [] } = {}) {
+  const opt = { ...FAST_DEFAULTS, ...settings };
+  const out = { on: fastWordsOn(settings), stretches: [], dropped: new Set(), log: [] };
+  if (!out.on || !words.length) return out;
+  const half = opt.window_s / 2;
+  const rate = words.map(w => words.filter(x => Math.abs(x.start_s - w.start_s) <= half).length / opt.window_s);
+  // Stretches with hysteresis.
+  for (let i = 0; i < words.length; i++) {
+    if (rate[i] <= opt.rate_on) continue;
+    let j = i;
+    while (j + 1 < words.length && rate[j + 1] >= opt.rate_off) j++;
+    const start = words[i].start_s, end = words[j].end_s ?? words[j].start_s;
+    if (end - start >= opt.min_stretch_s) out.stretches.push({ from: i, to: j, start, end, peak: Math.max(...rate.slice(i, j + 1)) });
+    i = j;
+  }
+  const { keepSet, dropSet, lineEnd, rank } = ranker(words, opt, names);
   for (const s of out.stretches) {
     const kept = [];
     for (let i = s.from; i <= s.to; i++) {

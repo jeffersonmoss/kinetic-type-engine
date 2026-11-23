@@ -274,7 +274,10 @@ export function fillEmptyFrames(scene, { from = 0, until = scene.meta.frames, on
     //     visible on that pose stay on through the run. Kept on the same terms as the other tries.
     const ki = scene.cams.findLastIndex(k => k.f0 < run.start && k.f1 <= run.end + 1);
     const K5 = scene.cams[ki];
-    if (K5 && emptyFrames(scene, { from: run.start, until: run.end + 1 }).length) {
+    // Never when a word is sung in the skipped hold: it would be read from the old framing (brief 5: YOU MISS AND at 5%).
+    const holdEnd5 = scene.cams[ki + 1]?.f0 ?? run.end + 1;
+    const sungIn = K5 && scene.words.some(w => !w.reveal_copy_of && !w.dropped && onsetOf?.(w) != null && onsetOf(w) >= K5.f0 && onsetOf(w) < holdEnd5);
+    if (K5 && !sungIn && emptyFrames(scene, { from: run.start, until: run.end + 1 }).length) {
       const camSnap = JSON.stringify(scene.cams), f = K5.f0 - 1;
       const p = I.poseAt(scene.cams, f);
       const vis = scene.words.filter(w => !w.reveal_copy_of && drawn(w, f) && inFrameShare(w, f, p, vfov) >= FILLED_SHARE && G.readableOrientation(w, f, p, vfov));
@@ -308,7 +311,7 @@ export function fillEmptyFrames(scene, { from = 0, until = scene.meta.frames, on
 // dropped for its whole life (opacity 0, w.dropped = 'size', exempt from the shown-whole gates like a keyword-mode
 // drop); in a later hold it is hidden for that hold when another word meeting its minimum stays on screen there. Echoes,
 // reveal copies, wordmarks and words on a hinge or a clip plane are not resized.
-export const SIZE_DEFAULTS = Object.freeze({ minH: 0.092, roomFactor: 1.5, crowdedWords: 3, crowdedArea: 0.30 });
+export const SIZE_DEFAULTS = Object.freeze({ minH: 0.09, roomFactor: 1.5, crowdedWords: 3, crowdedArea: 0.30 });
 export const MAX_GROW = 2.5;
 function boxCoverage(w, f, pose, vfov) {
   const cs = cornersAt(w, f);
@@ -320,13 +323,15 @@ function boxCoverage(w, f, pose, vfov) {
   for (let i = 0; i < p.length; i++) { const [x0, y0] = p[i], [x1, y1] = p[(i + 1) % p.length]; a += x0 * y1 - x1 * y0; }
   return Math.abs(a) / 2 / 4;
 }
-const resizable = w => !w.reveal_copy_of && !w.echo && !w.wordmark && !w.dropped &&
-  !(w.motion ?? []).some(s => s.kind === 'hinge') && !(w.clip ?? []).length;
+const resizable = w => !w.reveal_copy_of && !w.echo && !w.wordmark && !w.dropped && !w.size_kept;
+// A word on a hinge or entering past a clip plane (tick, slide-out) cannot grow (its plane and hinge stay put), but it
+// is still measured and dropped or hidden like any other.
+const growable = w => !(w.motion ?? []).some(s => s.kind === 'hinge') && !(w.clip ?? []).length;
 export function enforceMinSize(scene, onsetOf, { until = scene.meta.frames, settings = {} } = {}) {
   const S = { ...SIZE_DEFAULTS, ...settings };
   const I = globalThis.KT_INTERP, vfov = scene.meta.vfov ?? 40, fps = scene.meta.fps ?? 30;
   const poses = new Map(), poseAt = f => poses.get(f) ?? poses.set(f, I.poseAt(scene.cams, f)).get(f);
-  const log = [], counts = { grown: 0, dropped: 0, hidden: 0, keptSmall: 0 };
+  const log = [], counts = { grown: 0, dropped: 0, hidden: 0, keptSmall: 0, importantSmall: 0 };
   const hs = holds(scene, until);
   const crowdedAt = f => {
     const p = poseAt(f);
@@ -356,6 +361,15 @@ export function enforceMinSize(scene, onsetOf, { until = scene.meta.frames, sett
   // Grown about a pivot on its box (centre first, then edge midpoints and corners), so a word next to a bigger one can
   // grow away from it (Jefferson: "just move over the big word ... increasing the size of he").
   const PIVOTS = [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]];
+  // Overlap for a growth is counted with every size drop shown, so a drop undone later for the empty-screen rule never
+  // brings back an overlap.
+  const overlapsWithDrops = (from, to) => {
+    const ghosts = scene.words.filter(x => x.dropped === 'size' && x.size_restore != null).map(x => [x, x.opacity]);
+    for (const [x] of ghosts) { const v = JSON.parse(x.size_restore); if (v) x.opacity = v; else delete x.opacity; }
+    const n = scanOverlap(scene, { from, until: to }).overlaps.length;
+    for (const [x, op] of ghosts) x.opacity = op;
+    return n;
+  };
   const grow = (w, k, [pu, pv] = [0, 0]) => {
     const P = add(w.C, add(mul(w.R, pu * w.w / 2), mul(w.U, pv * w.h / 2)));
     w.C = add(P, mul(w.C.map((x, i) => x - P[i]), k));
@@ -368,14 +382,14 @@ export function enforceMinSize(scene, onsetOf, { until = scene.meta.frames, sett
     let sh = shownHolds(w), short = sh.filter(x => x.size < x.min - 1e-9);
     if (!short.length) continue;
     const k = Math.max(...short.map(x => x.min / x.size)) * 1.03, was = Math.max(...short.map(x => x.size));
-    if (k <= MAX_GROW) {
+    if (k <= MAX_GROW && growable(w)) {
       const lo = Math.max(0, w.on), hi = Math.min(until, w.off ?? until);
-      const ovBefore = scanOverlap(scene, { from: lo, until: hi }).overlaps.length, failBefore = ownFailures(w);
+      const ovBefore = overlapsWithDrops(lo, hi), failBefore = ownFailures(w);
       const keep = JSON.stringify({ C: w.C, w: w.w, h: w.h, cap: w.cap, fontPx: w.fontPx, pad: w.pad });
       let done = false;
       for (const pv of PIVOTS) {
         grow(w, k, pv);
-        if (scanOverlap(scene, { from: lo, until: hi }).overlaps.length <= ovBefore && ownFailures(w) <= failBefore) {
+        if (overlapsWithDrops(lo, hi) <= ovBefore && ownFailures(w) <= failBefore) {
           counts.grown++; done = true;
           log.push(`${w.id} ${w.text}: grown x${k.toFixed(2)}${pv[0] || pv[1] ? ` from its ${['', 'left', 'right'][pv[0] === -1 ? 1 : pv[0] === 1 ? 2 : 0]}${pv[0] && pv[1] ? ' ' : ''}${['', 'bottom', 'top'][pv[1] === -1 ? 1 : pv[1] === 1 ? 2 : 0]} ${pv[0] && pv[1] ? 'corner' : 'edge'}` : ''} (letters ${(100 * was).toFixed(1)}% under the ${(100 * Math.max(...short.map(x => x.min))).toFixed(1)}% minimum)`);
           break;
@@ -384,12 +398,21 @@ export function enforceMinSize(scene, onsetOf, { until = scene.meta.frames, sett
       }
       if (done) { sh = shownHolds(w); short = sh.filter(x => x.size < x.min - 1e-9); if (!short.length) continue; }
     }
+    // Type rule 2 (brief 5 change 3): only non-important words are dropped. An important word (w.important: a name,
+    // number or line-end rhyme word by keyword mode's ranking) that cannot grow stays and is reported as under size.
+    if (short.some(x => x.focused) && w.important) {
+      w.size_kept = true;
+      counts.importantSmall = (counts.importantSmall ?? 0) + 1;
+      const x = short.find(s => s.focused);
+      log.push(`${w.id} ${w.text}: kept under size, important word (letters ${(100 * x.size).toFixed(1)}% at frame ${x.f}, minimum ${(100 * x.min).toFixed(1)}%; Type rule 1 failure)`);
+      continue;
+    }
     if (short.some(x => x.focused)) {
       // Applied after every word is sized, so each growth was checked against all words shown (a drop undone for the
       // empty-screen rule then brings back no overlap).
       drops.push(w); counts.dropped++;
       const x = short.find(s => s.focused);
-      log.push(`${w.id} ${w.text}: dropped (letters ${(100 * x.size).toFixed(1)}% at frame ${x.f}, minimum ${(100 * x.min).toFixed(1)}% ${x.crowded ? 'crowded' : 'with room'}; growing would overlap or leave it partly shown)`);
+      log.push(`${w.id} ${w.text}: dropped (letters ${(100 * x.size).toFixed(1)}% at frame ${x.f}, minimum ${(100 * x.min).toFixed(1)}% ${x.crowded ? 'crowded' : 'with room'}; ${growable(w) ? 'growing would overlap or leave it partly shown' : 'it enters past a clip plane or on a hinge, so it cannot grow'})`);
       continue;
     }
     for (const x of short) {
@@ -400,7 +423,7 @@ export function enforceMinSize(scene, onsetOf, { until = scene.meta.frames, sett
       for (let f = a; f < b && ok; f += 2) if (drawn(w, f)) ok = big(f);
       if (ok && drops.includes(w)) continue;
       if (ok) { (w.size_hides ??= []).push([a, b, JSON.stringify(w.opacity ?? null)]); hide(w, a, b); counts.hidden++; log.push(`${w.id} ${w.text}: hidden ${a}-${b} (letters ${(100 * x.size).toFixed(1)}%, minimum ${(100 * x.min).toFixed(1)}%)`); }
-      else { counts.keptSmall++; log.push(`${w.id} ${w.text}: kept at ${(100 * x.size).toFixed(1)}% in ${a}-${b} (hiding it would leave no word of size on screen)`); }
+      else if (!(w.size_kept_holds ??= []).includes(a)) { w.size_kept_holds.push(a); counts.keptSmall++; log.push(`${w.id} ${w.text}: kept at ${(100 * x.size).toFixed(1)}% in ${a}-${b} (hiding it would leave no word of size on screen)`); }
     }
   }
   for (const w of drops) { w.size_restore = JSON.stringify(w.opacity ?? null); w.opacity = [[0, 0]]; w.dropped = 'size'; }
@@ -437,18 +460,58 @@ export function noOutlines(scene, { flatOf = () => null } = {}) {
 // empty stretch remains after the fills, the size drops and hides inside it are undone (the word shown as it was) and
 // listed, so the fills can be tried again.
 export function undoSizeForEmpty(scene, runs) {
+  // One word per stretch per call (the one covering most of it), so only as many come back as the screen needs.
   const log = [];
-  for (const r of runs) for (const w of scene.words) {
-    if (w.dropped === 'size' && w.on <= r.end && (w.off ?? Infinity) > r.start) {
+  for (const r of runs) {
+    const cover = (a, b) => Math.min(b, r.end + 1) - Math.max(a, r.start);
+    const opts = [];
+    for (const w of scene.words) {
+      if (w.dropped === 'size' && w.on <= r.end && (w.off ?? Infinity) > r.start) opts.push({ w, n: cover(w.on, w.off ?? Infinity), kind: 'drop' });
+      for (const h of w.size_hides ?? []) if (h[0] <= r.end && h[1] > r.start) opts.push({ w, n: cover(h[0], h[1]), kind: 'hide', h });
+    }
+    const best = opts.sort((a, b) => b.n - a.n || (b.w.cap ?? 0) - (a.w.cap ?? 0))[0];
+    if (!best) continue;
+    const { w } = best;
+    if (best.kind === 'drop') {
       const v = JSON.parse(w.size_restore ?? 'null'); if (v) w.opacity = v; else delete w.opacity;
       delete w.dropped; delete w.size_restore;
       log.push(`${w.id} ${w.text}: shown small after all (dropping it left frames ${r.start}-${r.end} empty)`);
-    }
-    for (const [a, b, op] of [...(w.size_hides ?? [])].reverse()) if (a <= r.end && b > r.start) {
-      const v = JSON.parse(op); if (v) w.opacity = v; else delete w.opacity;
+    } else {
+      const [a, b, op] = best.h; const v = JSON.parse(op); if (v) w.opacity = v; else delete w.opacity;
       w.size_hides = w.size_hides.filter(x => x[0] !== a);
       log.push(`${w.id} ${w.text}: hide ${a}-${b} undone (it left frames ${r.start}-${r.end} empty)`);
     }
   }
   return log;
+}
+
+// Read-only size measure for the Type-rule check: every hold in which a word is shown (at rest, at least 95% in frame,
+// readable, opacity on) with its largest letters, the minimum that applies and whether it is its focus hold.
+export function sizeShortfalls(scene, onsetOf, { until = scene.meta.frames, settings = {} } = {}) {
+  const S = { ...SIZE_DEFAULTS, ...settings };
+  const I = globalThis.KT_INTERP, vfov = scene.meta.vfov ?? 40, fps = scene.meta.fps ?? 30, out = [];
+  const poses = new Map(), poseAt = f => poses.get(f) ?? poses.set(f, I.poseAt(scene.cams, f)).get(f);
+  const hs = holds(scene, until);
+  for (const w of scene.words) {
+    if (w.reveal_copy_of || w.wordmark || w.dropped || w.on >= until) continue;
+    for (const h of hs) {
+      const a = Math.max(h.start, w.on), b = Math.min(h.end, w.off ?? until, until);
+      let best = null;
+      for (let f = a; f < b; f += 2) {
+        if (!drawn(w, f) || I.wordMoving(w, f)) continue;
+        const p = poseAt(f);
+        if (inFrameShare(w, f, p, vfov) <= CLIP_SHARE || !G.readableOrientation(w, f, p, vfov)) continue;
+        const size = letterHeight(w, f, p, vfov);
+        if (size != null && (!best || size > best.size)) best = { size, f };
+      }
+      if (!best) continue;
+      const p = poseAt(best.f);
+      const on = scene.words.filter(x => !x.reveal_copy_of && drawn(x, best.f) && inFrameShare(x, best.f, p, vfov) >= FILLED_SHARE);
+      const crowded = on.length >= S.crowdedWords || on.reduce((t, x) => t + boxCoverage(x, best.f, p, vfov), 0) >= S.crowdedArea;
+      const min = crowded ? S.minH : S.roomFactor * S.minH;
+      const [fa, fb] = focusWindow(w, onsetOf, fps);
+      if (best.size < min - 1e-9) out.push({ w, start: h.start, end: h.end, f: best.f, size: best.size, min, crowded, focused: fa < h.end && fb > h.start });
+    }
+  }
+  return out;
 }
