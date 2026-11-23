@@ -8,7 +8,7 @@ It was built for Room for One (LeBron Glaze) between 21 and 22 November 2026 in 
 
 1. The engine chat owns engine code and its own video. A song chat that needs engine changes, builds, renders or research for its song does not route them through the engine chat. It starts its own delegate.
 2. Start delegates as sub-threads of the calling chat with T3 Code's `delegate_task` tool (the t3-code MCP), so they nest under that chat. `t3 thread start` makes top-level threads; use it only when Jefferson asks for a new top-level chat.
-3. A chat without the t3-code MCP cannot make sub-threads. It says so to Jefferson rather than borrowing another chat to do the work.
+3. Claude desktop chats have no t3-code MCP. They send delegate requests to the T3 hub thread "T2 CL Hype Songs" (`mcp:bdf93ebd-4006-4f3a-bade-147ecc55af62`, !Songs & Lyrics project) with `t3 thread send <id> -`, and the hub starts each one with `delegate_task` so it nests. No new disposable top-level threads (Jefferson, 23 November 2026).
 4. Engine changes a song needs go to the engine as a fix brief in `reviews/`, built by the song chat's own delegate. Tell the engine chat what landed (commit and one line) so it can publish the mirror.
 
 ## 1. What is in this folder
