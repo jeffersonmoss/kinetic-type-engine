@@ -2,6 +2,12 @@
 
 Builder: the T2 engine chat (Claude, Opus 5.5). Nothing rendered; no section rebuilt.
 
+## 0. Item 2.5: jersey font choice on HOLD (supersedes items 1.3 and 2.2)
+
+1. Big Toothy Grins is back on the default jersey font (Graduate): `jersey_font` removed from its song settings. The per-song setting itself stays built (item 2.3). The Barlow pick in section 3 is withdrawn pending the full jersey-photo sweep; no font comparison against the eBay backs (item 2.4) was done.
+2. Re-joined 6g: exit 0, every gate passes. Type rules check 18 failures, all rule 1 (16 with Barlow).
+3. Name blocks with Graduate: 11 at full padding, 3 at the 0.18 minimum (RUDY, TREY 148.25 s, TREY? 151.59 s), 7 with letters shrunk x0.868 (JADEN'S 29.1 s, AYO 44.85 s, ANT 80.17 s, ANT'S 94.81 s, ANT 106.55 s, BONES 155.53 s, TREY 158.19 s). Border fractions in section 3b were measured with Barlow; I did not re-measure them, and the three new shrunk names likely sit near the 2.5% target or under it.
+
 ## 1. Outcome
 
 1. Big Toothy Grins `engine output/Rough cut 6g - 23 November` (a copy of 6f's sections) re-joined with `--skip-build`. It exits 0; every gate passes. Type rules check: 16 failures, all rule 1 (6f: 18).
@@ -42,6 +48,6 @@ Builder: the T2 engine chat (Claude, Opus 5.5). Nothing rendered; no section reb
 ## 4. Files and cleanup
 
 1. Engine: `song_appearance.mjs`, `viewer.html` (even margins; `BORDER` minimums), `shown_gate.mjs`, `composition.mjs` (`growWordmarks`), `build_song.mjs`, `word_roles.mjs` (`BLOCK_MIN_PAD`), `type_rules_check.mjs`, `KIT.md` (new "Engine fix brief 12" section; Type rules untouched).
-2. Song input (not in git): `song settings.json`: `jersey_font: "barlow"`, PORTLAND `colours: { background: "#E03A3E" }` (edge and white background removed).
+2. Song input (not in git): `song settings.json`: `jersey_font` removed (item 2.5), PORTLAND `colours: { background: "#E03A3E" }` (edge and white background removed).
 3. 6f is left in place; 6g holds copies of its sections.
 4. My temp folder (font downloads, a Python environment, probes, a pre-change copy of the song settings) is deleted.
