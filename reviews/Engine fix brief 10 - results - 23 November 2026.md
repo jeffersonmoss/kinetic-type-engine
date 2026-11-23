@@ -54,7 +54,7 @@ Final 6f, with the Opus keyword marks merged (item 43). 0 keywords are dropped b
 5. **Item 44:** see 1.4.
 6. **Item 45:** KIT.md section "Engine fix brief 10, items 39 to 47" (process notes for the marks and the review gate, plus numerals, display override and team colours).
 7. **Items 46 and 47, names and jersey numbers in team colours** (on for Big Toothy Grins and every song in progress, per item 46.2 as corrected; a relayed message saying "pinned off for videos in progress" was superseded by the supervisor's correction): song setting `jersey_colours`, default `"block"`: white jersey letters on a block of the darker team colour (#0C2340, navy), with `"letters"` (letters in the team colour that reads best on black, #78BE20 green) and `"off"`. No LaMelo engine song input exists, so no pin was needed. Raise the Flagg gets the default at its next join.
-   1. In 6f, 11 of 21 names got the navy block. The other 10 got green letters, because growing the box to block padding would overlap a word or cut it at an edge. **The video therefore mixes the two looks.** A rebuild (held) could plan room for blocks; or the song could choose `"letters"` for all. That is a choice for Jefferson.
+   1. In 6f all 21 names are white on the navy block (item 47.1). 11 have full block padding; for the other 10, full padding would overlap a word or cut it at an edge, so the block is drawn inside the word's own box with tighter padding (0.08 of the letter height instead of 0.28; no layout change). An earlier version of this pass gave those 10 green letters instead, which mixed the two looks. Unseen: the tight blocks may look cramped.
    2. Unseen: the navy block on the near-black ground may barely show as a block; the white letters carry it.
 8. **KIT.md Type rules:** while I worked, another chat edited rule 3 (it now ends "Jersey numbers follow rule 4.") and rule 4 (adding "white letters on the darker team colour, or letters in team colours"). The brief says the rule 4 wording is pending Jefferson's approval, so I left that hunk uncommitted and did not touch it.
 
@@ -99,7 +99,6 @@ Correction: my first reply called these items 13 to 16; they are 33 to 36.
 2. THAT's release (4.3.3) and WE at 17.93 s (4.4).
 3. 18 rule 1 failures; only section rebuilds clear them. Section rebuilds remain held.
 4. Brief 9 item 27 (a lone sideways word failing the join) still waits on Jefferson.
-5. The mixed block and letters look for names (3.7.1) needs his choice.
 
 ## 7. Stills
 
@@ -107,7 +106,7 @@ Correction: my first reply called these items 13 to 16; they are 33 to 36.
 2. 90.9 to 91.6 s: YOU UP HE GONE.
 3. 142.6 to 143.2 s: the 34 in bulb digits.
 4. 159.2 to 159.8 s: TR3Y.
-5. Names in team colours, both looks: 30.5 s (MCDANIELS, block), 29.1 s (JADEN'S, letters), 147.3 s (BONES, block), 148.3 s (TREY, letters).
+5. Names on navy blocks, full and tight padding: 30.5 s (MCDANIELS, full), 29.1 s (JADEN'S, tight), 147.3 s (BONES, full), 148.3 s (TREY, tight).
 6. The put-back words: 35.5 to 36.0 s, 53.6 to 54.1 s, 55.4 to 55.9 s, 75.8 to 76.3 s, 89.1 to 89.6 s, 108.1 to 108.9 s, 150.2 to 150.7 s, 169.5 to 170.0 s.
 7. 0.0 to 8.9 s: intro with the real badges; WOLVES (for example 120.3 to 121.1 s) and PORTLAND (129.3 to 130.1 s).
 8. 125.9 to 126.1 s (GRINS) and 101.8 to 102.0 s (ARC): hides. 23.2 to 23.7 s (AND) and 157.6 to 159.2 s (IT'S): releases.

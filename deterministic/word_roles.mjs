@@ -175,7 +175,7 @@ export function applyWordRoles(scene, { mapWords, display, song, names = [], met
 // before this rule). The team is the song's own: the palette's team styles, or song setting `team_colours`
 // { dark, light } (per player: `player_teams` { NAME: { dark, light } }). A block grows the word's box about its centre
 // (block padding at the same letter height); if that would overlap a word or cut the word at an edge where it was
-// whole, the word gets the "letters" treatment instead, and the report says so.
+// whole, the block is drawn inside the word's own box (tighter padding, no layout change), and the report says so.
 const lum = hex => contrast(hex, '#000000');
 export function songTeamColours(palette, song) {
   if (song.team_colours?.dark) return song.team_colours;
@@ -208,10 +208,14 @@ export function teamColourNames(scene, { song, palette, metricsPath, until = sce
       if (pad0 < blockPad) { const dw = 2 * (blockPad - pad0); w.w += dw; w.h += dw; w.pad = blockPad; }
       w.colours = { ...(w.colours ?? {}), text: TEXT_COLOURS.white, background: team.dark };
       const now = wholeFrames(w);
-      if (mine(w, a, b) > before || now.length < whole.length) back(); else how = 'block';
+      if (mine(w, a, b) > before || now.length < whole.length) {
+        // Brief 10 item 47.1: the block is the default, so a word with no room for block padding keeps its own box and
+        // gets the block inside it (tighter padding), rather than switching to letters.
+        back(); w.colours = { ...(w.colours ?? {}), text: TEXT_COLOURS.white, background: team.dark }; how = 'tight block';
+      } else how = 'block';
     }
     if (how === 'letters') { const c = { ...(w.colours ?? {}), text: team.light }; delete c.background; w.colours = c; w.style = 'cream'; if ((w.pad ?? 0) > 0.2 * w.cap) { const d = 2 * (w.pad - 0.08 * w.cap); w.w -= d; w.h -= d; w.pad = 0.08 * w.cap; } }
-    log.push(`${w.id} ${w.text} at ${(w.t ?? 0).toFixed(2)} s: ${how === 'block' ? `white on a ${team.dark} block` : `letters in ${team.light}${mode === 'block' ? ' (a block would overlap a word or cut it at an edge)' : ''}`}`);
+    log.push(`${w.id} ${w.text} at ${(w.t ?? 0).toFixed(2)} s: ${how === 'block' ? `white on a ${team.dark} block` : how === 'tight block' ? `white on a ${team.dark} block inside its own box (block padding would overlap a word or cut it at an edge)` : `letters in ${team.light}`}`);
   }
   // Reveal copies and echoes follow their source word.
   const byId = new Map(scene.words.map(x => [x.id, x]));
