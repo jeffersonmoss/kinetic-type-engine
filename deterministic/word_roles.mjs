@@ -170,7 +170,8 @@ export function applyWordRoles(scene, { mapWords, display, song, names = [], met
 }
 
 // Team colours for player names and jersey numbers (brief 10 items 46 and 47, Jefferson 23 November 2026). Song setting
-// `jersey_colours`: "block" (default) draws white jersey letters on a block of the darker team colour; "letters" draws
+// `jersey_colours`: "block" (default) draws white jersey letters on a block of the darker team colour (letter colour:
+// `team_colours.block_text`, per player or team `player_teams` { NAME: { block_text } or "TEAM", TEAM: { ... } }, brief 11); "letters" draws
 // the letters in the team colour that reads best on the ground, no block; "off" leaves them as built (for videos made
 // before this rule). The team is the song's own: the palette's team styles, or song setting `team_colours`
 // { dark, light } (per player: `player_teams` { NAME: { dark, light } }). A block grows the word's box about its centre
@@ -178,13 +179,14 @@ export function applyWordRoles(scene, { mapWords, display, song, names = [], met
 // whole, the block is drawn inside the word's own box (tighter padding, no layout change), and the report says so.
 const lum = hex => contrast(hex, '#000000');
 export function songTeamColours(palette, song) {
-  if (song.team_colours?.dark) return song.team_colours;
+  const blockText = song.team_colours?.block_text ?? TEXT_COLOURS.white;
+  if (song.team_colours?.dark) return { ...song.team_colours, block_text: blockText };
   const team = teamStyleIds(palette), ground = palette.ground ?? '#0b0b0d';
   const cols = [...new Set(palette.styles.filter(s => team.has(s.id)).flatMap(s => [s.colours?.background, s.colours?.text]).filter(c => c && !/^#(f{6}|f3ebdd)$/i.test(c)))];
   if (!cols.length) return null;
   const dark = cols.sort((a, b) => lum(a) - lum(b))[0];
   const light = [...cols].sort((a, b) => contrast(b, ground) - contrast(a, ground))[0];
-  return { dark, light: contrast(light, ground) >= 3 ? light : TEXT_COLOURS.white };
+  return { dark, light: contrast(light, ground) >= 3 ? light : TEXT_COLOURS.white, block_text: blockText };
 }
 export function teamColourNames(scene, { song, palette, metricsPath, until = scene.meta.frames, onsetOf }) {
   const mode = song.jersey_colours ?? 'block', log = [];
@@ -198,7 +200,10 @@ export function teamColourNames(scene, { song, palette, metricsPath, until = sce
     if (o == null) return out; for (let f = A, e = Math.max(A + G.SHOWN_FRAMES - 1, o); f <= e && f < until; f++) if (G.fullyShown(w, f, I.poseAt(scene.cams, f), vfov)) out.push(f); return out; };
   for (const w of scene.words) {
     if (!(w.player_name || w.jersey_number) || w.reveal_copy_of || w.echo || w.wordmark || w.score) continue;
-    const team = song.player_teams?.[T(w.text).replace(/'S$/, '')] ?? base;
+    // Brief 11: a player entry may set only block_text, or name a team entry in player_teams ("TREY": "BLAZERS").
+    let pt = song.player_teams?.[T(w.text).replace(/'S$/, '')] ?? {};
+    if (typeof pt === 'string') pt = song.player_teams?.[pt] ?? {};
+    const team = { ...base, ...pt };
     const keep = JSON.stringify({ w: w.w, h: w.h, pad: w.pad ?? null, colours: w.colours ?? null });
     const back = () => { const k = JSON.parse(keep); w.w = k.w; w.h = k.h; if (k.pad == null) delete w.pad; else w.pad = k.pad; if (k.colours) w.colours = k.colours; else delete w.colours; };
     let how = 'letters';
@@ -206,16 +211,16 @@ export function teamColourNames(scene, { song, palette, metricsPath, until = sce
       const a = Math.max(0, w.on), b = Math.min(until, w.off ?? until), before = mine(w, a, b), whole = wholeFrames(w);
       const blockPad = 0.28 * w.cap, pad0 = w.pad ?? 0.08 * w.cap;
       if (pad0 < blockPad) { const dw = 2 * (blockPad - pad0); w.w += dw; w.h += dw; w.pad = blockPad; }
-      w.colours = { ...(w.colours ?? {}), text: TEXT_COLOURS.white, background: team.dark };
+      w.colours = { ...(w.colours ?? {}), text: team.block_text, background: team.dark };
       const now = wholeFrames(w);
       if (mine(w, a, b) > before || now.length < whole.length) {
         // Brief 10 item 47.1: the block is the default, so a word with no room for block padding keeps its own box and
         // gets the block inside it (tighter padding), rather than switching to letters.
-        back(); w.colours = { ...(w.colours ?? {}), text: TEXT_COLOURS.white, background: team.dark }; how = 'tight block';
+        back(); w.colours = { ...(w.colours ?? {}), text: team.block_text, background: team.dark }; how = 'tight block';
       } else how = 'block';
     }
     if (how === 'letters') { const c = { ...(w.colours ?? {}), text: team.light }; delete c.background; w.colours = c; w.style = 'cream'; if ((w.pad ?? 0) > 0.2 * w.cap) { const d = 2 * (w.pad - 0.08 * w.cap); w.w -= d; w.h -= d; w.pad = 0.08 * w.cap; } }
-    log.push(`${w.id} ${w.text} at ${(w.t ?? 0).toFixed(2)} s: ${how === 'block' ? `white on a ${team.dark} block` : how === 'tight block' ? `white on a ${team.dark} block inside its own box (block padding would overlap a word or cut it at an edge)` : `letters in ${team.light}`}`);
+    log.push(`${w.id} ${w.text} at ${(w.t ?? 0).toFixed(2)} s: ${how === 'block' ? `${team.block_text} on a ${team.dark} block` : how === 'tight block' ? `${team.block_text} on a ${team.dark} block inside its own box (block padding would overlap a word or cut it at an edge)` : `letters in ${team.light}`}`);
   }
   // Reveal copies and echoes follow their source word.
   const byId = new Map(scene.words.map(x => [x.id, x]));

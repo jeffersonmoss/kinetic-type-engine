@@ -62,6 +62,8 @@ const palStyles = scene.meta.palette?.styles ?? [], team = teamStyleIds({ styles
 const allowed = new Set(Object.values(TEXT_COLOURS).map(c => c.toLowerCase()));
 // The song's team colours (the palette's team styles, brief 10 items 46 and 47: names and jersey numbers drawn in them).
 for (const st of palStyles) if (team.has(st.id)) for (const c of [st.colours?.text, st.colours?.background]) if (c) allowed.add(c.toLowerCase());
+// Brief 11: the song's letter colour on team-colour blocks (team_colours.block_text, per player in player_teams).
+for (const c of [song.team_colours?.block_text, ...Object.values(song.player_teams ?? {}).map(x => typeof x === 'object' ? x?.block_text : null)]) if (c) allowed.add(String(c).toLowerCase());
 for (const w of scene.words) {
   if (w.reveal_copy_of || w.dropped || w.on >= until) continue;
   const f = w.on;
