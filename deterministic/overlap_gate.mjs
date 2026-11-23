@@ -75,7 +75,9 @@ export function scanOverlap(scene, { from = 0, until = scene.meta.frames, repair
       const a = drawn[i], b = drawn[j];
       if (!visible(a.w,f) || !visible(b.w,f) || !intersects(a.poly,b.poly)) continue;
       const [old,next] = a.onset <= b.onset ? [a,b] : [b,a];
-      if (repair && old.onset + Math.ceil(fps*.3) < f && old.onset < next.onset && !old.w.echo) {
+      // An echo never retires a sung word (engine fix brief 4): the held word it sits beside may carry later re-sung
+      // pulses, and retiring it left Room for One's outro chant black for 16 s. The echo is delayed or goes instead.
+      if (repair && old.onset + Math.ceil(fps*.3) < f && old.onset < next.onset && !old.w.echo && !next.w.echo) {
         // Retire the old word's line group (its plaque's words) together (engine fix brief 3, Fable rough cut 3 items
         // 13 and 14): a punchline never leaves before its lesser neighbours, and a phrase never loses a middle word.
         // Group words still inside their own reading moment, and the incoming word's own plaque, stay.
@@ -93,6 +95,18 @@ export function scanOverlap(scene, { from = 0, until = scene.meta.frames, repair
           event.treatment = `echo, ${next.w.off - next.w.on} frames after overlap repair`;
         }
         retired.push(`${next.w.id} ${next.w.text} delayed to frame ${next.w.on} to clear ${old.w.id} ${old.w.text}`);
+      } else if (repair && next.w.echo && next.w.id.startsWith(`${old.w.id}e`) && next.w.off > f) {
+        // An echo may float over its own held word (sung_pulses addEcho): the held word steps back while the echo
+        // shows and returns after it.
+        const at = k => { let v = 1; for (const [g, x] of old.w.opacity ?? []) if (g <= k) v = x; return v; };
+        const back = at(next.w.off);
+        old.w.opacity = [...(old.w.opacity ?? []).filter(([k]) => k < f || k >= next.w.off), [f, 0], [next.w.off, back]].sort((x, y) => x[0] - y[0]);
+        retired.push(`${old.w.id} ${old.w.text} hidden over frames ${f}-${next.w.off - 1} under its echo ${next.w.id} ${next.w.text}`);
+      } else if (repair && next.w.echo && !old.w.echo && old.onset < next.onset) {
+        next.w.off = f;
+        const event = scene.meta.sung_pulses?.added?.find(x => x.id === next.w.id);
+        if (event) event.treatment = f > next.w.on ? `echo, ${f - next.w.on} frames, cut short to clear ${old.w.text}` : `echo dropped to clear ${old.w.text}`;
+        retired.push(`${next.w.id} ${next.w.text} (echo) ${f > next.w.on ? 'cut short' : 'dropped'} at frame ${f} to clear ${old.w.id} ${old.w.text}`);
       } else hit(a,b.w.id,`${b.w.id} ${b.w.text}`);
     }
     for (const {p,corners} of panels) {

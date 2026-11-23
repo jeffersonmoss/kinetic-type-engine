@@ -2,8 +2,8 @@
 // Generic; no song names.
 //   tightenLone: a focus word alone in its hold (no other word whole in frame) has letters at least LONE_MIN of the
 //     frame height, centred; the hold is reframed closer when that keeps every gate as good as before.
-//   hideEdgeClutter: during a camera hold, a word that is not in its focus window and is less than half in frame is
-//     hidden for that hold (opacity 0, restored when the hold ends). It never touches a focused word.
+//   hideEdgeClutter: during a camera hold, a word that is not in its focus window and has letters cut by the frame edge
+//     is hidden for the rest of that hold (opacity 0, restored when the hold ends). It never touches a focused word.
 import './interp.js';
 import * as G from './shown_gate.mjs';
 import { appearanceFrame, sungWords, letterHeight, fullyShown, cornersAt, fitPose, samePose, gateFailures, SIZE_DELAY } from './shown_gate.mjs';
@@ -162,7 +162,7 @@ export function emptyFrames(scene, { from = 0, until = scene.meta.frames } = {})
   }
   return runs;
 }
-// Two tries per empty run, each kept only when the run fills and neither partly shown focused words nor projected
+// Three tries per empty run, up to three passes, each kept only when fewer nearby frames are empty and neither partly shown focused words nor projected
 // overlaps increase: (1) the outgoing words stay on through the run; (2) the incoming words (switching on within
 // FILL_LEAD frames after it, at rest) switch on at the first frame of the run they are in frame and upright.
 export const FILL_LEAD = 4;
@@ -170,6 +170,8 @@ export function fillEmptyFrames(scene, { from = 0, until = scene.meta.frames, on
   const I = globalThis.KT_INTERP, vfov = scene.meta.vfov ?? 40, log = [];
   const partials = () => onsetOf ? gateFailures(scene, onsetOf, { until }).filter(x => x.kind === 'partial').length : 0;
   let basePartial = partials();
+  for (let pass = 0; pass < 3; pass++) {
+  const before = log.length;
   for (const run of emptyFrames(scene, { from, until })) {
     if (run.start === 0) continue;
     const lo = Math.max(0, run.start - 2), hi = Math.min(scene.meta.frames, run.end + 12);
@@ -177,7 +179,8 @@ export function fillEmptyFrames(scene, { from = 0, until = scene.meta.frames, on
     const wLo = Math.max(from, run.start - 20), wHi = Math.min(until, run.end + 21);
     const emptyCount = () => emptyFrames(scene, { from: wLo, until: wHi }).reduce((n, r) => n + r.end - r.start + 1, 0);
     const emptyBefore = emptyCount();
-    const accept = () => emptyCount() < emptyBefore && !emptyFrames(scene, { from: run.start, until: run.end + 1 }).length &&
+    // Kept when fewer frames nearby are empty (a part-filled run gets the other tries on the next pass).
+    const accept = () => emptyCount() < emptyBefore &&
       scanOverlap(scene, { from: lo, until: hi }).overlaps.length <= overlapBefore && partials() <= basePartial;
     const pose = I.poseAt(scene.cams, run.start - 1);
     const leaving = scene.words.filter(w => !w.reveal_copy_of && w.off != null && w.off >= run.start - 1 && w.off <= run.end + 1 &&
@@ -221,6 +224,8 @@ export function fillEmptyFrames(scene, { from = 0, until = scene.meta.frames, on
       scene.cams = JSON.parse(camSnap);
       for (const [w, on, joint] of wsnap) { w.on = on; if (joint) w.joint = joint; }
     }
+  }
+  if (log.length === before) break;
   }
   return { log, remaining: emptyFrames(scene, { from, until }) };
 }
