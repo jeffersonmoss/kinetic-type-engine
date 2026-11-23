@@ -696,6 +696,10 @@ export function loneHolds(scene, { until = scene.meta.frames, onsetOf } = {}) {
 // small HE passed at 9.5%; three words with room around them are not crowded.
 export const SIZE_DEFAULTS = Object.freeze({ minH: 0.09, roomFactor: 1.5, crowdedWords: 4, crowdedArea: 0.30 });
 export const MAX_GROW = 2.5;
+// Brief 20: must-show readable hard floor (70% of the hold's size minimum: 6.3% crowded, 9.45% with room under defaults,
+// floored by SPECK_FLOOR 4.0%), and max growth factor when freeing room or re-placing a must-show word.
+export const MUST_SHOW_FLOOR_RATIO = 0.70;
+export const MUST_SHOW_MAX_GROW = 3.5;
 function boxCoverage(w, f, pose, vfov) {
   const cs = cornersAt(w, f);
   if (!cs) return 0;
@@ -774,11 +778,11 @@ export function placeInRoom(scene, onsetOf, { until = scene.meta.frames, setting
   };
   const steps = [0, 0.25, -0.25, 0.5, -0.5, 0.75, -0.75, 1, -1, 1.5, -1.5, 2, -2, 3, -3];
   const offsets = steps.flatMap(du => steps.map(dv => [du, dv])).sort((p, q) => Math.hypot(...p) - Math.hypot(...q));
-  // Brief 19 items 3 & 4: try keywords before fillers in every room pass (stable within each group),
+  // Brief 19 items 3 & 4 & brief 20: try must-show words first, then keywords, then fillers (stable within each group),
   // and never put back a word dropped to make room for another word while that beneficiary is still dropped.
   const candidates = scene.words
     .filter(w => !w.reveal_copy_of && !w.echo && ['size', 'static', 'room'].includes(w.dropped))
-    .sort((a, b) => (b.keyword ? 1 : 0) - (a.keyword ? 1 : 0));
+    .sort((a, b) => (b.must_show ? 2 : b.keyword ? 1 : 0) - (a.must_show ? 2 : a.keyword ? 1 : 0));
   for (const w of candidates) {
     const o = onsetOf(w);
     if (o == null || o >= until) continue;
@@ -855,12 +859,13 @@ export function placeInRoom(scene, onsetOf, { until = scene.meta.frames, setting
 }
 // wordmarks: true (brief 8 item 55) sizes only the image wordmarks, by their letter height (w.cap, set from the image's
 // letter share by the song appearance pass); one that cannot grow is kept and reported, never dropped or hidden.
-export function enforceMinSize(scene, onsetOf, { until = scene.meta.frames, settings = {}, wordmarks = false } = {}) {
+export function enforceMinSize(scene, onsetOf, { until = scene.meta.frames, settings = {}, wordmarks = false, minEndHold = 15 } = {}) {
   const S = { ...SIZE_DEFAULTS, ...settings };
   const I = globalThis.KT_INTERP, vfov = scene.meta.vfov ?? 40, fps = scene.meta.fps ?? 30;
   const poses = new Map(), poseAt = f => poses.get(f) ?? poses.set(f, I.poseAt(scene.cams, f)).get(f);
-  const log = [], counts = { grown: 0, dropped: 0, hidden: 0, keptSmall: 0, importantSmall: 0 };
-  const hs = holds(scene, until);
+  const log = [], mustShowLog = [], counts = { grown: 0, dropped: 0, hidden: 0, keptSmall: 0, importantSmall: 0, mustShowChanged: 0 };
+  let hs = holds(scene, until);
+  const refreshCam = () => { poses.clear(); hs = holds(scene, until); };
   const crowdedAt = f => {
     const p = poseAt(f);
     const on = scene.words.filter(x => !x.reveal_copy_of && drawn(x, f) && inFrameShare(x, f, p, vfov) >= FILLED_SHARE);
@@ -910,12 +915,492 @@ export function enforceMinSize(scene, onsetOf, { until = scene.meta.frames, sett
   };
   const ownFailures = w => gateFailures({ ...scene, words: [w] }, onsetOf, { until }).filter(x => x.kind === 'partial' || x.kind === 'unshown').length;
   const hasProps = I.hasKeepClearProps?.(scene);
-  const propOv = w => {
+  const propOv = (w, useMargin = true) => {
     if (!hasProps) return 0;
     const [pfa, pfb] = focusWindow(w, onsetOf, fps);
-    return wordPropOverlapFrames(scene, w, pfa, Math.min(until, pfb), { useMargin: true }).length;
+    return wordPropOverlapFrames(scene, w, pfa, Math.min(until, pfb), { useMargin }).length;
   };
   const drops = [];
+  const byIdAll = new Map(scene.words.map(x => [x.id, x]));
+
+  // Brief 20: must-show room-freeing ladder for words marked word_overrides.<idx>.must_show or rejected in
+  // Keyword drop review.json. Runs ONLY when w.must_show is true; songs with no must-show words never enter this.
+  const resolveMustShow = w => {
+    const o = onsetOf(w);
+    const snapW = x => JSON.stringify({
+      C: x.C, w: x.w, h: x.h, cap: x.cap, fontPx: x.fontPx, pad: x.pad ?? null,
+      on: x.on, off: x.off ?? null, motion: x.motion ?? null, clip: x.clip ?? null,
+      joint: x.joint ?? null, opacity: x.opacity ?? null, dropped: x.dropped ?? null,
+      dropped_for: x.dropped_for ?? null, size_restore: x.size_restore ?? null,
+    });
+    const restW = (x, s) => {
+      const d = JSON.parse(s);
+      for (const [k, v] of Object.entries(d)) {
+        if (v == null && ['pad', 'off', 'motion', 'clip', 'joint', 'opacity', 'dropped', 'dropped_for', 'size_restore'].includes(k)) delete x[k];
+        else x[k] = v;
+      }
+    };
+    const floorFor = min => Math.max(G.SPECK_FLOOR, min * MUST_SHOW_FLOOR_RATIO);
+    const focusShortAt = (shList, ratio) => {
+      const A = appearanceFrame(w), mustEnd = Math.max(A + G.SHOWN_FRAMES - 1, o ?? w.on);
+      const targetOf = x => ratio >= 1 - 1e-9 ? x.min : Math.max(floorFor(x.min), x.min * ratio);
+      const onsetHoldOk = o != null && shList.some(x =>
+        x.size >= targetOf(x) - 1e-9 && ((x.h.start <= o && o <= x.h.end) || (x.h.start <= A && A < x.h.end))
+      );
+      return shList.filter(x => {
+        if (!x.focused) return false;
+        if (onsetHoldOk && x.h.start > mustEnd) return false;
+        return x.size < targetOf(x) - 1e-9;
+      });
+    };
+    const hasFocusStatic = x => {
+      const xo = onsetOf(x), xA = appearanceFrame(x), xMustEnd = Math.max(xA + G.SHOWN_FRAMES - 1, xo ?? x.on);
+      return staticPartials(scene, { words: [x], until }).some(r => r.start <= xMustEnd);
+    };
+    const propClear = (x, raw0, marg0) => {
+      if (!hasProps) return true;
+      if (propOv(x, false) > raw0) return false;
+      return marg0 === 0 ? propOv(x, true) === 0 : propOv(x, true) <= marg0;
+    };
+    // Convert hinge or clip entrance so w can grow cleanly. When keepA is true and w.joint.f1 > w.on, use a scale
+    // entrance over the same [f0, f1] to keep appearanceFrame(w) intact (critical when onset sits inside a camera move).
+    const adaptEntrance = (x, keepA) => {
+      const j = x.joint;
+      const hm = (x.motion ?? []).find(m => m.kind === 'hinge');
+      if (keepA && ((hm && hm.f1 > x.on) || (j && j.f1 > x.on))) {
+        const f0 = hm?.f0 ?? j.f0 ?? x.on, f1 = hm?.f1 ?? j.f1;
+        x.motion = [{ f0, f1, ease: hm?.ease ?? { a: 2, b: 4, x0: 0.34 }, kind: 'scale', P: x.C.slice(), from: 0.65, to: 1 }];
+        x.clip = [];
+        x.joint = { ...(j ?? {}), prim: 'scale', f0, f1 };
+      } else {
+        x.motion = []; x.clip = [];
+        if (x.joint) x.joint = { ...x.joint, prim: 'pop', f0: x.on, f1: x.on };
+      }
+    };
+    const syncScalePivot = x => {
+      if (x.motion?.length) x.motion = x.motion.map(m => m.kind === 'scale' && m.P ? { ...m, P: x.C.slice() } : m);
+    };
+    // Scan overlaps involving w (including size-drop ghosts) and map each colliding partner to its [startF, endF].
+    const ownOverlaps = (lo, hi) => {
+      const ghosts = scene.words.filter(x => x !== w && x.dropped === 'size' && x.size_restore != null).map(x => [x, x.opacity]);
+      for (const [x] of ghosts) { const v = JSON.parse(x.size_restore); if (v) x.opacity = v; else delete x.opacity; }
+      const all = scanOverlap(scene, { from: lo, until: hi }).overlaps;
+      const mine = all.filter(str => str.includes(` ${w.id} `) || str.includes(`: ${w.id} `));
+      for (const [x, op] of ghosts) x.opacity = op;
+      const byPartner = new Map();
+      let hasPanel = false;
+      for (const str of mine) {
+        if (str.includes('panel:') || str.includes('plaque p')) { hasPanel = true; continue; }
+        const tm = str.match(/^([\d.]+)–([\d.]+) s/);
+        const sf = tm ? Math.round(+tm[1] * fps) : lo, ef = tm ? Math.round(+tm[2] * fps) : hi;
+        const ids = [...str.matchAll(/\b(w\d+[a-z0-9]*) /g)].map(m => m[1]).filter(id => id !== w.id);
+        for (const id of ids) {
+          const cur = byPartner.get(id);
+          byPartner.set(id, cur ? { startF: Math.min(cur.startF, sf), endF: Math.max(cur.endF, ef) } : { startF: sf, endF: ef });
+        }
+      }
+      return { mine, hasPanel, byPartner };
+    };
+    // Decide how each overlapping partner can be cleared (in preference order: hide earlier word after its focus
+    // window -> drop filler -> drop review-approved word; optionally early-retire w for later words past w's mustEnd).
+    const planClear = (byPartner, { allowEarlyRetire = false } = {}) => {
+      const wA = appearanceFrame(w), wMustEnd = Math.max(wA + G.SHOWN_FRAMES - 1, o ?? w.on);
+      const actions = [];
+      let earlyOff = null, cost = 0;
+      for (const [pid, span] of byPartner.entries()) {
+        const x = byIdAll.get(pid);
+        if (!x || x.reveal_copy_of || x.echo) return null;
+        const xA = appearanceFrame(x), xO = onsetOf(x), xMustEnd = Math.max(xA + G.SHOWN_FRAMES - 1, xO ?? x.on);
+        const isFiller = !x.keyword && !x.important && !x.must_show && (resizable(x) || x.dropped === 'size');
+        const isApproved = !!x.drop_approved && !x.important && !x.must_show && (resizable(x) || x.dropped === 'size');
+        // 1. Hide an earlier-placed neighbour after its own shown-whole window (never drops it!).
+        if (!x.must_show && !x.dropped && xMustEnd < span.startF) {
+          const cutFrom = Math.max(xMustEnd + 1, Math.min(span.startF, w.on));
+          const cutTo = Math.min(until, x.off ?? until, w.off ?? until);
+          if (cutFrom <= span.startF && cutFrom < cutTo) {
+            actions.push({ kind: 'hide', x, cutFrom, cutTo });
+            cost += 1;
+            continue;
+          }
+        }
+        // 2. Drop a filler neighbour.
+        if (isFiller) { actions.push({ kind: 'drop', why: 'filler', x }); cost += 5; continue; }
+        // 3. Drop a review-approved neighbour.
+        if (isApproved) { actions.push({ kind: 'drop', why: 'approved', x }); cost += 10; continue; }
+        // 4. Optional fallback: retire w early when a later word arrives strictly past w's shown-whole requirement.
+        if (allowEarlyRetire && span.startF > wMustEnd + 1) {
+          earlyOff = earlyOff == null ? span.startF : Math.min(earlyOff, span.startF);
+          cost += 20;
+          continue;
+        }
+        return null;
+      }
+      return { actions, earlyOff, cost };
+    };
+    const applyPlan = plan => {
+      const snaps = plan.actions.map(a => [a.x, snapW(a.x)]);
+      for (const a of plan.actions) {
+        if (a.kind === 'hide') {
+          hide(a.x, a.cutFrom, a.cutTo);
+        } else {
+          a.x.dropped = 'room'; a.x.dropped_for = w.id; a.x.opacity = [[0, 0]]; delete a.x.size_restore;
+        }
+      }
+      if (plan.earlyOff != null) w.off = Math.min(w.off ?? until, plan.earlyOff);
+      return () => { for (const [x, s] of snaps) restW(x, s); };
+    };
+    const commitPlanLog = (plan, hadDrops) => {
+      const parts = [];
+      for (const a of plan.actions) {
+        if (a.kind === 'hide') {
+          parts.push(`hid earlier ${a.x.id} ${a.x.text} on ${a.cutFrom}-${a.cutTo}`);
+          log.push(`${a.x.id} ${a.x.text}: hidden ${a.cutFrom}-${a.cutTo} to make room for must-show ${w.id} ${w.text}`);
+        } else {
+          if (!hadDrops.has(a.x)) counts.dropped++;
+          parts.push(`dropped ${a.why} ${a.x.id} ${a.x.text}`);
+          log.push(`${a.x.id} ${a.x.text}: dropped (${a.why}) to make room for must-show ${w.id} ${w.text}`);
+        }
+      }
+      if (plan.earlyOff != null) parts.push(`retired ${w.id} ${w.text} at frame ${plan.earlyOff} before later word`);
+      return parts.join('; ');
+    };
+
+    const rawProp0 = propOv(w, false), margProp0 = propOv(w, true);
+    const baseFail0 = ownFailures(w);
+
+    // Step 1: grow in place by dropping or hiding approved/filler/earlier neighbours (and adapting hinge/clip if needed).
+    const tryStep1 = ratio => {
+      const sh0 = shownHolds(w), fs0 = focusShortAt(sh0, ratio);
+      if (!fs0.length) return { ok: true, desc: 'already at target size' };
+      const targetOf = x => ratio >= 1 - 1e-9 ? x.min : Math.max(floorFor(x.min), x.min * ratio);
+      const k = Math.max(...fs0.map(x => targetOf(x) / x.size)) * 1.03;
+      if (!(k <= MUST_SHOW_MAX_GROW)) return null;
+      const wSnap = snapW(w);
+      const clipped0 = (w.clip ?? []).length > 0, hinge0 = !growable(w);
+      const modes = hinge0 ? ['scale', 'pop'] : clipped0 ? ['orig', 'pop', 'scale'] : ['orig', 'pop'];
+      let best = null;
+      for (const mode of modes) {
+        const modeCost = mode === 'orig' ? 0 : 2;
+        for (const pv of PIVOTS) {
+          restW(w, wSnap);
+          if (mode === 'scale') adaptEntrance(w, true);
+          else if (mode === 'pop') adaptEntrance(w, false);
+          grow(w, k, pv);
+          if (mode === 'orig' && clipped0) w.motion = (w.motion ?? []).map(m => m.kind === 'shift' ? { ...m, from: mul(m.from, k), to: mul(m.to, k) } : m);
+          else if (mode === 'scale') syncScalePivot(w);
+          if (mode === 'orig' && clipped0 && !clipEntranceOk(scene, w)) continue;
+          if (ownFailures(w) > baseFail0 || ownFailures(w) > 0) continue;
+          if (!propClear(w, rawProp0, margProp0)) continue;
+          if (hasFocusStatic(w)) continue;
+          const lo = Math.max(0, w.on), hi = Math.min(until, w.off ?? until);
+          const ov = ownOverlaps(lo, hi);
+          if (ov.hasPanel) continue;
+          const plan = planClear(ov.byPartner, { allowEarlyRetire: false });
+          if (!plan) continue;
+          const totalCost = plan.cost + modeCost + (pv[0] || pv[1] ? 0.5 : 0);
+          if (best && totalCost >= best.totalCost) continue;
+          const undoPlan = applyPlan(plan);
+          const ok = overlapsWithDrops(lo, hi, w.id) === 0 &&
+            ownFailures(w) === 0 && !hasFocusStatic(w) &&
+            plan.actions.every(a => a.kind !== 'hide' || (ownFailures(a.x) === 0 && !hasFocusStatic(a.x))) &&
+            focusShortAt(shownHolds(w), ratio).length === 0;
+          undoPlan();
+          if (ok) best = { mode, pv, k, plan, totalCost };
+        }
+      }
+      restW(w, wSnap);
+      if (!best) return null;
+      const hadDrops = new Set(drops);
+      if (best.mode === 'scale') adaptEntrance(w, true);
+      else if (best.mode === 'pop') adaptEntrance(w, false);
+      grow(w, best.k, best.pv);
+      if (best.mode === 'orig' && clipped0) w.motion = (w.motion ?? []).map(m => m.kind === 'shift' ? { ...m, from: mul(m.from, best.k), to: mul(m.to, best.k) } : m);
+      else if (best.mode === 'scale') syncScalePivot(w);
+      applyPlan(best.plan);
+      const cleared = commitPlanLog(best.plan, hadDrops);
+      counts.grown++; counts.mustShowChanged++;
+      return { ok: true, desc: `grown x${best.k.toFixed(2)}${best.mode !== 'orig' ? ` (${best.mode} entrance)` : ''}${cleared ? ` after ${cleared}` : ''}` };
+    };
+
+    // Step 2: re-frame the camera on w's failing focus hold(s) (tight fit on hold, or clean hold split around w).
+    const tryStep2 = ratio => {
+      const sh0 = shownHolds(w), fs0 = focusShortAt(sh0, ratio);
+      if (!fs0.length) return { ok: true, desc: 'already at target size' };
+      const targetOf = x => ratio >= 1 - 1e-9 ? x.min : Math.max(floorFor(x.min), x.min * ratio);
+      const camSnapAll = JSON.stringify(scene.cams);
+      const sungAll = sungWords(scene, onsetOf);
+      const notes = [];
+      for (const targetHold of fs0) {
+        const curSh = shownHolds(w);
+        const curEntry = curSh.find(x => x.h.start <= targetHold.f && targetHold.f < x.h.end);
+        if (!curEntry || curEntry.size >= targetOf(curEntry) - 1e-9) continue;
+        const h = curEntry.h, target = targetOf(curEntry);
+        const pose0 = I.poseAt(scene.cams, h.start);
+        const rLo = Math.max(0, (h.k >= 0 ? scene.cams[h.k].f0 : 0) - 2);
+        const rHi = Math.min(until, (h.n >= 0 ? scene.cams[h.n].f1 : until) + 2);
+        const locWords = scene.words.filter(x => !x.dropped && !x.reveal_copy_of && x.on <= rHi && (x.off == null || x.off >= rLo));
+        const basePart = gateFailures({ ...scene, words: locWords }, onsetOf, { until }).filter(x => x.kind === 'partial' || x.kind === 'unshown').length;
+        const baseOv = overlapsWithDrops(rLo, rHi);
+        const baseStatic = staticFocusRuns({ ...scene, words: locWords }, onsetOf, { until }).length;
+        const propRangeCount = useM => {
+          if (!hasProps) return 0;
+          let n = 0;
+          for (const x of locWords) {
+            const xo = onsetOf(x); if (xo == null) continue;
+            const [pfa, pfb] = focusWindow(x, onsetOf, fps);
+            n += wordPropOverlapFrames(scene, x, pfa, Math.min(until, pfb), { useMargin: useM }).length;
+          }
+          return n;
+        };
+        const baseRawProp = propRangeCount(false), baseMargProp = propRangeCount(true);
+        const group = sungAll.filter(s => {
+          if (s.w.dropped) return false;
+          const sa = appearanceFrame(s.w);
+          return (sa >= h.start && sa < h.end) || (s.onsetF >= h.start && s.onsetF < h.end);
+        });
+        if (!group.some(s => s.w === w)) group.push({ w, onsetF: o ?? w.on });
+        const otherSizesBefore = new Map(group.filter(s => s.w !== w).map(s => {
+          const sf = Math.min(h.end - 1, Math.max(appearanceFrame(s.w), h.start));
+          return [s.w.id, letterHeight(s.w, sf, pose0, vfov) ?? 0];
+        }));
+        const obs = hasProps ? I.keepClearObstaclesInRange(scene, h.start, h.end) : [];
+        const fitFor = grp => {
+          const pts = [];
+          for (const s of grp) {
+            const sf = Math.min(h.end - 1, Math.max(appearanceFrame(s.w), h.start));
+            const cs = cornersAt(s.w, sf) ?? cornersAt(s.w, appearanceFrame(s.w));
+            if (cs) pts.push(...cs);
+          }
+          if (!pts.length) return null;
+          const fitted = obs.length ? fitPoseInClearArea(pose0, pts, vfov, obs, { mx: 0.94, my: 0.90 })?.pose : fitPose(pose0, pts, vfov, 0.94, 0.90);
+          if (!fitted || !(fitted.dist > 0)) return null;
+          const atFit = letterHeight(w, curEntry.f, complete(fitted), vfov);
+          if (!(atFit > 0)) return null;
+          const dist = Math.max(fitted.dist, fitted.dist * atFit / (target * 1.03));
+          return { ...fitted, dist };
+        };
+        const camOk = (checkGroup) => {
+          refreshCam();
+          if (ownFailures(w) > 0) return false;
+          if (gateFailures({ ...scene, words: locWords }, onsetOf, { until }).filter(x => x.kind === 'partial' || x.kind === 'unshown').length > basePart) return false;
+          if (overlapsWithDrops(rLo, rHi) > baseOv) return false;
+          if (staticFocusRuns({ ...scene, words: locWords }, onsetOf, { until }).length > baseStatic) return false;
+          if (hasProps) {
+            if (propOv(w, false) > 0 || propRangeCount(false) > baseRawProp) return false;
+            if (baseMargProp === 0 && propRangeCount(true) > 0) return false;
+          }
+          for (const s of checkGroup) {
+            if (s.w === w) continue;
+            const prev = otherSizesBefore.get(s.w.id) ?? 0;
+            if (prev < S.minH) continue;
+            const sf = Math.min(h.end - 1, Math.max(appearanceFrame(s.w), h.start));
+            const nowH = letterHeight(s.w, sf, I.poseAt(scene.cams, sf), vfov) ?? 0;
+            if (nowH < S.minH - 1e-4) return false;
+          }
+          const afterSh = shownHolds(w);
+          return focusShortAt(afterSh, ratio).every(x => !(x.h.start <= curEntry.f && curEntry.f < x.h.end));
+        };
+
+        const camSnapOne = JSON.stringify(scene.cams);
+        let holdFixed = false;
+        // 2A: reframe hold h tightly on group.
+        const P = fitFor(group);
+        if (P && !samePose(pose0, P) && (h.k < 0 || scene.cams[h.k].f1 <= scene.meta.frames - minEndHold)) {
+          if (h.k < 0) { if (scene.cams.length) scene.cams[0].from = P; }
+          else {
+            const old = scene.cams[h.k].to;
+            scene.cams[h.k].to = P;
+            if (h.n >= 0 && samePose(scene.cams[h.n].from, old)) scene.cams[h.n].from = P;
+          }
+          if (camOk(group)) {
+            holdFixed = true;
+            notes.push(`reframed hold ${h.start}-${h.end} (dist ${pose0.dist.toFixed(0)} -> ${P.dist.toFixed(0)})`);
+          } else { scene.cams = JSON.parse(camSnapOne); refreshCam(); }
+        }
+        // 2B: split hold h cleanly around w when group is too wide.
+        if (!holdFixed && h.k >= 0 && h.end - h.start >= 16 && group.length >= 2) {
+          const wA = appearanceFrame(w), wMustEnd = Math.max(wA + G.SHOWN_FRAMES - 1, o ?? w.on);
+          const gBefore = [], gMid = [], gAfter = [];
+          for (const s of group) {
+            if (s.w === w) { gMid.push(s); continue; }
+            const sa = appearanceFrame(s.w), sMustEnd = Math.max(sa + G.SHOWN_FRAMES - 1, s.onsetF);
+            if (sMustEnd < w.on) gBefore.push(s);
+            else if (s.w.on > wMustEnd) gAfter.push(s);
+            else gMid.push(s);
+          }
+          if (gMid.length < group.length) {
+            const Pm = fitFor(gMid);
+            const cutIn = gBefore.length ? Math.max(h.start + 4, Math.min(w.on, Math.max(...gBefore.map(s => Math.max(appearanceFrame(s.w) + G.SHOWN_FRAMES - 1, s.onsetF))) + 1)) : h.start;
+            const cutOut = gAfter.length ? Math.min(h.end - 4, Math.min(...gAfter.map(s => s.w.on))) : h.end;
+            const maxCut = scene.meta.frames - minEndHold;
+            if (Pm && cutIn <= w.on && cutOut > wMustEnd && cutOut - cutIn >= 6 && cutIn <= maxCut && cutOut <= maxCut) {
+              const oldTo = scene.cams[h.k].to;
+              const insert = [];
+              if (cutIn > h.start) {
+                insert.push({ f0: cutIn, f1: cutIn, kind: 'must_show_split', verb: 'cut', fold: 'flat', ease: { a: 2, b: 3, x0: 0.4 }, from: pose0, to: Pm });
+              } else {
+                scene.cams[h.k].to = Pm;
+              }
+              if (cutOut < h.end) {
+                insert.push({ f0: cutOut, f1: cutOut, kind: 'must_show_split', verb: 'cut', fold: 'flat', ease: { a: 2, b: 3, x0: 0.4 }, from: Pm, to: oldTo });
+              } else if (h.n >= 0 && samePose(scene.cams[h.n].from, oldTo)) {
+                scene.cams[h.n].from = Pm;
+              }
+              if (insert.length) scene.cams.splice(h.k + 1, 0, ...insert);
+              if (camOk(gMid)) {
+                holdFixed = true;
+                notes.push(`split hold ${h.start}-${h.end} on ${cutIn}-${cutOut} (dist ${pose0.dist.toFixed(0)} -> ${Pm.dist.toFixed(0)})`);
+              } else { scene.cams = JSON.parse(camSnapOne); refreshCam(); }
+            }
+          }
+        }
+        if (!holdFixed) { scene.cams = JSON.parse(camSnapAll); refreshCam(); return null; }
+      }
+      if (focusShortAt(shownHolds(w), ratio).length > 0) { scene.cams = JSON.parse(camSnapAll); refreshCam(); return null; }
+      counts.mustShowChanged++;
+      return { ok: true, desc: `reframed camera (${notes.join('; ')})` };
+    };
+
+    // Step 3: grow w from a new placement on its plaque plane (0-overlap first, then approved/filler/earlier clear,
+    // then early retirement before a later colliding word strictly past w's shown-whole requirement).
+    const tryStep3 = ratio => {
+      const sh0 = shownHolds(w), fs0 = focusShortAt(sh0, ratio);
+      if (!fs0.length) return { ok: true, desc: 'already at target size' };
+      const targetOf = x => ratio >= 1 - 1e-9 ? x.min : Math.max(floorFor(x.min), x.min * ratio);
+      const k = Math.max(1, Math.max(...fs0.map(x => targetOf(x) / x.size)) * 1.03);
+      if (!(k <= MUST_SHOW_MAX_GROW)) return null;
+      const wSnap = snapW(w);
+      const C0 = w.C.slice(), on0 = w.on;
+      const steps = [0, 0.25, -0.25, 0.5, -0.5, 0.75, -0.75, 1, -1, 1.5, -1.5, 2, -2, 3, -3];
+      const offsets = steps.flatMap(du => steps.map(dv => [du, dv])).sort((p, q) => Math.hypot(...p) - Math.hypot(...q));
+      const hasLateA = (w.joint?.f1 ?? on0) > on0;
+      const entModes = hasLateA ? ['scale', 'pop'] : ['pop'];
+      const onCands = o != null && o > on0 ? [on0, o] : [on0];
+      const tiers = [
+        { allowClear: false, allowEarlyRetire: false },
+        { allowClear: true, allowEarlyRetire: false },
+        { allowClear: true, allowEarlyRetire: true },
+      ];
+      for (const tier of tiers) {
+        let best = null;
+        for (const mode of entModes) {
+          for (const candOn of onCands) {
+            if (mode === 'scale' && candOn !== on0) continue;
+            for (const [du, dv] of offsets) {
+              restW(w, wSnap);
+              w.on = candOn;
+              adaptEntrance(w, mode === 'scale');
+              grow(w, k, [0, 0]);
+              w.C = add(C0, add(mul(w.R, du * w.w), mul(w.U, dv * w.h)));
+              if (mode === 'scale') syncScalePivot(w);
+              if (ownFailures(w) > 0) continue;
+              if (!propClear(w, rawProp0, margProp0)) continue;
+              if (hasFocusStatic(w)) continue;
+              const lo = Math.max(0, w.on), hi = Math.min(until, w.off ?? until);
+              const ov = ownOverlaps(lo, hi);
+              if (ov.hasPanel) continue;
+              let plan = { actions: [], earlyOff: null, cost: 0 };
+              if (ov.byPartner.size) {
+                if (!tier.allowClear) continue;
+                plan = planClear(ov.byPartner, { allowEarlyRetire: tier.allowEarlyRetire });
+                if (!plan) continue;
+              }
+              const score = plan.cost + Math.hypot(du, dv) * 0.2 + (mode === 'scale' ? 0 : 0.1);
+              if (best && score >= best.score) continue;
+              const undoPlan = applyPlan(plan);
+              const ok = overlapsWithDrops(lo, Math.min(until, w.off ?? until), w.id) === 0 &&
+                ownFailures(w) === 0 && !hasFocusStatic(w) &&
+                plan.actions.every(a => a.kind !== 'hide' || (ownFailures(a.x) === 0 && !hasFocusStatic(a.x))) &&
+                focusShortAt(shownHolds(w), ratio).length === 0;
+              undoPlan();
+              if (ok) {
+                best = { mode, candOn, du, dv, plan, score };
+                if (plan.cost === 0 && Math.hypot(du, dv) <= 0.75) break;
+              }
+            }
+            if (best && best.plan.cost === 0 && Math.hypot(best.du, best.dv) <= 0.75) break;
+          }
+          if (best && best.plan.cost === 0 && Math.hypot(best.du, best.dv) <= 0.75) break;
+        }
+        if (best) {
+          const hadDrops = new Set(drops);
+          restW(w, wSnap);
+          w.on = best.candOn;
+          adaptEntrance(w, best.mode === 'scale');
+          grow(w, k, [0, 0]);
+          w.C = add(C0, add(mul(w.R, best.du * w.w), mul(w.U, best.dv * w.h)));
+          if (best.mode === 'scale') syncScalePivot(w);
+          applyPlan(best.plan);
+          const cleared = commitPlanLog(best.plan, hadDrops);
+          counts.grown++; counts.mustShowChanged++;
+          const moved = best.du || best.dv ? `moved (${best.du}w, ${best.dv}h)` : 'at planned spot';
+          return { ok: true, desc: `new placement (${moved}, grown x${k.toFixed(2)}, ${best.mode} entrance${best.candOn !== on0 ? `, on ${on0}->${best.candOn}` : ''}${cleared ? `; ${cleared}` : ''})` };
+        }
+      }
+      restW(w, wSnap);
+      return null;
+    };
+
+    // Partial in-place growth (no neighbours touched) used in Phase B before settling below full minimum.
+    const tryPartialInPlace = () => {
+      const sh0 = shownHolds(w), fs0 = focusShortAt(sh0, 1.0);
+      if (!fs0.length) return null;
+      const wSnap = snapW(w), clipped0 = (w.clip ?? []).length > 0, hinge0 = !growable(w);
+      const modes = hinge0 ? ['scale', 'pop'] : clipped0 ? ['orig', 'pop', 'scale'] : ['orig', 'pop'];
+      const lo = Math.max(0, w.on), hi = Math.min(until, w.off ?? until);
+      const ov0 = overlapsWithDrops(lo, hi, w.id);
+      for (const r of [0.95, 0.90, 0.85, 0.80, 0.75, MUST_SHOW_FLOOR_RATIO]) {
+        const k = Math.max(...fs0.map(x => Math.max(floorFor(x.min), x.min * r) / x.size)) * 1.01;
+        if (!(k > 1.02) || k > MUST_SHOW_MAX_GROW) continue;
+        for (const mode of modes) for (const pv of PIVOTS) {
+          restW(w, wSnap);
+          if (mode === 'scale') adaptEntrance(w, true);
+          else if (mode === 'pop') adaptEntrance(w, false);
+          grow(w, k, pv);
+          if (mode === 'orig' && clipped0) w.motion = (w.motion ?? []).map(m => m.kind === 'shift' ? { ...m, from: mul(m.from, k), to: mul(m.to, k) } : m);
+          else if (mode === 'scale') syncScalePivot(w);
+          if (mode === 'orig' && clipped0 && !clipEntranceOk(scene, w)) continue;
+          if (ownFailures(w) === 0 && propClear(w, rawProp0, margProp0) && !hasFocusStatic(w) && overlapsWithDrops(lo, hi, w.id) <= ov0) {
+            counts.grown++; counts.mustShowChanged++;
+            return { k, desc: `partially grown x${k.toFixed(2)} in place${mode !== 'orig' ? ` (${mode} entrance)` : ''}` };
+          }
+        }
+      }
+      restW(w, wSnap);
+      return null;
+    };
+
+    // Phase A: reach full size minimum (1.0x) in strict preference order:
+    //   1. drop/hide approved/filler/earlier neighbours  2. re-frame camera  3. grow from new placement.
+    let res = tryStep1(1.0) ?? tryStep2(1.0) ?? tryStep3(1.0);
+    if (res) {
+      const shAfter = shownHolds(w);
+      const bestF = shAfter.find(x => x.focused) ?? shAfter[0];
+      const msg = `${w.id} ${w.text} (must_show): kept at full size — ${res.desc}${bestF ? ` (letters ${(100 * bestF.size).toFixed(1)}%, min ${(100 * bestF.min).toFixed(1)}%)` : ''}`;
+      w.must_show_action = w.must_show_action ? `${w.must_show_action}; then ${res.desc}` : msg;
+      log.push(msg); mustShowLog.push(msg);
+      return;
+    }
+
+    // Phase B: below normal minimum, down to the readable hard floor (MUST_SHOW_FLOOR_RATIO = 70% of min).
+    const partial = tryPartialInPlace();
+    let floorRes = null;
+    if (focusShortAt(shownHolds(w), MUST_SHOW_FLOOR_RATIO).length > 0) {
+      floorRes = tryStep1(MUST_SHOW_FLOOR_RATIO) ?? tryStep2(MUST_SHOW_FLOOR_RATIO) ?? tryStep3(MUST_SHOW_FLOOR_RATIO);
+    }
+    w.size_kept = true;
+    const shEnd = shownHolds(w);
+    const worstF = focusShortAt(shEnd, 1.0)[0] ?? shEnd.find(x => x.focused) ?? shEnd[0];
+    const aboveFloor = focusShortAt(shEnd, MUST_SHOW_FLOOR_RATIO).length === 0;
+    const how = floorRes ? floorRes.desc : partial ? partial.desc : 'kept at existing size';
+    const detail = worstF
+      ? `letters ${(100 * worstF.size).toFixed(1)}% at frame ${worstF.f}, min ${(100 * worstF.min).toFixed(1)}% ${worstF.crowded ? 'crowded' : 'with room'}, hard floor ${(100 * floorFor(worstF.min)).toFixed(1)}% (${Math.round(100 * MUST_SHOW_FLOOR_RATIO)}% of min)`
+      : 'no settled focus hold measured';
+    const msg = `${w.id} ${w.text} (must_show): ${aboveFloor ? 'kept below minimum above readable hard floor' : 'kept BELOW readable hard floor (never dropped for size)'} — ${how} (${detail})`;
+    w.must_show_action = w.must_show_action ? `${w.must_show_action}; then ${how}` : msg;
+    log.push(msg); mustShowLog.push(msg);
+  };
+
   for (const w of scene.words) {
     if (wordmarks ? !(w.wordmark?.image && !w.reveal_copy_of && !w.echo && !w.dropped) : !resizable(w)) continue;
     if (w.on >= until) continue;
@@ -938,7 +1423,14 @@ export function enforceMinSize(scene, onsetOf, { until = scene.meta.frames, sett
         }
         Object.assign(w, JSON.parse(keep));
       }
-      if (done) { sh = shownHolds(w); short = sh.filter(x => x.size < x.min - 1e-9); if (!short.length) continue; }
+      if (done) {
+        if (w.must_show) {
+          const msg = `${w.id} ${w.text} (must_show): grown x${k.toFixed(2)} in place to full minimum`;
+          w.must_show_action = w.must_show_action ? `${w.must_show_action}; then grown x${k.toFixed(2)} in place` : msg;
+          mustShowLog.push(msg);
+        }
+        sh = shownHolds(w); short = sh.filter(x => x.size < x.min - 1e-9); if (!short.length) continue;
+      }
     }
     if (wordmarks) {
       const x = short[0]; counts.keptSmall++;
@@ -952,6 +1444,16 @@ export function enforceMinSize(scene, onsetOf, { until = scene.meta.frames, sett
     // later hold.
     { const o = onsetOf(w);
       if (o != null && sh.some(x => x.size >= x.min - 1e-9 && x.h.start <= o && o < x.h.end)) for (const x of short) if (x.h.start > o) x.focused = false; }
+    // Brief 20: a must-show word is never dropped for size; free room in strict preference order before settling down
+    // to the 70% readable hard floor. Any remaining under-size later holds strictly past mustEnd are hidden like normal
+    // later holds (never dropped).
+    if (short.some(x => x.focused) && w.must_show) {
+      resolveMustShow(w);
+      sh = shownHolds(w);
+      const o = onsetOf(w), A = appearanceFrame(w), mustEnd = Math.max(A + G.SHOWN_FRAMES - 1, o ?? w.on);
+      short = sh.filter(x => x.size < x.min - 1e-9 && x.h.start > mustEnd).map(x => ({ ...x, focused: false }));
+      if (!short.length) continue;
+    }
     if (short.some(x => x.focused) && w.important) {
       w.size_kept = true;
       counts.importantSmall = (counts.importantSmall ?? 0) + 1;
@@ -974,7 +1476,7 @@ export function enforceMinSize(scene, onsetOf, { until = scene.meta.frames, sett
           const mine = scanOverlap(scene, { from: lo, until: hi }).overlaps.filter(o => o.includes(` ${w.id} `) || o.includes(`: ${w.id} `));
           const ids = [...new Set(mine.flatMap(o => [...o.matchAll(/\b(w\d+[a-z0-9]*) /g)].map(m => m[1])))].filter(id => id !== w.id);
           const partners = ids.map(id => byId.get(id));
-          if (!mine.some(o => o.includes('panel:') || o.includes('plaque p')) && partners.length && partners.every(x => x && !x.keyword && !x.important && resizable(x))) {
+          if (!mine.some(o => o.includes('panel:') || o.includes('plaque p')) && partners.length && partners.every(x => x && !x.keyword && !x.important && !x.must_show && resizable(x))) {
             const ops = partners.map(x => [x, x.opacity]);
             for (const x of partners) x.opacity = [[0, 0]];
             const grownState = JSON.stringify({ C: w.C, w: w.w, h: w.h, cap: w.cap, fontPx: w.fontPx, pad: w.pad, motion: w.motion });
@@ -1014,7 +1516,7 @@ export function enforceMinSize(scene, onsetOf, { until = scene.meta.frames, sett
     }
   }
   for (const w of drops) { if (w.dropped) continue; w.size_restore = JSON.stringify(w.opacity ?? null); w.opacity = [[0, 0]]; w.dropped = 'size'; }
-  return { log, counts, settings: S };
+  return { log, counts, settings: S, mustShowLog };
 }
 
 // No outlines (brief 5, change 2; Jefferson: "Let's keep all letters solid color and just not do outlines"). Every
@@ -1556,7 +2058,14 @@ export function hideStaticPartials(scene, onsetOf, { until = scene.meta.frames }
           // other than a name is dropped by necessity, and a name or number is left for the gate to report.
           const slid = slideWhole(scene, x.w, onsetOf, until, mustEnd);
           if (slid) { log.push(`${x.w.id} ${x.w.text}: moved ${slid} so it is whole at its onset (it was ${Math.round(100 * x.share)}% visible, static, frames ${x.start}-${x.end})`); changed = true; continue; }
-          if (!x.w.important) {
+          if (x.w.must_show && (x.w.clip?.length || x.w.motion?.length)) {
+            const snap = JSON.stringify({ C: x.w.C, motion: x.w.motion ?? null, clip: x.w.clip ?? null, joint: x.w.joint ?? null });
+            x.w.motion = []; x.w.clip = []; if (x.w.joint) x.w.joint = { ...x.w.joint, prim: 'pop', f0: x.w.on, f1: x.w.on };
+            const slidPop = slideWhole(scene, x.w, onsetOf, until, Math.max(x.w.on + G.SHOWN_FRAMES - 1, o));
+            if (slidPop) { log.push(`${x.w.id} ${x.w.text} (must_show): moved ${slidPop} (pop entrance) so it is whole at its onset (it was ${Math.round(100 * x.share)}% visible, static, frames ${x.start}-${x.end})`); changed = true; continue; }
+            const r = JSON.parse(snap); x.w.C = r.C; if (r.motion) x.w.motion = r.motion; else delete x.w.motion; if (r.clip) x.w.clip = r.clip; else delete x.w.clip; if (r.joint) x.w.joint = r.joint; else delete x.w.joint;
+          }
+          if (!x.w.important && !x.w.must_show) {
             x.w.size_restore = null; x.w.opacity = [[0, 0]]; x.w.dropped = 'static'; changed = true;
             log.push(`${x.w.id} ${x.w.text}: dropped (${x.w.keyword ? `keyword, dropped by necessity: no slide along its plaque makes it whole` : 'filler'}; ${Math.round(100 * x.share)}% visible and static at its onset, frames ${x.start}-${x.end})`);
             continue;

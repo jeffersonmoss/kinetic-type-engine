@@ -79,7 +79,7 @@ export function keywordPlan(words, settings = {}, { names = [], overrides = {} }
   const flags = keywordFlags(words, { names, keep: opt.keep ?? [], overrides });
   for (const s of out.stretches) {
     for (let i = s.from; i <= s.to; i++) {
-      if (flags[i].keyword) continue;
+      if (flags[i].keyword || overrides[String(i)]?.must_show) continue;
       out.dropped.add(i); out.log.push({ i, text: words[i].text, t: words[i].start_s, why: `filler (${flags[i].why})` });
     }
     // Every line keeps at least one word: restore the highest-ranked dropped word of an emptied line.

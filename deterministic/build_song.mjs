@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 import './interp.js';
 import { checkSync, checkHolds } from './whole_song_checks.mjs';
 import { assemble, hideWhenGone, buildReveal, checkReveal, endOnWord, checkStillEnding } from './assemble_sections.mjs';
-import { tightenLone, hideEdgeClutter, hideUnreadable, hideFlythrough, SIDE_FILL, placeInRoom, phraseGaps, repairPhraseGaps, growWordmarks, loneHolds, LONE_HOLD, swellRelease, largestGreyToCream, fillEmptyFrames, swellSmallWords, floorZoomEntrances, pairHoldHides, emptyFrames, enforceMinSize, noOutlines, undoSizeForEmpty, hideStaticPartials, staticPartials, STATIC_RATE, STATIC_FRAMES } from './composition.mjs';
+import { tightenLone, hideEdgeClutter, hideUnreadable, hideFlythrough, SIDE_FILL, placeInRoom, phraseGaps, repairPhraseGaps, growWordmarks, loneHolds, LONE_HOLD, swellRelease, largestGreyToCream, fillEmptyFrames, swellSmallWords, floorZoomEntrances, pairHoldHides, emptyFrames, enforceMinSize, sizeShortfalls, MUST_SHOW_FLOOR_RATIO, noOutlines, undoSizeForEmpty, hideStaticPartials, staticPartials, STATIC_RATE, STATIC_FRAMES } from './composition.mjs';
 import { JERSEY_BOLD, normalizePalette, checkPalette } from './style.mjs';
 import { keywordPlan, fastWordsOn, wordRanks } from './keywords.mjs';
 import { applyWordRoles, teamColourNames } from './word_roles.mjs';
@@ -78,12 +78,25 @@ const map = correctedMap(rawMap, CORR);
 // Numbers sung as words are shown as digits (song settings "display_numbers", e.g. { "twenty-four": "24" }).
 const NUMBERS = Object.fromEntries(Object.entries(song.display_numbers ?? {}).map(([k, v]) => [k.toLowerCase(), v]));
 const display = t => t.replace(/^(\(?)([a-z]+-[a-z]+)/i, (m, p, w) => p + (NUMBERS[w.toLowerCase()] ?? w));
+// Brief 20: read an existing Keyword drop review.json beside the output when present; any map index its reviewer
+// rejected has the same must_show effect as word_overrides.<map index>.must_show: true.
+const existingDropReview = (() => {
+  try { return JSON.parse(fs.readFileSync(path.join(OUT, 'Keyword drop review.json'), 'utf8')).reviews ?? {}; }
+  catch { return {}; }
+})();
+const rejectedReviewIndices = Object.entries(existingDropReview).filter(([, r]) => r && r.verdict === 'reject').map(([k]) => k);
+const effectiveWordOverrides = rejectedReviewIndices.length
+  ? {
+      ...(song.word_overrides ?? {}),
+      ...Object.fromEntries(rejectedReviewIndices.map(k => [k, { ...(song.word_overrides?.[k] ?? {}), must_show: true }])),
+    }
+  : (song.word_overrides ?? {});
 // Keyword mode for fast words (keywords.mjs; on by default, "fast_words": {"mode": "all_words"} turns it off): in
 // stretches sung too fast to read, only the important words are shown. Only words of built sections are dropped (an
 // approved opening scene is used as is). Dropped words are left out of the scene, the sync check and the pulses.
 const palettePins = Object.keys(JSON.parse(fs.readFileSync(palettePath, 'utf8')).pins ?? {});
 const builtLines = new Set(song.sections.flatMap(sec => map.lines.filter(l => l.id >= sec.lines[0] && l.id <= sec.lines[1]).map(l => l.id)));
-const keywords = keywordPlan(map.words, song.fast_words ?? {}, { names: [...Object.keys(song.team_wordmarks ?? {}), ...Object.values(song.display_numbers ?? {}), ...palettePins, ...(song.player_names ?? [])], overrides: song.word_overrides ?? {} });
+const keywords = keywordPlan(map.words, song.fast_words ?? {}, { names: [...Object.keys(song.team_wordmarks ?? {}), ...Object.values(song.display_numbers ?? {}), ...palettePins, ...(song.player_names ?? [])], overrides: effectiveWordOverrides });
 for (const i of [...keywords.dropped]) if (!builtLines.has(map.words[i].line)) keywords.dropped.delete(i);
 keywords.log = keywords.log.filter(x => keywords.dropped.has(x.i));
 function sectionWords(sec) {
@@ -281,7 +294,8 @@ const keyNames = [...Object.keys(song.team_wordmarks ?? {}), ...Object.values(so
 const ranks = wordRanks(map.words, song.fast_words ?? {}, { names: keyNames });
 // Brief 7: one keyword classifier (word_roles.mjs) for the grey rule and the drop rule. Names, numbers and scores are
 // `important` (never dropped; kept small when they cannot grow); other keywords are dropped only by necessity.
-const roles = applyWordRoles(finalObj, { mapWords: map.words, display, song, names: keyNames, metricsPath: process.env.KTE_METRICS ?? path.join(engine, '../fonts/room-for-one-variety.metrics.json') });
+// Brief 20: pass existingDropReview so rejected drops get must_show and approved drops get drop_approved.
+const roles = applyWordRoles(finalObj, { mapWords: map.words, display, song, names: keyNames, metricsPath: process.env.KTE_METRICS ?? path.join(engine, '../fonts/room-for-one-variety.metrics.json'), dropReview: existingDropReview });
 for (const w of finalObj.words) {
   if (w.t == null || w.reveal_copy_of || w.map_index == null) continue;
   if (ranks[w.map_index] >= 3 || w.score) w.important = true;
@@ -293,15 +307,16 @@ const teamNames = teamColourNames(finalObj, { song, palette: finalObj.meta.palet
 // The empty-screen rule counts a frame whose words are all under the size minimum as empty (brief 7 item 3).
 finalObj.meta.size_rule = { ...(song.min_word_h != null ? { minH: song.min_word_h } : {}), ...(song.room_factor != null ? { roomFactor: song.room_factor } : {}),
   ...(song.crowded_words != null ? { crowdedWords: song.crowded_words } : {}), ...(song.crowded_area != null ? { crowdedArea: song.crowded_area } : {}) };
-const size = { log: [], counts: { grown: 0, dropped: 0, hidden: 0, keptSmall: 0, importantSmall: 0 }, passes: 0 };
+const size = { log: [], mustShowLog: [], counts: { grown: 0, dropped: 0, hidden: 0, keptSmall: 0, importantSmall: 0 }, passes: 0 };
 for (let pass = 0; pass < 4; pass++) {
-  const r = enforceMinSize(finalObj, onsetOf, { until: revealF0, settings: {
+  const r = enforceMinSize(finalObj, onsetOf, { until: revealF0, minEndHold: MIN_END_HOLD, settings: {
   ...(song.min_word_h != null ? { minH: song.min_word_h } : {}), ...(song.room_factor != null ? { roomFactor: song.room_factor } : {}),
   ...(song.crowded_words != null ? { crowdedWords: song.crowded_words } : {}), ...(song.crowded_area != null ? { crowdedArea: song.crowded_area } : {}) } });
   size.settings = r.settings; size.passes++;
   size.log.push(...r.log.map(x => pass ? `(pass ${pass + 1}) ${x}` : x));
+  size.mustShowLog.push(...(r.mustShowLog ?? []).map(x => pass ? `(pass ${pass + 1}) ${x}` : x));
   for (const k of Object.keys(size.counts)) size.counts[k] += r.counts[k] ?? 0;
-  if (!r.counts.grown && !r.counts.dropped && !r.counts.hidden) break;
+  if (!r.counts.grown && !r.counts.dropped && !r.counts.hidden && !r.counts.mustShowChanged) break;
 }
 { const c2 = hideEdgeClutter(finalObj, onsetOf, { until: revealF0 }), u2 = hideUnreadable(finalObj, onsetOf, { until: revealF0 });
   clutter.log.push(...c2.log.map(x => `(after size) ${x}`)); unreadable.log.push(...u2.log.map(x => `(after size) ${x}`)); }
@@ -412,7 +427,32 @@ const nearEmpty = emptyFrames(finalObj, { from: 0, until: revealF0, sideFill: SI
 // non-focused side can be hidden to close the gap).
 const roomLeft = (() => { const copy = JSON.parse(JSON.stringify(finalObj)); return placeInRoom(copy, onsetOf, { until: revealF0, settings: finalObj.meta.size_rule ?? {} }).filter(r => r.room); })();
 const gapsLeft = phraseGaps(finalObj, onsetOf, { until: revealF0, settings: finalObj.meta.size_rule ?? {}, maxFrames: emptyMaxF }).filter(g => g.canShowAll || g.hideSide);
-for (const w of finalObj.words) delete w.dropped_for;
+// Brief 20: evaluate final status of every must-show word for provenance and verify none were dropped.
+const mustShowWords = finalObj.words.filter(w => w.must_show && !w.reveal_copy_of && !w.echo);
+const mustShowDropped = mustShowWords.filter(w => w.dropped);
+const mustShowReport = (() => {
+  if (!mustShowWords.length) return [];
+  const sf = sizeShortfalls(finalObj, onsetOf, { until: revealF0, settings: finalObj.meta.size_rule ?? {} });
+  return mustShowWords.map(w => {
+    const ownSf = sf.filter(x => x.w === w && x.focused);
+    const worst = ownSf.sort((a, b) => a.size / a.min - b.size / b.min)[0];
+    const source = w.must_show_source ?? 'must_show';
+    const action = w.must_show_action ?? (w.dropped ? `DROPPED (${w.dropped})` : 'already met minimum size');
+    let status;
+    if (w.dropped) status = `DROPPED (${w.dropped}) — FAIL`;
+    else if (!worst) status = 'shown at/above full minimum';
+    else {
+      const floor = Math.max(0.04, worst.min * MUST_SHOW_FLOOR_RATIO);
+      const pct = (100 * worst.size).toFixed(1), minPct = (100 * worst.min).toFixed(1), flPct = (100 * floor).toFixed(1);
+      status = worst.size >= floor - 1e-9
+        ? `shown below minimum, above ${Math.round(100 * MUST_SHOW_FLOOR_RATIO)}% readable hard floor (letters ${pct}% vs min ${minPct}%, floor ${flPct}%)`
+        : `shown BELOW ${Math.round(100 * MUST_SHOW_FLOOR_RATIO)}% readable hard floor (letters ${pct}% vs min ${minPct}%, floor ${flPct}%)`;
+    }
+    return { id: w.id, text: w.text, map_index: w.map_index, time_s: +(w.t ?? 0).toFixed(2), source, status, action };
+  });
+})();
+for (const w of finalObj.words) { delete w.dropped_for; delete w.drop_approved; delete w.must_show_source; delete w.must_show_action; }
+if (mustShowDropped.length) { process.exitCode = 1; console.error(`MUST-SHOW WORD DROPPED FAIL: ${mustShowDropped.map(w => `${w.id} ${w.text} (map ${w.map_index}, ${w.dropped})`).join(', ')}`); }
 if (roomLeft.length) { process.exitCode = 1; console.error(`ROOM FOR A DROPPED WORD FAIL: ${roomLeft.map(r => `${r.w.id} ${r.w.text}`).join(', ')}`); }
 if (gapsLeft.length) { process.exitCode = 1; console.error(`ROOM FOR A PHRASE GAP FAIL: ${gapsLeft.map(g => `${g.left.id} ${g.left.text} .. [${g.fitting.map(w => `${w.id} ${w.text}`).join(', ')}] .. ${g.right.id} ${g.right.text} (${g.h.start}-${g.h.end})`).join('; ')}`); }
 // Drop review gate (brief 10 item 44): every keyword still dropped after the room gate is listed beside the final scene
@@ -498,7 +538,13 @@ md.push('', '## Opening and team wordmarks', '', appearance.intro,
 { const L = roles.log, kw = finalObj.words.filter(w => w.keyword && !w.reveal_copy_of), kwDropped = kw.filter(w => w.dropped);
   md.push('', '## Word roles (keywords, names, scores)', '', `Keywords (one classifier for the grey rule, the size pass and keyword mode): ${kw.length} of ${finalObj.words.filter(w => w.map_index != null && !w.reveal_copy_of).length} matched words. Keywords dropped: ${kwDropped.length}${kwDropped.length ? ` (${kwDropped.map(w => `${w.id} ${w.text}, ${w.dropped}`).join('; ')})` : ''}.`,
     `Grey keywords made cream: ${L.greyKeywords.length}. Grey player names made cream: ${L.greyNames.length}. Font changes: ${L.fontChanges.length}. Scores: ${L.scores.length}. Scene words not matched to the song map: ${L.unmatched.length}.`, '',
-    ...[...L.greyKeywords, ...L.greyNames, ...L.fontChanges, ...L.scores].map(x => `- ${x}`), '', `Numerals (brief 10 items 40 and 41): ${L.numerals.length}.`, ...L.numerals.map(x => `- ${x}`), '', `Display overrides (brief 10 item 42): ${L.displays.length}.`, ...L.displays.map(x => `- ${x}`), '', `Player names and jersey numbers in team colours (brief 10 items 46 and 47, jersey_colours ${teamNames.mode}${teamNames.team ? `, dark ${teamNames.team.dark}, light ${teamNames.team.light}` : ''}): ${teamNames.log.length}.`, ...teamNames.log.map(x => `- ${x}`), '', `Keyword drops for review (brief 10 item 44): ${dropsForReview.length}${dropsForReview.length ? `; ${dropFails.length} without an approving review (FAIL)` : ''}.`, ...dropsForReview.map(d => `- ${d.id} ${d.word} at ${d.time_s} s (still frame ${d.frame_to_still}): ${d.reason}; review: ${dropReview[String(d.index)]?.verdict ?? 'none'}`), ...(L.unmatched.length ? [`- Unmatched: ${L.unmatched.join(', ')}`] : [])); }
+    ...[...L.greyKeywords, ...L.greyNames, ...L.fontChanges, ...L.scores].map(x => `- ${x}`), '', `Numerals (brief 10 items 40 and 41): ${L.numerals.length}.`, ...L.numerals.map(x => `- ${x}`), '', `Display overrides (brief 10 item 42): ${L.displays.length}.`, ...L.displays.map(x => `- ${x}`), '',
+    ...(mustShowReport.length ? [
+      `Must-show words (brief 20; readable hard floor ${Math.round(100 * MUST_SHOW_FLOOR_RATIO)}% of hold minimum: ${(100 * (size.settings.minH ?? 0.09) * MUST_SHOW_FLOOR_RATIO).toFixed(1)}% crowded, ${(100 * (size.settings.minH ?? 0.09) * (size.settings.roomFactor ?? 1.5) * MUST_SHOW_FLOOR_RATIO).toFixed(2)}% with room): ${mustShowReport.length} configured, ${mustShowDropped.length} dropped (${mustShowDropped.length ? 'FAIL' : 'PASS'}).`,
+      ...mustShowReport.map(m => `- ${m.id} ${m.text} (map ${m.map_index}) at ${m.time_s} s [${m.source}]: ${m.status}; action: ${m.action}`),
+      '',
+    ] : []),
+    `Player names and jersey numbers in team colours (brief 10 items 46 and 47, jersey_colours ${teamNames.mode}${teamNames.team ? `, dark ${teamNames.team.dark}, light ${teamNames.team.light}` : ''}): ${teamNames.log.length}.`, ...teamNames.log.map(x => `- ${x}`), '', `Keyword drops for review (brief 10 item 44): ${dropsForReview.length}${dropsForReview.length ? `; ${dropFails.length} without an approving review (FAIL)` : ''}.`, ...dropsForReview.map(d => `- ${d.id} ${d.word} at ${d.time_s} s (still frame ${d.frame_to_still}): ${d.reason}; review: ${dropReview[String(d.index)]?.verdict ?? 'none'}`), ...(L.unmatched.length ? [`- Unmatched: ${L.unmatched.join(', ')}`] : [])); }
 md.push('', '## Hold-hide partners', '', `${partnerHides.length} changes.`, '', ...partnerHides.map(x => `- ${x}`));
 { const opAt = (w, f) => { let v = 1; for (const [k, x] of w.opacity ?? []) if (k <= f) v = x; return v; };
   const byId = new Map(finalObj.words.map(w => [w.id, w]));
@@ -576,6 +622,7 @@ console.log('entrances', JSON.stringify(counts['Whole song']), 'pop reasons', JS
 console.log('reveal check', JSON.stringify(revealCheck), 'still ending', JSON.stringify(stillEnding));
 if (overlapFinal.overlaps.length) console.error(`OVERLAP FAIL: ${overlapFinal.overlaps.length} intervals: ${overlapFinal.overlaps.slice(0, 8).join('; ')}`);
 console.log('roles', JSON.stringify({ greyKeywords: roles.log.greyKeywords.length, greyNames: roles.log.greyNames.length, fontChanges: roles.log.fontChanges.length, scores: roles.log.scores.length, keywordsDropped: finalObj.words.filter(w => w.keyword && w.dropped && !w.reveal_copy_of).length }));
+if (mustShowReport.length) console.log('must-show', JSON.stringify({ total: mustShowReport.length, dropped: mustShowDropped.length, details: mustShowReport.map(m => `${m.id} ${m.text} (map ${m.map_index}): ${m.status}`) }));
 console.log('pulses tamed', pulseLog.length, 'zoom floors', zoomFloor.length, 'hold partners', partnerHides.length, 'fly-through hides', flythrough.log.length, 'visible', flythrough.visible, 'swell releases', swellReleases.length, 'largest grey', greyLargest.length, 'near-empty sideways', nearEmpty.length, 'put back', roomLog.filter(r => r.room).length);
 for (const r of lone1.filter(r => r.drops.length)) console.log(`LONE HOLD after a drop: ${r.w.id} ${r.w.text} ${(r.start / FPS).toFixed(2)}-${((r.end + 1) / FPS).toFixed(2)} s (${r.drops.map(x => `${x.id} ${x.text}`).join(', ')} dropped)`);
 console.log('size', JSON.stringify({ staticHidden: staticHide.log.length, staticFinal: staticFinal.length, grown: size.counts.grown, dropped: size.counts.dropped, hiddenSmall: size.counts.hidden, keptSmall: size.counts.keptSmall, importantSmall: size.counts.importantSmall, sizeUndone: sizeUndone.length, outlinesFlat: outlines.log.length, small: smallFinal.length, sparse: sparseFinal.length, lone: lone.log.length, clutter: clutter.log.length, unreadable: unreadable.log.length, unreadableFocus: unreadable.focused.length, emptyEnds, filled: fill.log.length, shortGaps: fill.short.length, longestShortGap: Math.max(0, ...fill.short.map(r => r.end - r.start + 1)), emptyRuns: fill.remaining.map(r => `${r.start}-${r.end}`) }));

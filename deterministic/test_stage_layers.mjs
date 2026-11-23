@@ -7,10 +7,12 @@ import zlib from 'node:zlib';
 import './interp.js';
 import { pngAlphaBox } from './png_alpha.mjs';
 import { songAppearance, imageSize } from './song_appearance.mjs';
-import { emptyFrames, placeInRoom, enforceMinSize, staticPartials } from './composition.mjs';
+import { emptyFrames, placeInRoom, enforceMinSize, staticPartials, MUST_SHOW_FLOOR_RATIO } from './composition.mjs';
 import { checkPropWordOverlap, scanOverlap } from './overlap_gate.mjs';
 import { fullyShown, fitPoseInBox, fitPoseInClearArea, letterHeight, gateFailures } from './shown_gate.mjs';
 import { frameClearOfProps, resolvePropOverlaps } from './keep_clear.mjs';
+import { applyWordRoles } from './word_roles.mjs';
+import { keywordPlan } from './keywords.mjs';
 
 const I = globalThis.KT_INTERP;
 
@@ -556,5 +558,137 @@ describe('brief 19: room pass priority, beneficiary lock, and whole-life static-
     assert.equal(it.dropped, 'room');
     assert.equal(it.dropped_for, 'w02');
     assert.equal(proud.dropped, 'size');
+  });
+});
+
+describe('brief 20: must_show keeps words a reviewer rejected dropping', () => {
+  it('applyWordRoles marks must_show from word_overrides and from Keyword drop review.json rejects, and marks approved drops drop_approved', () => {
+    const mapWords = [
+      { text: 'He', start_s: 1.0, end_s: 1.2, line: 0 },
+      { text: 'can', start_s: 1.2, end_s: 1.4, line: 0 },
+      { text: 'pass', start_s: 1.4, end_s: 1.7, line: 0 },
+      { text: 'it', start_s: 1.7, end_s: 1.9, line: 0 },
+    ];
+    const scene = {
+      words: [
+        { id: 'w01', text: 'HE', t: 1.0, style: 'cream', font: 'anton', cap: 60, w: 120, h: 80 },
+        { id: 'w02', text: 'CAN', t: 1.2, style: 'cream', font: 'anton', cap: 60, w: 120, h: 80 },
+        { id: 'w03', text: 'PASS', t: 1.4, style: 'cream', font: 'anton', cap: 60, w: 120, h: 80 },
+        { id: 'w04', text: 'IT', t: 1.7, style: 'cream', font: 'anton', cap: 60, w: 120, h: 80 },
+      ],
+    };
+    const song = { word_overrides: { '0': { must_show: true } } };
+    const dropReview = {
+      '2': { verdict: 'reject', reviewer: 'test', note: 'keep PASS' },
+      '3': { verdict: 'approve', reviewer: 'test', note: 'ok to drop IT' },
+    };
+    const { log } = applyWordRoles(scene, { mapWords, display: x => x, song, dropReview });
+    assert.equal(scene.words[0].must_show, true);
+    assert.equal(scene.words[1].must_show, undefined);
+    assert.equal(scene.words[2].must_show, true);
+    assert.equal(scene.words[3].must_show, undefined);
+    assert.equal(scene.words[3].drop_approved, true);
+    assert.equal(log.mustShow.length, 2);
+  });
+
+  it('keywordPlan preserves a word with must_show: true inside a fast stretch', () => {
+    const words = Array.from({ length: 18 }, (_, i) => ({
+      text: i % 2 === 0 ? 'the' : 'ball',
+      start_s: i * 0.14,
+      end_s: i * 0.14 + 0.12,
+      line: 0,
+    }));
+    const withoutMust = keywordPlan(words, {}, { overrides: {} });
+    assert.equal(withoutMust.dropped.has(6), true, 'filler at index 6 is dropped normally');
+    const withMust = keywordPlan(words, {}, { overrides: { '6': { must_show: true } } });
+    assert.equal(withMust.dropped.has(6), false, 'must_show filler is kept in fast stretch');
+  });
+
+  it('Step 1: frees room for a must_show word by dropping a review-approved neighbour (and never drops must_show)', () => {
+    const dist = 500; // halfW ~ 323.5, halfH ~ 182.0
+    const pose = { target: [0, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], dist };
+    // w01 (already at full size, review-approved keyword, same onset window as w02 so it cannot just be hidden after focus)
+    // sits immediately left of w02 (must_show keyword, cap=26 ~7.1% < 9% crowded min), while wTop, wRight, and the bottom frame
+    // edge hem w02 in on the other 3 sides and prevent zooming in. Dropping approved w01 lets w02 grow left cleanly!
+    const scene = {
+      meta: { fps: 30, frames: 90, vfov: 40 },
+      cams: [{ f0: 0, f1: 0, verb: 'cut', from: pose, to: pose }],
+      plaques: [{ id: 'p1', C: [0, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 900, h: 400, surface: 'panel', on: 0, off: null }],
+      words: [
+        { id: 'wTop', text: 'WAVE', plaque: 'p1', keyword: true, important: true, C: [0, 115, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 620, h: 120, cap: 96, font: 'anton', fontPx: 1, style: 'cream', on: 0, off: 90, t: 0.2 },
+        { id: 'wMid', text: 'FLAG', plaque: 'p1', keyword: true, important: true, C: [0, -35, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 620, h: 165, cap: 120, font: 'anton', fontPx: 1, style: 'cream', on: 0, off: 90, t: 0.25 },
+        { id: 'wRight', text: 'HIGH', plaque: 'p1', keyword: true, important: true, C: [215, -148, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 200, h: 55, cap: 44, font: 'anton', fontPx: 1, style: 'cream', on: 0, off: 90, t: 0.3 },
+        { id: 'w01', text: 'HE', plaque: 'p1', keyword: true, drop_approved: true, C: [-130, -148, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 200, h: 55, cap: 44, font: 'anton', fontPx: 1, style: 'cream', on: 10, off: 90, t: 0.55 },
+        { id: 'w02', text: 'PASS', plaque: 'p1', keyword: true, must_show: true, C: [40, -160, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 135, h: 34, cap: 26, font: 'anton', fontPx: 1, style: 'cream', on: 10, off: 90, t: 0.55 },
+      ],
+    };
+    const onsetOf = w => Math.round(w.t * 30);
+    const res = enforceMinSize(scene, onsetOf, { until: 90 });
+    const passW = scene.words.find(w => w.id === 'w02');
+    const heW = scene.words.find(w => w.id === 'w01');
+    assert.equal(passW.dropped, undefined, 'must_show word must never be dropped for size');
+    assert.equal(heW.dropped, 'room', 'approved neighbour dropped to free room');
+    assert.equal(heW.dropped_for, 'w02');
+    assert.equal(scanOverlap(scene, { until: 90 }).overlaps.length, 0);
+    assert.equal(gateFailures(scene, onsetOf, { until: 90 }).filter(x => x.kind === 'partial').length, 0);
+    assert.ok(res.mustShowLog.some(l => l.includes('w02 PASS')));
+  });
+
+  it('Step 2: re-frames the camera to bring a must_show word up to minimum size when neighbours cannot be dropped', () => {
+    const dist = 1000; // far camera: halfH ~ 364, so cap=60 is ~8.2% (< 13.5% uncrowded min)
+    const pose = { target: [0, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], dist };
+    // Tight cluster of 3 unapproved keywords; w02 is surrounded on left/right so it cannot grow in place without hitting them,
+    // but zooming the camera in brings all 3 words cleanly above 13.5% inside 0.94 x 0.90 margins!
+    const scene = {
+      meta: { fps: 30, frames: 90, vfov: 40 },
+      cams: [{ f0: 0, f1: 0, verb: 'cut', from: pose, to: pose }],
+      plaques: [{ id: 'p1', C: [0, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 900, h: 400, surface: 'panel', on: 0, off: null }],
+      words: [
+        { id: 'w01', text: 'SCORE', plaque: 'p1', keyword: true, important: true, C: [-130, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 120, h: 80, cap: 60, font: 'anton', fontPx: 1, style: 'cream', on: 5, off: 90, t: 0.3 },
+        { id: 'w02', text: 'PASS', plaque: 'p1', keyword: true, must_show: true, C: [0, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 120, h: 80, cap: 60, font: 'anton', fontPx: 1, style: 'cream', on: 5, off: 90, t: 0.4 },
+        { id: 'w03', text: 'DUNK', plaque: 'p1', keyword: true, important: true, C: [130, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 120, h: 80, cap: 60, font: 'anton', fontPx: 1, style: 'cream', on: 5, off: 90, t: 0.5 },
+        { id: 'w04', text: 'TOP', plaque: 'p1', keyword: true, important: true, C: [0, 82, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 360, h: 80, cap: 60, font: 'anton', fontPx: 1, style: 'cream', on: 5, off: 90, t: 0.55 },
+        { id: 'w05', text: 'BOT', plaque: 'p1', keyword: true, important: true, C: [0, -82, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 360, h: 80, cap: 60, font: 'anton', fontPx: 1, style: 'cream', on: 5, off: 90, t: 0.6 },
+      ],
+    };
+    const onsetOf = w => Math.round(w.t * 30);
+    const res = enforceMinSize(scene, onsetOf, { until: 90 });
+    const passW = scene.words.find(w => w.id === 'w02');
+    assert.equal(passW.dropped, undefined);
+    assert.ok(scene.cams[0].to.dist < dist, 'camera zoomed closer to enlarge must_show word');
+    const lh = letterHeight(passW, 20, I.poseAt(scene.cams, 20), 40);
+    assert.ok(lh >= 0.09, `must_show letter height ${(lh * 100).toFixed(1)}% reached >= 9% min`);
+    assert.equal(scanOverlap(scene, { until: 90 }).overlaps.length, 0);
+    assert.equal(gateFailures(scene, onsetOf, { until: 90 }).filter(x => x.kind === 'partial').length, 0);
+    assert.ok(res.mustShowLog.some(l => l.includes('reframed camera')));
+  });
+
+  it('Phase B: keeps a boxed-in must_show word below normal min down to the 70% readable hard floor without dropping or overlapping', () => {
+    const dist = 500; // halfW ~ 323.5, halfH ~ 182.0 (full frame height = 364)
+    const pose = { target: [0, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], dist };
+    // Four huge important keywords fill almost the entire frame, leaving only a tiny box in the middle where w02 (cap=27, ~7.4% of 364)
+    // sits between the 70% crowded hard floor (6.3%) and the 9.0% crowded min, and cannot grow, reframe, or relocate without colliding.
+    const scene = {
+      meta: { fps: 30, frames: 90, vfov: 40 },
+      cams: [{ f0: 0, f1: 0, verb: 'cut', from: pose, to: pose }],
+      plaques: [{ id: 'p1', C: [0, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 900, h: 400, surface: 'panel', on: 0, off: null }],
+      words: [
+        { id: 'wTop', text: 'TOP', plaque: 'p1', keyword: true, important: true, C: [0, 95, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 620, h: 150, cap: 120, font: 'anton', fontPx: 1, style: 'cream', on: 0, off: 90, t: 0.2 },
+        { id: 'wBot', text: 'BOT', plaque: 'p1', keyword: true, important: true, C: [0, -95, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 620, h: 150, cap: 120, font: 'anton', fontPx: 1, style: 'cream', on: 0, off: 90, t: 0.25 },
+        { id: 'wLeft', text: 'LEFT', plaque: 'p1', keyword: true, important: true, C: [-190, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 240, h: 36, cap: 34, font: 'anton', fontPx: 1, style: 'cream', on: 0, off: 90, t: 0.3 },
+        { id: 'wRight', text: 'RIGHT', plaque: 'p1', keyword: true, important: true, C: [190, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 240, h: 36, cap: 34, font: 'anton', fontPx: 1, style: 'cream', on: 0, off: 90, t: 0.35 },
+        { id: 'w02', text: 'RIM', plaque: 'p1', keyword: true, must_show: true, C: [0, 0, 0], R: [1, 0, 0], U: [0, 1, 0], N: [0, 0, 1], w: 130, h: 34, cap: 27, font: 'anton', fontPx: 1, style: 'cream', on: 0, off: 90, t: 0.4 },
+      ],
+    };
+    const onsetOf = w => Math.round(w.t * 30);
+    const res = enforceMinSize(scene, onsetOf, { until: 90 });
+    const rim = scene.words.find(w => w.id === 'w02');
+    assert.equal(rim.dropped, undefined, 'must_show word is never dropped for size');
+    const lh = letterHeight(rim, 15, I.poseAt(scene.cams, 15), 40);
+    assert.ok(lh >= 0.09 * MUST_SHOW_FLOOR_RATIO - 1e-4, `letter height ${(lh * 100).toFixed(1)}% >= 70% hard floor`);
+    assert.equal(scanOverlap(scene, { until: 90 }).overlaps.length, 0);
+    assert.equal(gateFailures(scene, onsetOf, { until: 90 }).filter(x => x.kind === 'partial').length, 0);
+    assert.equal(staticPartials(scene, { until: 90 }).length, 0);
+    assert.ok(res.mustShowLog.some(l => l.includes('w02 RIM') && l.includes('hard floor')));
   });
 });

@@ -91,10 +91,11 @@ const isGreyHex = c => typeof c === 'string' && [TEXT_COLOURS['grey-75'], TEXT_C
 export const isGrey = w => GREYS.has(w.style) || isGreyHex(w.colours?.text);
 export const ungrey = w => { const was = w.style; w.style = 'cream'; if (w.colours?.text) w.colours.text = TEXT_COLOURS.cream; return was; };
 
-// Joined-scene pass: marks w.keyword (and w.keyword_why), applies name and score overrides, makes keywords and player
+// Joined-scene pass: marks w.keyword (and w.keyword_why), applies name, score and must_show overrides (brief 20:
+// word_overrides.<index>.must_show and rejected entries in Keyword drop review.json), makes keywords and player
 // names never grey, gives player names the jersey font and takes it from a name match that the song input says is not
 // a name (for example a pun). A font change re-measures the word box about its centre.
-export function applyWordRoles(scene, { mapWords, display, song, names = [], metricsPath }) {
+export function applyWordRoles(scene, { mapWords, display, song, names = [], metricsPath, dropReview = {} }) {
   const overrides = song.word_overrides ?? {};
   const flags = keywordFlags(mapWords, { names, keep: song.fast_words?.keep ?? [], overrides });
   const playerKey = new Set((song.player_names ?? []).map(T));
@@ -103,7 +104,7 @@ export function applyWordRoles(scene, { mapWords, display, song, names = [], met
   // example "barlow" for the Timberwolves' plain condensed sans); default the kit's jersey font (Graduate).
   const jersey = song.jersey_font ?? JERSEY_FONTS[0];
   if (song.jersey_font && metricsPath && !JSON.parse(fs.readFileSync(metricsPath, 'utf8')).fonts[song.jersey_font]) throw Error(`song setting jersey_font "${song.jersey_font}" is not a font in ${metricsPath}`);
-  const log = { greyKeywords: [], greyNames: [], fontChanges: [], scores: [], numerals: [], displays: [], unmatched: [] };
+  const log = { greyKeywords: [], greyNames: [], fontChanges: [], scores: [], numerals: [], displays: [], mustShow: [], unmatched: [] };
   // Same cap height, so the height stays; the width is the new font's (with the jersey bold width when jersey).
   const reFont = (w, font) => {
     if (!metrics || w.font === font || !metrics.fonts[font]) return false;
@@ -115,9 +116,23 @@ export function applyWordRoles(scene, { mapWords, display, song, names = [], met
     const i = mapIndexOf(w, mapWords, display);
     if (i < 0) { if (!w.echo && !w.reveal_copy_of && !w.wordmark) log.unmatched.push(`${w.id} ${w.text}`); continue; }
     const o = overrides[String(i)] ?? {};
+    const rev = dropReview[String(i)];
     w.map_index = i;
     w.keyword = flags[i].keyword; w.keyword_why = flags[i].why;
     if (PRONOUNS.has(norm(mapWords[i].text))) w.pronoun = true; // for hold-hide partners, whatever marked the keyword
+    // Brief 20: must_show from word_overrides.<map index>.must_show or a rejected drop in Keyword drop review.json;
+    // approved drops in Keyword drop review.json are tagged drop_approved so must-show room freeing may clear them.
+    const mustFromSetting = o.must_show === true;
+    const mustFromReview = rev?.verdict === 'reject';
+    if (mustFromSetting || mustFromReview) {
+      w.must_show = true;
+      w.must_show_source = mustFromSetting && mustFromReview
+        ? 'song settings word_overrides + Keyword drop review.json (rejected drop)'
+        : mustFromSetting ? 'song settings word_overrides' : 'Keyword drop review.json (rejected drop)';
+      log.mustShow.push(`${w.id} ${w.text} (map word ${i}) at ${w.t.toFixed(2)} s: must_show (${w.must_show_source})`);
+    } else if (rev?.verdict === 'approve') {
+      w.drop_approved = true;
+    }
     // Brief 10 item 42: a display-text override (for example TREY -> TR3Y) changes the letters only; the box, font and
     // size stay exactly as built.
     if (typeof o.display === 'string' && o.display !== w.text) { log.displays.push(`${w.id} ${w.text} (map word ${i}) at ${w.t.toFixed(2)} s: shown as ${o.display} (song input display override)`); w.text = o.display; }
