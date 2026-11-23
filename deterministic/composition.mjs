@@ -711,6 +711,59 @@ const clipEntranceOk = (scene, w) => {
   }
   return true;
 };
+// Room for a dropped keyword (brief 10 item 37, Jefferson: SETS was missing with empty space beside THREE). A keyword
+// dropped by necessity is put back when there is room: a placement on its own plaque plane, same orientation, at least
+// its minimum letter size in the hold where it is sung, its centre within 3 of its widths or heights of its planned
+// spot, whole in frame from its appearance through its onset, overlapping no other word over its life (size drops shown
+// as ghosts) and not static and partly on screen. Its entrance becomes a pop (motion and clip planes removed). Returns
+// one record per necessity drop: { w, room, how }.
+export function placeInRoom(scene, onsetOf, { until = scene.meta.frames, settings = {} } = {}) {
+  const S = { ...SIZE_DEFAULTS, ...settings }, I = globalThis.KT_INTERP, vfov = scene.meta.vfov ?? 40, fps = scene.meta.fps ?? 30, out = [];
+  const crowdedAt = f => {
+    const p = I.poseAt(scene.cams, f);
+    const on = scene.words.filter(x => !x.reveal_copy_of && drawn(x, f) && inFrameShare(x, f, p, vfov) >= FILLED_SHARE);
+    return on.length >= S.crowdedWords || on.reduce((t, x) => t + boxCoverage(x, f, p, vfov), 0) >= S.crowdedArea;
+  };
+  const ghostOverlap = (w, a, b) => {
+    const ghosts = scene.words.filter(x => x !== w && x.dropped === 'size' && x.size_restore != null).map(x => [x, x.opacity]);
+    for (const [x] of ghosts) { const v = JSON.parse(x.size_restore); if (v) x.opacity = v; else delete x.opacity; }
+    const l = scanOverlap(scene, { from: a, until: b }).overlaps.filter(o => o.includes(`${w.id} `));
+    for (const [x, op] of ghosts) x.opacity = op;
+    return l.length;
+  };
+  const steps = [0, 0.5, -0.5, 1, -1, 1.5, -1.5, 2, -2, 3, -3];
+  const offsets = steps.flatMap(du => steps.map(dv => [du, dv])).sort((p, q) => Math.hypot(...p) - Math.hypot(...q));
+  for (const w of scene.words) {
+    if (!w.keyword || w.reveal_copy_of || w.echo || !['size', 'static'].includes(w.dropped)) continue;
+    const o = onsetOf(w);
+    if (o == null || o >= until) continue;
+    const keep = JSON.stringify({ C: w.C, w: w.w, h: w.h, cap: w.cap, fontPx: w.fontPx, pad: w.pad, motion: w.motion ?? null, clip: w.clip ?? null, opacity: w.opacity ?? null, dropped: w.dropped, size_restore: w.size_restore });
+    const restore = () => { const k = JSON.parse(keep); for (const [key, v] of Object.entries(k)) { if (v == null) delete w[key]; else w[key] = v; } };
+    delete w.opacity; delete w.dropped; delete w.size_restore; w.motion = []; w.clip = [];
+    const A = Math.max(w.on, appearanceFrame(w)), lo = Math.max(0, w.on), hi = Math.min(until, w.off ?? until);
+    const min = (crowdedAt(o) ? S.minH : S.roomFactor * S.minH) * 1.03;
+    const h0 = letterHeight(w, o, I.poseAt(scene.cams, o), vfov);
+    if (!(h0 > 0)) { restore(); out.push({ w, room: false, how: 'not in front of the camera at its onset' }); continue; }
+    const k = Math.max(1, min / h0);
+    const C0 = w.C;
+    for (const key of ['w', 'h', 'cap', 'fontPx', 'pad']) if (typeof w[key] === 'number') w[key] *= k;
+    let how = null;
+    for (const [du, dv] of offsets) {
+      w.C = add(C0, add(mul(w.R, du * w.w), mul(w.U, dv * w.h)));
+      let whole = true;
+      for (let f = A, e = Math.max(A + G.SHOWN_FRAMES - 1, o); f <= e && whole; f++) whole = G.fullyShown(w, f, I.poseAt(scene.cams, f), vfov);
+      if (!whole) continue;
+      if (ghostOverlap(w, lo, hi)) continue;
+      if (staticPartials(scene, { words: [w], until }).some(r => r.start <= o + G.SHOWN_FRAMES)) continue;
+      how = `${du || dv ? `moved ${du ? `${du} of its width along its line` : ''}${du && dv ? ' and ' : ''}${dv ? `${dv} of its height up its plaque` : ''}` : 'in its planned spot'}${k > 1.0001 ? `, grown x${k.toFixed(2)}` : ''}, letters ${(100 * h0 * k).toFixed(1)}% (minimum ${(100 * min / 1.03).toFixed(1)}%), entering as a pop`;
+      break;
+    }
+    if (!how) { restore(); out.push({ w, room: false, how: `no placement within 3 of its widths of its spot is whole in frame through its onset, clear of other words and not cut by an edge (letters would need x${k.toFixed(2)})` }); continue; }
+    w.put_back = true;
+    out.push({ w, room: true, how });
+  }
+  return out;
+}
 // wordmarks: true (brief 8 item 55) sizes only the image wordmarks, by their letter height (w.cap, set from the image's
 // letter share by the song appearance pass); one that cannot grow is kept and reported, never dropped or hidden.
 export function enforceMinSize(scene, onsetOf, { until = scene.meta.frames, settings = {}, wordmarks = false } = {}) {
@@ -799,6 +852,11 @@ export function enforceMinSize(scene, onsetOf, { until = scene.meta.frames, sett
     }
     // Type rule 2 (brief 5 change 3): only non-important words are dropped. An important word (w.important: a name,
     // number or line-end rhyme word by keyword mode's ranking) that cannot grow stays and is reported as under size.
+    // Brief 10 item 37 (SETS at 74.3 s): a word that meets its minimum in the hold where it is sung is not dropped for a
+    // later hold that falls inside its focus window (the camera pulled back); it is hidden there instead, like any
+    // later hold.
+    { const o = onsetOf(w);
+      if (o != null && sh.some(x => x.size >= x.min - 1e-9 && x.h.start <= o && o < x.h.end)) for (const x of short) if (x.h.start > o) x.focused = false; }
     if (short.some(x => x.focused) && w.important) {
       w.size_kept = true;
       counts.importantSmall = (counts.importantSmall ?? 0) + 1;
