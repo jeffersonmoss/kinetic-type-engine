@@ -27,7 +27,7 @@ Builder: the T2 engine chat (Claude, Opus 5.5). Nothing was rendered; the stills
       6. 174.93 to 175.27 s
    3. Making them fail needs either section rebuilds (held) or a rule decision. This touches the open question on whether sideways words are measured by their on-screen height.
 3. **Item 28, swells stay in frame.** A swell, and a slower swell release, is now kept only if the swelled word loses no in-frame share on any frame. AND (23.2 to 23.7 s) stays 100% in frame. It no longer gets the slow 12-frame release, which had run it off the left edge, and it shrinks straight back. IT'S (157.8 s) now settles at x1.83 instead of holding x3.34. YOU, PACK and THAT shrink straight back, as in 6d.
-4. **Item 29, hide report.** Each fly-through hide now says whether it changes visible pixels (some of the word in frame and unoccluded on those frames). 6e: 3 hides, all 3 visible.
+4. **Item 29, hide report.** Each fly-through hide now says whether it changes visible pixels (some of the word in frame and unoccluded on those frames). 6e: 3 hides, all 3 visible. Corrected 23 November (brief 10): only DAY's hide was in effect in 6e; a fill undid both TODAY hides after the report was written.
    1. Correction to my brief 8 numbers: 6d reported 146 hides (300 frames), and Fable counted about 12 visible. Most of the 146 were words beside the camera's path, out of frame or barely in frame. The new rule drops them.
 
 ## 3. Not done

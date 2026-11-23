@@ -298,6 +298,11 @@ const swellReleases = swellRelease(finalObj, onsetOf, { until: frames, maxFrames
 const partnerHides = pairHoldHides(finalObj, onsetOf, { until: frames, maxFrames: emptyMaxF });
 if (partnerHides.length) { const all = emptyFrames(finalObj, { from: 0, until: frames }); fill.remaining = all.filter(r => r.end - r.start + 1 > emptyMaxF); fill.short = all.filter(r => r.end - r.start + 1 <= emptyMaxF); }
 for (const w of finalObj.words) { delete w.size_restore; delete w.size_hides; delete w.size_kept_holds; }
+// Brief 10 item 9: the fills may change the camera (a held or skipped move), so fly-through is judged again on the final
+// camera; the report then marks any earlier hide a fill undid.
+{ const late = hideFlythrough(finalObj, onsetOf, { until: revealF0, maxFrames: emptyMaxF });
+  flythrough.log.push(...late.log.map(x => `(after the fills) ${x}`)); flythrough.visible += late.visible; flythrough.focused = [...new Set([...flythrough.focused, ...late.focused])];
+  if (late.log.some(x => / hidden \d/.test(x))) { const all = emptyFrames(finalObj, { from: 0, until: frames }); fill.remaining = all.filter(r => r.end - r.start + 1 > emptyMaxF); fill.short = all.filter(r => r.end - r.start + 1 <= emptyMaxF); } }
 { const again = hideStaticPartials(finalObj, onsetOf, { until: frames });
   staticHide.log.push(...again.log.map(x => `(after the fills) ${x}`)); staticHide.focused = [...new Set([...staticHide.focused, ...again.focused])];
   if (again.log.length) fill.remaining = emptyFrames(finalObj, { from: 0, until: frames }).filter(r => r.end - r.start + 1 > emptyMaxF); }
@@ -370,6 +375,12 @@ md.push('', '## Opening and team wordmarks', '', appearance.intro,
     `Grey keywords made cream: ${L.greyKeywords.length}. Grey player names made cream: ${L.greyNames.length}. Font changes: ${L.fontChanges.length}. Scores: ${L.scores.length}. Scene words not matched to the song map: ${L.unmatched.length}.`, '',
     ...[...L.greyKeywords, ...L.greyNames, ...L.fontChanges, ...L.scores].map(x => `- ${x}`), ...(L.unmatched.length ? [`- Unmatched: ${L.unmatched.join(', ')}`] : [])); }
 md.push('', '## Hold-hide partners', '', `${partnerHides.length} changes.`, '', ...partnerHides.map(x => `- ${x}`));
+{ const opAt = (w, f) => { let v = 1; for (const [k, x] of w.opacity ?? []) if (k <= f) v = x; return v; };
+  const byId = new Map(finalObj.words.map(w => [w.id, w]));
+  flythrough.log = flythrough.log.map(x => { const m = x.match(/(w\d+[a-z0-9]*) [^:]*: hidden (\d+)-(\d+)/); if (!m) return x; const w = byId.get(m[1]);
+    let undone = 0; for (let f = +m[2]; f < +m[3]; f++) if (w && opAt(w, f) > 0.05) undone++;
+    if (undone === +m[3] - +m[2] && !/no visible change/.test(x)) flythrough.visible--;
+    return undone ? `${x}; UNDONE later on ${undone} of its frames (a fill kept the word on)` : x; }); }
 md.push('', '## Fly-through, swell release, largest word, lone holds (brief 8)', '',
   `Fly-through hides: ${flythrough.log.length}, of which ${flythrough.visible} change visible pixels${flythrough.focused.length ? `; words the camera flies through while they must be shown whole (not hidden): ${flythrough.focused.join(', ')}` : ''}.`, '', ...flythrough.log.map(x => `- ${x}`),
   '', `Swell releases: ${swellReleases.length}.`, '', ...swellReleases.map(x => `- ${x}`),

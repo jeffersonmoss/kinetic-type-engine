@@ -14,6 +14,7 @@ import { isGrey, ungrey } from './word_roles.mjs';
 export const LONE_MIN = 0.22, LONE_WIDTH = 0.8, FOCUS_READ = 15;
 const add = (a, b) => a.map((x, i) => x + b[i]);
 const mul = (a, k) => a.map(x => x * k);
+const sub = (a, b) => a.map((x, i) => x - b[i]);
 const complete = p => ({ ...p, position: add(p.target, mul(p.N, p.dist)) });
 
 // Holds: [start, end) between camera keys, with the key index that lands each one (-1 for the opening hold).
@@ -228,10 +229,11 @@ export function hideFlythrough(scene, onsetOf, { until = scene.meta.frames, lett
       let bad = false, vis = 0;
       if (moving && drawn(w, f) && !I.wordMoving(w, f)) {
         const pose = I.poseAt(scene.cams, f), share = inFrameShare(w, f, pose, vfov);
-        if (share > 0) {
+        if (share > 0 || nearCamera(w, f, pose)) {
           const h = letterHeight(w, f, pose, vfov);
-          bad = (nearCamera(w, f, pose) || (h != null && h > letters && share < FLY_SHARE)) && centreOnWord(w, f, pose);
-          if (bad) vis = visibleFraction(w, f, pose, vfov, scene) ?? 0;
+          bad = ((nearCamera(w, f, pose) || (h != null && h > letters && share < FLY_SHARE)) && centreOnWord(w, f, pose)) ||
+            crossesBox(w, f - 1, scene) || crossesBox(w, f, scene);
+          if (bad) vis = visibleFraction(w, f, pose, vfov, scene, { absolute: true }) ?? 0;
         }
       }
       if (bad && f <= mustEnd) { focused.push(`${w.id} ${w.text} at frame ${f}`); close(f); continue; }
@@ -259,10 +261,27 @@ function centreOnWord(w, f, pose) {
   const u = dot3(hit, e1) / dot3(e1, e1), v = dot3(hit, e2) / dot3(e2, e2);
   return u >= 0 && u <= 1 && v >= 0 && v <= 1;
 }
+// The camera goes through the word's box between frames f and f + 1 (brief 10 item 12: GRINS at 126.00 s, a pale blue
+// block across the right third as the camera's pivot crossed its plaque). Posed geometry, drawn or not.
+function crossesBox(w, f, scene) {
+  const I = globalThis.KT_INTERP;
+  const at = g => {
+    const X = I.wordXform(w, g), pose = I.poseAt(scene.cams, g);
+    const cs = [[-1, -1], [1, -1], [-1, 1]].map(([a, b]) => X(add(w.C, add(mul(w.R, a * w.w / 2), mul(w.U, b * w.h / 2)))));
+    const e1 = sub(cs[1], cs[0]), e2 = sub(cs[2], cs[0]), n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+    const rel = sub(pose.position, cs[0]), d = n.reduce((t, x, i) => t + x * rel[i], 0) / Math.hypot(...n);
+    const u = rel.reduce((t, x, i) => t + x * e1[i], 0) / e1.reduce((t, x) => t + x * x, 0), v = rel.reduce((t, x, i) => t + x * e2[i], 0) / e2.reduce((t, x) => t + x * x, 0);
+    return { d, u, v };
+  };
+  const a = at(f), b = at(f + 1);
+  if (Math.sign(a.d) === Math.sign(b.d)) return false;
+  const t = a.d / (a.d - b.d), u = a.u + (b.u - a.u) * t, v = a.v + (b.v - a.v) * t;
+  return u >= 0 && u <= 1 && v >= 0 && v <= 1;
+}
 // Part of the word is behind the camera's near plane (the camera is inside or past it).
 function nearCamera(w, f, pose) {
   const cs = cornersAt(w, f);
-  return !!cs && cs.some(p => -p.reduce((a, x, i) => a + (x - pose.position[i]) * pose.N[i], 0) < 1);
+  return !!cs && cs.some(p => -p.reduce((a, x, i) => a + (x - pose.position[i]) * pose.N[i], 0) < VIEW_NEAR);
 }
 // No empty frame mid-song (brief 4): where no word is visible between the intro and the end, the words on screen just
 // before stay on until the next word is visible, when that adds no projected overlap. Remaining empty runs are listed.
@@ -576,19 +595,37 @@ export function swellRelease(scene, onsetOf, { until = scene.meta.frames, maxFra
       const shares = () => { const out = []; for (let f = dn.f0; f < end; f++) out.push(drawn(w, f) ? sh(f) : 1); return out; };
       const fr0 = shares();
       const fr = () => { const now = shares(); return now.every((v, i) => v >= Math.min(fr0[i], 0.995) - 1e-9) ? 0 : 1; };
-      const before = [ov(), st(), pa(), em(), 0], was = { f0: dn.f0, f1: dn.f1, to: dn.to };
-      const tries = [['held at its swelled size to its end', { to: k }],
-        [`settles at x${Math.sqrt(k).toFixed(2)}`, { to: Math.sqrt(k) }],
-        [`released over ${Math.min(RELEASE_SLOW, end - dn.f0)} frames`, { f1: Math.max(dn.f1, Math.min(end, dn.f0 + RELEASE_SLOW)) }]];
-      let ok = null;
+      const before = [0, ov(), st(), em(), pa()], was = { f0: dn.f0, f1: dn.f1, to: dn.to, P: dn.P };
+      // Brief 10 item 13: keep the release slow and steer it instead: the release may shrink about another point of the
+      // word's box, with a shift from (1 - k)(P_up - P) to 0 over the same frames, so the word does not jump where the
+      // pivot changes and is steered to a rest point that stays in frame.
+      const hinge = (w.motion ?? []).some(m => m.kind === 'hinge');
+      const slow = Math.max(dn.f1, Math.min(end, dn.f0 + RELEASE_SLOW));
+      const grid = [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]].map(([a, b]) => add(w.C, add(mul(w.R, a * w.w / 2), mul(w.U, b * w.h / 2))));
+      const pivots = hinge ? [up.P] : [up.P, ...grid];
+      const tries = [['held at its swelled size to its end', { to: k, f1: dn.f0 + 1, P: up.P }]];
+      // Slowest first: RELEASE_SLOW frames, then 8 and 6 (still slower than the 3-frame drop).
+      const lens = [...new Set([slow, Math.min(slow, dn.f0 + 8), Math.min(slow, dn.f0 + 6)])].filter(f1 => f1 > dn.f1);
+      for (const f1 of lens) for (const r of [Math.sqrt(k), 1]) pivots.forEach((P, i) => tries.push([`released over ${f1 - dn.f0} frames to x${r.toFixed(2)}${i ? ', steered about another point of its box' : ''}`, { to: r, f1, P }]));
+      tries.push([`settles at x${Math.sqrt(k).toFixed(2)}`, { to: Math.sqrt(k), P: up.P }]);
+      let ok = null, steer = null; const why = {};
       for (const [name, t] of tries) {
         Object.assign(dn, was, t);
-        if (t.to === k) dn.f1 = dn.f0 + 1;
-        const after = [ov(), st(), pa(), em(), fr()];
-        if (after.every((x, i) => x <= before[i])) { ok = name; break; }
+        if (steer) { w.motion = w.motion.filter(m => !steer.includes(m)); steer = null; }
+        const same = t.P.every((x, i) => Math.abs(x - up.P[i]) < 1e-6);
+        if (!same) {
+          // A shift channel holds its first segment's `from` before it starts, so a zero segment comes first.
+          steer = [{ f0: w.on - 1, f1: w.on - 1, kind: 'shift', from: [0, 0, 0], to: [0, 0, 0], steer: true },
+            { f0: dn.f0, f1: dn.f1, ease: dn.ease, kind: 'shift', from: mul(sub(up.P, t.P), 1 - k), to: [0, 0, 0], steer: true }];
+          w.motion.push(...steer);
+        }
+        const checks = [fr, ov, st, em, pa];
+        const bad = checks.findIndex((c, i) => c() > before[i]);
+        if (bad < 0) { ok = name; break; }
+        const nm = ['runs off the frame', 'overlap', 'static partial', 'empty stretch', 'partly shown'][bad]; why[nm] = (why[nm] ?? 0) + 1;
       }
-      if (!ok) Object.assign(dn, was);
-      log.push(`${w.id} ${w.text} (swelled x${k.toFixed(2)} at frame ${up.f0}): ${ok ?? 'left to shrink back to size (each other release adds an overlap, a cut, an empty stretch or runs off the frame)'}`);
+      if (!ok) { Object.assign(dn, was); if (steer) w.motion = w.motion.filter(m => !steer.includes(m)); }
+      log.push(`${w.id} ${w.text} (swelled x${k.toFixed(2)} at frame ${up.f0}): ${ok ?? `left to shrink back to size (slower or steered releases refused: ${Object.entries(why).map(([k, n]) => `${k} ${n}`).join(', ')})`}`);
     }
   }
   return log;
@@ -976,7 +1013,9 @@ function unoccludedShare(w, f, pose, vfov, scene, X, band) {
 }
 // Clip planes (brief 7 item 1): the visible fraction also cuts the word by its active clip half-spaces, as the viewer
 // does, so a word stuck part-way past its host's edge counts as partly shown.
-export function visibleFraction(w, f, pose, vfov, scene = null) {
+// The viewer's camera clips at VIEW_NEAR (viewer.html PerspectiveCamera near 20), so nothing nearer is drawn.
+export const VIEW_NEAR = 20;
+export function visibleFraction(w, f, pose, vfov, scene = null, { absolute = false } = {}) {
   const I = globalThis.KT_INTERP;
   // The letters' band is the cap height plus the drawn ink outside it: round-letter overshoot (3% of the cap) and, on
   // jersey letters, half the bold stroke on each side (brief 7 item 11: a jersey word whose cap band was just past the
@@ -1000,7 +1039,7 @@ export function visibleFraction(w, f, pose, vfov, scene = null) {
       const d = p.map((x, i) => x - pose.position[i]);
       return [d.reduce((s, x, i) => s + x * pose.R[i], 0), d.reduce((s, x, i) => s + x * pose.U[i], 0), -d.reduce((s, x, i) => s + x * pose.N[i], 0)];
     });
-    const near = 1;
+    const near = VIEW_NEAR;
     cam = clipPoly(cam, p => p[2] >= near, (a, b) => { const t = (near - a[2]) / (b[2] - a[2]); return a.map((x, i) => x + (b[i] - x) * t); });
     return cam.length < 3 ? null : cam.map(q => [q[0] / (q[2] * tv * aspect), q[1] / (q[2] * tv)]);
   };
@@ -1012,7 +1051,7 @@ export function visibleFraction(w, f, pose, vfov, scene = null) {
   if (!p) return 0;
   for (const [axis, sign] of [[0, 1], [0, -1], [1, 1], [1, -1]])
     p = clipPoly(p, q => sign * q[axis] <= 1, (a, b) => { const t = (sign - a[axis]) / (b[axis] - a[axis]); return a.map((x, i) => x + (b[i] - x) * t); });
-  const share = p.length < 3 ? 0 : polyArea(p) / total;
+  const share = p.length < 3 ? 0 : (absolute ? polyArea(p) / 4 : polyArea(p) / total);
   return share > 0 && scene ? share * unoccludedShare(w, f, pose, vfov, scene, X, band) : share;
 }
 // Runs of a word partly on screen and static, each inside its partly-on-screen span [spanStart, spanEnd).
