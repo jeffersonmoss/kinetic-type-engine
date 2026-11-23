@@ -284,6 +284,17 @@ const stillEnding = checkStillEnding(finalObj, { minHoldFrames: MIN_END_HOLD });
 if (!stillEnding.pass) process.exitCode = 1;
 const overlapRepair = { retired: joint.overlapLog };
 
+// Song fonts (23 November 2026): song setting custom_fonts { "<font key>": { "family": "...", "file": "<path in engine
+// input>" } } ships a font file with the song (for example the Timberwolves classic pointy jersey font as jersey_font).
+// The key must be measured into the kit metrics file (tools/measure-fonts) so layout and render agree.
+{ const MIME = { '.ttf': 'font/ttf', '.otf': 'font/otf', '.woff': 'font/woff', '.woff2': 'font/woff2' };
+  const cf = {};
+  for (const [key, f] of Object.entries(song.custom_fonts ?? {})) {
+    const file = inp(f.file), type = MIME[path.extname(file).toLowerCase()];
+    if (!type) throw Error(`custom_fonts.${key}: unsupported font file ${file}`);
+    cf[key] = { family: f.family, src: `data:${type};base64,${fs.readFileSync(file).toString('base64')}` };
+  }
+  if (Object.keys(cf).length) finalObj.customFonts = cf; }
 const appearance = songAppearance(finalObj, song, inp, Math.min(...map.words.map(w => w.start_s)));
 if (!appearance.pass) process.exitCode = 1;
 outlines.log.push(...noOutlines(finalObj, { flatOf }).log);

@@ -29,6 +29,12 @@ const ST={'heat-flame':{bg:'#D0102E',fill:'flame'},heat:{bg:'#98002E',fill:'#fff
 // Song-agnostic (22 November 2026): palette styles this table lacks come from the scene's palette (build_best writes meta.palette.styles).
 for(const ps of (S.meta.palette?.styles ?? [])) if(!ST[ps.id]){const c=ps.colours ?? {};ST[ps.id]=ps.kind==='outline' ? {stroke:c.stroke ?? c.text} : {...(c.background ? {bg:c.background} : {}), fill:c.text ?? '#F3EBDD', ...(c.border ? {border:c.border} : {})};}
 await Promise.all(Object.entries(FAM).map(([k,f])=>document.fonts.load(`${WEIGHT[k]||400} 100px ${f}`)));
+// Song fonts (song setting custom_fonts, 23 November 2026): a font file shipped with the song, keyed like the kit fonts
+// (its metrics are in the kit metrics file). Characters it lacks fall back to Anton, as they were measured.
+await Promise.all(Object.entries(S.customFonts ?? {}).map(async ([key, f]) => {
+  document.fonts.add(await new FontFace(f.family, `url("${f.src}")`).load());
+  FAM[key]=`"${f.family}", Anton`;
+}));
 await Promise.all(Object.entries(S.wordmarkFonts ?? {}).map(async ([family, src]) => {
   const face = new FontFace(family, `url("${src}")`);
   document.fonts.add(await face.load());
