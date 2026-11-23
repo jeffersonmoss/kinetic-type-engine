@@ -913,7 +913,10 @@ export function overlapFrames(list, fps = 30, id = null) {
 // and partly visible through its shown-whole requirement, with no new overlap and no new shown-whole failure. Returns a
 // description, or null (the word is left where it was).
 function slideWhole(scene, w, onsetOf, until, mustEnd) {
-  if ((w.clip ?? []).length) return null;
+  // A word entering past a clip plane slides only across the plane's normal, so it still emerges from behind its host
+  // (brief 8 item 49: IN, riding out from behind CIRCLE, was dropped because clip words were never slid).
+  const clipNs = (w.clip ?? []).map(c => c.n);
+  const across = d => clipNs.every(n => Math.abs(d[0] * n[0] + d[1] * n[1] + d[2] * n[2]) < 1e-6 * Math.hypot(...n) * Math.hypot(...d));
   const lo = Math.max(0, w.on), hi = Math.min(until, w.off ?? until);
   // Overlaps that involve this word (a plain count could trade one overlap for another; brief 7).
   // Counted with every size drop shown, since the empty-screen rule may bring one back (TREY slid onto FOR and A).
@@ -924,15 +927,30 @@ function slideWhole(scene, w, onsetOf, until, mustEnd) {
     for (const [x, op] of ghosts) x.opacity = op;
     return overlapFrames(l, scene.meta.fps ?? 30) + 1000 * overlapFrames(l, scene.meta.fps ?? 30, w.id);
   };
-  const own = () => gateFailures({ ...scene, words: [w] }, onsetOf, { until }).filter(x => x.kind === 'partial' || x.kind === 'unshown').length;
+  // The slid word must be whole at its onset: neither partly shown nor slid out of frame (brief 8 item 58: RAISE in
+  // Flagg slid first to partly shown, then wholly out of frame).
+  const own = () => gateFailures({ ...scene, words: [w] }, onsetOf, { until }).reduce((t, x) => t + (x.kind === 'partial' ? 100 : x.kind === 'unshown' ? 1 : 0), 0);
   const stuck = () => staticPartials(scene, { words: [w], until }).some(r => r.start <= mustEnd);
-  const ovBefore = ov(), ownBefore = own(), C0 = w.C;
-  for (const k of [0.25, 0.5, 0.75, 1, 1.5]) for (const [dir, size, name] of [[w.R, w.w, 'along its line'], [mul(w.R, -1), w.w, 'back along its line'], [w.U, w.h, 'up its plaque'], [mul(w.U, -1), w.h, 'down its plaque']]) {
+  const ovBefore = ov(), C0 = w.C;
+  const dirs = [[w.R, w.w, 'along its line'], [mul(w.R, -1), w.w, 'back along its line'], [w.U, w.h, 'up its plaque'], [mul(w.U, -1), w.h, 'down its plaque']].filter(([d]) => across(d));
+  for (const k of [0.25, 0.5, 0.75, 1, 1.5, 2, 3]) for (const [dir, size, name] of dirs) {
     w.C = add(C0, mul(dir, k * size));
-    if (!stuck() && ov() <= ovBefore && own() <= ownBefore) return `${name} by ${k} of its ${size === w.w ? 'width' : 'height'}`;
+    const o = own();
+    if (!stuck() && ov() <= ovBefore && o === 0) return `${name} by ${k} of its ${size === w.w ? 'width' : 'height'}`;
   }
   w.C = C0;
   return null;
+}
+// Static partials a focused word cannot be hidden from without breaking its shown-whole requirement (the cases the
+// join must slide, drop or hide by necessity). Candidate choice ranks sections by this count (brief 8 item 58).
+export function staticFocusRuns(scene, onsetOf, { until = scene.meta.frames } = {}) {
+  const fps = scene.meta.fps ?? 30;
+  return staticPartials(scene, { until }).filter(x => {
+    const o = onsetOf(x.w);
+    if (x.w.reveal_copy_of || o == null) return false;
+    const [fa, fb] = focusWindow(x.w, onsetOf, fps);
+    return fa < x.spanEnd && fb > x.spanStart && x.start <= Math.max(appearanceFrame(x.w) + G.SHOWN_FRAMES - 1, o);
+  });
 }
 export function hideStaticPartials(scene, onsetOf, { until = scene.meta.frames } = {}) {
   const fps = scene.meta.fps ?? 30, log = [], focused = [];
@@ -963,7 +981,11 @@ export function hideStaticPartials(scene, onsetOf, { until = scene.meta.frames }
             log.push(`${x.w.id} ${x.w.text}: dropped (${x.w.keyword ? `keyword, dropped by necessity: no slide along its plaque makes it whole` : 'filler'}; ${Math.round(100 * x.share)}% visible and static at its onset, frames ${x.start}-${x.end})`);
             continue;
           }
-          focused.push(`${x.w.id} ${x.w.text} ${x.start}-${x.end}`); continue;
+          // Brief 8 item 58 (MAINE in Raise the Flagg): a name or number that no slide makes whole is hidden for its
+          // partly-on-screen span, a necessity drop for those frames, reported.
+          hide(x.w, a, b); x.w.static_hidden = [...(x.w.static_hidden ?? []), [a, b]]; changed = true;
+          log.push(`${x.w.id} ${x.w.text}: hidden ${a}-${b} by necessity (name or number; no slide along its plaque makes it whole; ${Math.round(100 * x.share)}% visible and static at its onset, frames ${x.start}-${x.end})`);
+          focused.push(`${x.w.id} ${x.w.text} ${x.start}-${x.end} (hidden by necessity)`); continue;
         }
         from = Math.max(a, mustEnd + 1);
       }
