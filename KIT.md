@@ -4,6 +4,8 @@ A Remotion engine for kinetic typography lyric videos: the lyric is set as block
 
 Versions: Remotion 4.0.543, React 19.3.1, TypeScript 7.0.2 (see `package.json`). Run `npm install` once.
 
+Delegation: song chats start their own delegates as T3 Code sub-threads (`delegate_task`), not through the engine chat; see `deterministic/KIT.md` section 0.
+
 ## 1. Set-up, in one page
 
 1. **Repository layout.**

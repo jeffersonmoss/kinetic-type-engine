@@ -4,6 +4,13 @@ The deterministic engine builds a kinetic-type lyric video for one song as a 3D 
 
 It was built for Room for One (LeBron Glaze) between 21 and 22 November 2026 in the prototype repo `~/Experiments/Room for One Music Video/prototype/Deterministic engine - h1 - word transitions 22 November/` (branch `word-transitions`, commit 4e2d2b0) and moved here, song-agnostic, on 22 November 2026. It lives beside the Remotion engine (`../engine`, `../KIT.md`) and shares nothing with it except the font metrics in `../fonts/`.
 
+## 0. Who does the work (Jefferson, 23 November 2026)
+
+1. The engine chat owns engine code and its own video. A song chat that needs engine changes, builds, renders or research for its song does not route them through the engine chat. It starts its own delegate.
+2. Start delegates as sub-threads of the calling chat with T3 Code's `delegate_task` tool (the t3-code MCP), so they nest under that chat. `t3 thread start` makes top-level threads; use it only when Jefferson asks for a new top-level chat.
+3. A chat without the t3-code MCP cannot make sub-threads. It says so to Jefferson rather than borrowing another chat to do the work.
+4. Engine changes a song needs go to the engine as a fix brief in `reviews/`, built by the song chat's own delegate. Tell the engine chat what landed (commit and one line) so it can publish the mirror.
+
 ## 1. What is in this folder
 
 1. Planning, in pipeline order: `plan_words.mjs` (words into clusters and shots, emphasis), `style.mjs` (palette styles per word), `compose_plaques.mjs` (one fitted plaque per shot), `plan_trail.mjs` (folds: how each plaque attaches to the last), `camera.mjs` (camera keys and visibility), `plan_joints.mjs` (attached word transitions: the entrance of each word), `primitives.mjs` (the entrance primitives), `rng.mjs` (seeded streams), `interp.js` (camera and word interpolation, shared with the viewer).
