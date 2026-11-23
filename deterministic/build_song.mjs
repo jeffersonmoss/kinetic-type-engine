@@ -1,3 +1,4 @@
+import { scanOverlap } from './overlap_gate.mjs';
 // Build a whole song with the deterministic engine (song-agnostic driver, 22 November 2026; generalised from the Room for
 // One prototype's "videos/Room for One - whole song.mjs", W2 commit 4e2d2b0). See KIT.md.
 //   1. An optional approved opening scene is used as is (Room for One: build #144).
@@ -102,7 +103,7 @@ for (const sec of song.sections) {
   const scene = JSON.parse(fs.readFileSync(path.join(dir, 'scene.json'), 'utf8'));
   const log = JSON.parse(fs.readFileSync(path.join(dir, 'build log.json'), 'utf8'));
   const fails = Object.fromEntries(Object.entries(log.checkFailures ?? {}).map(([k, v]) => [k, v]));
-  rows.push({ label, built: N, survivors: log.survivorsOfN, chosen: `#${log.buildIndex}${log.passed ? '' : ' (severity fallback)'}`, severity: severity(log), pops: log.pops, worst: worstReadingLoss(log), gate: (log.checkFailures?.[SHOWN_GATE] ?? []).length, shownRepair: log.shownRepair, failures: fails, flags: (log.rulingFlags ?? []).length, seconds: ((Date.now() - t0) / 1000).toFixed(1) });
+  rows.push({ checkFrequency: log.checkFrequency, label, built: N, survivors: log.survivorsOfN, chosen: `#${log.buildIndex}${log.passed ? '' : ' (severity fallback)'}`, severity: severity(log), pops: log.pops, worst: worstReadingLoss(log), gate: (log.checkFailures?.[SHOWN_GATE] ?? []).length, shownRepair: log.shownRepair, failures: fails, flags: (log.rulingFlags ?? []).length, seconds: ((Date.now() - t0) / 1000).toFixed(1) });
   for (const [k, v] of Object.entries(fails)) for (const m of v) flagged.push(`${label}: ${k}: ${m}`);
   parts.push({ number: sec.n, label, scene, startFrame: isFirst ? 0 : Math.round(w.start_s * FPS), ...(sec.seam ? { seam: sec.seam } : {}) });
 }
@@ -146,6 +147,10 @@ let el = 'No picture elements (song settings has no "picture_elements").';
 if (song.picture_elements) el = execFileSync('node', ['run_elements.mjs', inp(song.picture_elements), notes, finalScene], { cwd: engine, encoding: 'utf8' });
 else fs.copyFileSync(notes, finalScene);
 const finalObj = JSON.parse(fs.readFileSync(finalScene, 'utf8'));
+const overlapRepair = scanOverlap(finalObj, { until: revealF0, repair: true });
+const overlapFinal = scanOverlap(finalObj, { until: revealF0 });
+if (overlapFinal.overlaps.length) process.exitCode = 1;
+fs.writeFileSync(finalScene, JSON.stringify(finalObj, null, 1));
 const syncCheck = checkSync(finalObj, sung), holdCheck = checkHolds(finalObj, sung, { until: revealF0 });
 const shownFinal = gateFailures(finalObj, onsetOf, { until: revealF0 });
 const partialFinal = shownFinal.filter(x => x.kind === 'partial'), droppedFinal = shownFinal.filter(x => x.kind !== 'partial');
@@ -176,6 +181,10 @@ md.push('## Sections', '', 'Fallback candidates are ranked: passing first, then 
 for (const r of rows) md.push(`| ${r.label} | ${r.built} | ${r.survivors} | ${r.chosen} | ${r.gate ?? '-'} | ${r.worst ? `${r.worst.loss} frames${r.worst.word ? ` (${r.worst.word})` : ''}` : '-'} | ${r.severity} | ${Object.entries(r.failures).map(([k, v]) => `${k} x${v.length}`).join(', ') || 'none'} | ${r.flags} | ${r.shownRepair ? `${r.shownRepair.before} to ${r.shownRepair.after} partly shown, ${r.shownRepair.log.length} repairs` : '-'} |`);
 md.push('', '## Seams', '', '| Into | Frame | Join | Frames | Previous last word | Reading frames before the join |', '|---|---|---|---|---|---|');
 for (const s of seams) md.push(`| ${s.section} | ${s.frame} | ${s.verb} | ${s.frames} | ${s.previousLastWord} | ${s.readingFramesBeforeSeam} |`);
+md.push('', '## Candidate check frequency', '', ...rows.filter(r => r.checkFrequency).map(r =>
+  `- ${r.label}: ${Object.entries(r.checkFrequency).sort((a,b) => b[1]-a[1]).map(([name,n]) => `${name} ${n}/${N}`).join(', ')}`));
+md.push('', '## Projected overlap', '', `${overlapFinal.overlaps.length} remaining intervals (${overlapFinal.overlaps.length ? 'FAIL' : 'PASS'}).`, '',
+  ...overlapRepair.retired.map(x => `- Repair: ${x}`), ...overlapFinal.overlaps.map(x => `- ${x}`));
 md.push('', '## Reveal', '', `Starts at frame ${revealF0} (${(revealF0 / FPS).toFixed(2)} s), pulls back until frame ${reveal.f1} (${(reveal.f1 / FPS).toFixed(2)} s), then holds still for ${((frames - reveal.f1) / FPS).toFixed(2)} s to the end. Compacted layout (assemble_sections.mjs compactLayout): ${reveal.compaction?.chains} chains; gaps between chains in the true layout ${JSON.stringify(reveal.compaction?.gapsBefore)} units; largest gap between consecutive plaques after compaction ${reveal.compaction?.largestGapAfter} units; dropped ${reveal.compaction?.dropped.length ?? 0}. The reveal shows ${reveal.tail} of ${reveal.of} plaques. Reveal check on frame ${revealCheck.frame} (needs 20%; the reveal was laid out for ${(REVEAL_MIN_COVERAGE * 100).toFixed(0)}%): ${(revealCheck.coverage * 100).toFixed(1)}% of the frame covered, ${revealCheck.plaquesInFrame} of ${revealCheck.plaquesShown} shown plaques in frame, ${revealCheck.pass ? 'PASS' : 'FAIL'}.`, '', ...(reveal.compaction?.log ?? []).map(l => `- ${l}`), '');
 md.push(`Reveal safety: ${droppedChains.length} dropped plaques (${droppedChains.length ? 'FAIL' : 'PASS'}); ${teleports.length} moved plaques in frame on the frame before the switch (${teleports.length ? `FAIL: ${teleports.join(', ')}` : 'PASS'}).`, '');
 md.push('## Flagged for Jefferson', '', ...(flagged.length ? flagged.map((f, i) => `${i + 1}. ${f}`) : ['None.']), '');

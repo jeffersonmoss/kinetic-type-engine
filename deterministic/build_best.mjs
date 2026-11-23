@@ -1,3 +1,4 @@
+import { scanOverlap, OVERLAP_GATE } from './overlap_gate.mjs';
 // Single-build assembler, Best-of-200 selector, seed variants, pins, and CLI (rulebook 4.4, 13.4, 18.6.2, 18.8).
 import fs from 'node:fs';
 import path from 'node:path';
@@ -239,6 +240,13 @@ export function buildSingle({
     evaluation.passed = false;
   }
 
+  const overlap = scanOverlap(scene, { from: Math.min(...scene.words.map(w => w.on)), until: Math.min(gateUntil, scene.meta.frames), repair: true });
+  if (overlap.overlaps.length) {
+    evaluation.checks[OVERLAP_GATE] = { failures: overlap.overlaps };
+    evaluation.failedChecks.push(OVERLAP_GATE);
+    evaluation.passed = false;
+  }
+
   // Build structured build log (4.1, 18.7.4) and pin snapshot (18.8.8).
   let changeCounter = 0;
   const shotLogs = [];
@@ -383,6 +391,7 @@ export function buildSingle({
     flags: { mortar, panel, words: wordsMode, ease },
     frames: cameraPlan.totalFrames,
     passed: evaluation.passed,
+    overlapRepairs: overlap.retired,
     failedChecks: evaluation.failedChecks,
     checkFailures: Object.fromEntries(evaluation.failedChecks.map(k => [k, evaluation.checks[k].failures])),
     rulingFlags: evaluation.flags ?? [],
@@ -526,6 +535,12 @@ export function buildBest({
   const termNames = Object.keys(all[0].buildLog.terms);
   const medianTerms = Object.fromEntries(termNames.map(k => [k, medianOf(all.map(r => r.buildLog.terms[k]))]));
 
+  const checkFrequency = {};
+  for (const { buildLog } of all) for (const check of buildLog.failedChecks) {
+    checkFrequency[check] = (checkFrequency[check] ?? 0) + 1;
+  }
+  const passingOverlap = all.filter(r => !r.buildLog.checkFailures[OVERLAP_GATE]?.length);
+  const eligible = passingOverlap.length ? passingOverlap : all;
   const survivors = all.filter(r => r.buildLog.passed);
   let pool;
   let flagged = false;
@@ -535,7 +550,7 @@ export function buildBest({
     flagged = true;
     // 4.4: If fewer than 3 survive, keep the three with fewest failed checks and flag the clip.
     // Fable's ruling B20 (22 November 2026): survivors first, then the lowest severity, ties by score.
-    pool = [...all]
+    pool = [...eligible]
       .sort((a, b) => (b.buildLog.passed - a.buildLog.passed) || gateCount(a.buildLog) - gateCount(b.buildLog) || worstReadingLoss(a.buildLog).loss - worstReadingLoss(b.buildLog).loss || severity(a.buildLog) - severity(b.buildLog) || b.buildLog.score - a.buildLog.score || a.buildLog.buildIndex - b.buildLog.buildIndex)
       .slice(0, Math.max(3, survivors.length));
   }
@@ -566,6 +581,7 @@ export function buildBest({
   }
 
   const chosen = pick === 3 ? pick3 : pick === 2 ? pick2 : pick1;
+  chosen.buildLog.checkFrequency = checkFrequency;
   chosen.buildLog.medianScore = medianScore;
   chosen.buildLog.medianTerms = medianTerms;
   chosen.buildLog.survivorsOfN = survivors.length;
