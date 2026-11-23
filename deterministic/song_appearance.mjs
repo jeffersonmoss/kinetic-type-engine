@@ -80,6 +80,7 @@ export function songAppearance(scene, song, resolve, firstOnset) {
       if (dims) {
         const k = Math.min(w.w * 0.94 / dims.width, w.h * 0.9 / dims.height);
         w.cap = dims.height * k * share;
+        w.wordmark.pre_cap = w.cap; // letter height before any block cut, for the wordmark growth pass (brief 12/14)
         // Brief 12 item 1.1: a wordmark image on a block sits centred with an even margin on all four sides, measured
         // from the artwork's ink (its alpha box, else the whole image), not its file box. The box is cut to the ink's
         // shape plus WORDMARK_MARGIN x the ink height on every side, about its centre, and never grows (so it adds no
@@ -90,7 +91,6 @@ export function songAppearance(scene, song, resolve, firstOnset) {
           const aspect = (dims.width * (ink.x1 - ink.x0)) / (dims.height * (ink.y1 - ink.y0));
           let inkH = dims.height * k * (ink.y1 - ink.y0);
           const fit = Math.min(1, w.w / (inkH * aspect + 2 * WORDMARK_MARGIN * inkH), w.h / (inkH * (1 + 2 * WORDMARK_MARGIN)));
-          w.wordmark.pre_cap = w.cap; // letter height before the cut, for the wordmark growth pass (brief 12)
           inkH *= fit;
           w.w = inkH * aspect + 2 * WORDMARK_MARGIN * inkH; w.h = inkH * (1 + 2 * WORDMARK_MARGIN); w.pad = WORDMARK_MARGIN * inkH;
           w.cap = inkH * (style.letter_share ?? 1);

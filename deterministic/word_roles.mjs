@@ -212,8 +212,8 @@ export function teamColourNames(scene, { song, palette, metricsPath, until = sce
     let pt = song.player_teams?.[T(w.text).replace(/'S$/, '')] ?? {};
     if (typeof pt === 'string') pt = song.player_teams?.[pt] ?? {};
     const team = { ...base, ...pt };
-    const keep = JSON.stringify({ w: w.w, h: w.h, pad: w.pad ?? null, colours: w.colours ?? null });
-    const back = () => { const k = JSON.parse(keep); w.w = k.w; w.h = k.h; if (k.pad == null) delete w.pad; else w.pad = k.pad; if (k.colours) w.colours = k.colours; else delete w.colours; };
+    const keep = JSON.stringify({ w: w.w, h: w.h, pad: w.pad ?? null, style: w.style, kind: w.kind ?? null, colours: w.colours ?? null });
+    const back = () => { const k = JSON.parse(keep); w.w = k.w; w.h = k.h; w.style = k.style; if (k.kind == null) delete w.kind; else w.kind = k.kind; if (k.pad == null) delete w.pad; else w.pad = k.pad; if (k.colours) w.colours = k.colours; else delete w.colours; };
     let how = 'letters';
     if (mode === 'block' && metrics) {
       const a = Math.max(0, w.on), b = Math.min(until, w.off ?? until), before = mine(w, a, b), whole = wholeFrames(w);
@@ -221,10 +221,16 @@ export function teamColourNames(scene, { song, palette, metricsPath, until = sce
       // Brief 12 item 1.2 ("we don't do thin lines"): the team-colour margin round the letters is at least
       // BLOCK_MIN_PAD x the letter height. Tried: full block padding (0.28), then the minimum (0.18), each grown about
       // the centre; else the box stays and the letters shrink inside it until the margin reaches the minimum.
+      const setBlock = () => {
+        const { stroke, outline, ...rest } = w.colours ?? {};
+        w.colours = { ...rest, text: team.block_text, background: team.dark };
+        w.kind = 'block';
+        if (palette.styles?.find(s => s.id === w.style)?.kind === 'outline') w.style = 'cream';
+      };
       for (const p of [0.28, BLOCK_MIN_PAD]) {
         back(); const pad = p * w.cap;
         if (pad0 < pad) { const dw = 2 * (pad - pad0); w.w += dw; w.h += dw; w.pad = pad; }
-        w.colours = { ...(w.colours ?? {}), text: team.block_text, background: team.dark };
+        setBlock();
         if (mine(w, a, b) <= before && wholeFrames(w).length >= whole.length) { how = p === 0.28 ? 'block' : 'minimum block'; break; }
       }
       if (how === 'letters') {
@@ -235,7 +241,7 @@ export function teamColourNames(scene, { song, palette, metricsPath, until = sce
           for (const key of ['cap', 'fontPx']) if (typeof w[key] === 'number') w[key] *= k;
           w.pad = BLOCK_MIN_PAD * w.cap; w.block_shrunk = +k.toFixed(3);
         }
-        w.colours = { ...(w.colours ?? {}), text: team.block_text, background: team.dark }; how = 'tight block';
+        setBlock(); how = 'tight block';
       }
     }
     if (how === 'letters') { const c = { ...(w.colours ?? {}), text: team.light }; delete c.background; w.colours = c; w.style = 'cream'; if ((w.pad ?? 0) > 0.2 * w.cap) { const d = 2 * (w.pad - 0.08 * w.cap); w.w -= d; w.h -= d; w.pad = 0.08 * w.cap; } }

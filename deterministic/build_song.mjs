@@ -21,7 +21,7 @@ import './interp.js';
 import { checkSync, checkHolds } from './whole_song_checks.mjs';
 import { assemble, hideWhenGone, buildReveal, checkReveal, endOnWord, checkStillEnding } from './assemble_sections.mjs';
 import { tightenLone, hideEdgeClutter, hideUnreadable, hideFlythrough, SIDE_FILL, placeInRoom, growWordmarks, loneHolds, LONE_HOLD, swellRelease, largestGreyToCream, fillEmptyFrames, swellSmallWords, floorZoomEntrances, pairHoldHides, emptyFrames, enforceMinSize, noOutlines, undoSizeForEmpty, hideStaticPartials, staticPartials, STATIC_RATE, STATIC_FRAMES } from './composition.mjs';
-import { JERSEY_BOLD } from './style.mjs';
+import { JERSEY_BOLD, normalizePalette, checkPalette } from './style.mjs';
 import { keywordPlan, fastWordsOn, wordRanks } from './keywords.mjs';
 import { applyWordRoles, teamColourNames } from './word_roles.mjs';
 import { severity, worstReadingLoss, SHOWN_GATE } from './build_best.mjs';
@@ -157,6 +157,26 @@ for (const { sec, w, label, dir, isFirst, out, seconds } of jobs) {
 
 const frames = Math.round(SONG_END * FPS);
 const { scene, seams, partReveal } = assemble(parts, { fps: FPS, frames, end: SONG_END, gapFrac: song.seam_gap ?? 0.3 });
+// Refresh the joined scene's palette and style-derived word colours from the current palette.json so --skip-build
+// picks up palette colour passes without rebuilding sections (brief 14).
+{
+  const freshPalette = JSON.parse(fs.readFileSync(palettePath, 'utf8'));
+  normalizePalette(freshPalette);
+  checkPalette(freshPalette);
+  scene.meta.palette = { ground: freshPalette.ground, panel: freshPalette.panel, panel_side: freshPalette.panel_side, styles: freshPalette.styles };
+  const styleById = new Map(freshPalette.styles.map(s => [s.id, s]));
+  const plaqueById = new Map(scene.plaques.map(p => [p.id, p]));
+  for (const w of scene.words) {
+    const st = styleById.get(w.style);
+    if (!st) continue;
+    const surface = plaqueById.get(w.plaque)?.surface;
+    const cols = { ...st.colours };
+    if (surface === 'panel' && st.on_panel) cols.text = st.on_panel;
+    if (st.kind === 'outline') cols.stroke = cols.text;
+    if (st.edge) cols.outline = st.edge;
+    w.colours = cols;
+  }
+}
 // Reveal timing: the last section's own reveal frame (on its beat); viewing direction from that key's end pose.
 // Ending (engine fix brief 3, item 1): song settings "ending" {reveal: false, hold: "<word>" | "last"} ends on that word
 // held still to the last frame; otherwise the reveal pulls back, starting early enough to land and hold still for at
