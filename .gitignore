@@ -5,3 +5,6 @@ tools/measure-fonts.html
 
 # Stray detached worktree left by an earlier check; not deleted (needs Jefferson's say)
 /Kinetic Type Engine HEAD check/
+
+# Machine-wide song build lock (build_lock.mjs)
+/.build-lock

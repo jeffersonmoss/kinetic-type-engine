@@ -10,11 +10,12 @@ import { scanOverlap, repairShownAndOverlap } from './overlap_gate.mjs';
 //      beat pulses) and run_elements.mjs (the song's picture elements, if any) run over the whole scene.
 //   5. Whole-song checks, a click track of the repeats and ad-libs, and "Whole song - provenance and flags.md".
 // Usage: node build_song.mjs "<song workspace>/engine input" [--out "<song workspace>/engine output/<run name>"]
-//          [--N 200] [--skip-build] [--sections 4,5] [--reveal-coverage 0.2]
+//          [--N 200] [--jobs 6] [--skip-build] [--sections 4,5] [--reveal-coverage 0.2]
 // Exit code 1 when a whole-song check fails (the report says which); the scene is still written.
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execFile } from 'node:child_process';
+import { acquireBuildLock, trackChild, defaultSignalsForSyncWork } from './build_lock.mjs';
 import { fileURLToPath } from 'node:url';
 import './interp.js';
 import { checkSync, checkHolds } from './whole_song_checks.mjs';
@@ -55,6 +56,8 @@ const audio = inp(song.audio);
 if (!audio || !fs.existsSync(audio)) throw Error(`song audio not found: ${audio}`);
 const mapPath = inp(song.map);
 const palettePath = inp(song.palette);
+// One build at a time on this machine (build_lock.mjs); a second build queues until this one exits.
+await acquireBuildLock(song.title ?? path.basename(path.dirname(inputDir)));
 
 // ---- Song map with the timing corrections applied, and the section words (from the prototype's section words.mjs) ----
 const rawMap = JSON.parse(fs.readFileSync(mapPath, 'utf8'));
@@ -108,24 +111,45 @@ if (opening) {
   parts.push({ number: 1, label: opening.label, scene: JSON.parse(fs.readFileSync(inp(opening.scene), 'utf8')), startFrame: 0 });
   rows.push({ label: opening.label, built: 'approved, not rebuilt', survivors: '-', chosen: opening.chosen ?? 'given', severity: 0, failures: {}, flags: 0 });
 }
-for (const sec of song.sections) {
+// Section builds run as a pool of child processes (--jobs, default 6; --jobs 1 is serial). Each build_best reads
+// only its own words file and window and writes only its own folder, so the order they finish in cannot change the
+// result; they are joined in section order below exactly as before.
+const JOBS = Math.max(1, Number(opt('--jobs', 6)));
+const jobs = song.sections.map((sec, k) => {
   const w = sectionWords(sec);
   const label = `Section ${sec.n} - ${sec.name}`;
   const dir = path.join(OUT, label);
   const wordsFile = path.join(OUT, 'sections', `${label} - words.json`);
   fs.writeFileSync(wordsFile, JSON.stringify(w, null, 1));
-  const isFirst = !parts.length, isLast = sec === song.sections.at(-1);
+  const isFirst = !opening && k === 0, isLast = k === song.sections.length - 1;
   const clipEnd = isLast ? SONG_END : w.song_end_of_hook + READ_TAIL_S;
-  const t0 = Date.now();
-  if (!skipBuild && (!onlySections || onlySections.includes(sec.n))) {
-    // The first section built (no opening given) starts its clip at 0 s so the intro is covered.
-    const out = execFileSync('node', ['build_best.mjs', '--words', wordsFile, '--window', `${isFirst ? 0 : w.start_s},${w.song_end_of_hook},${clipEnd}`, '--N', String(N), '--out', dir, '--map', mapPath, '--palette', palettePath, '--title', song.title], { cwd: engine, encoding: 'utf8', maxBuffer: 1 << 26, env: { ...process.env, KTE_JERSEY_BOLD: String(JERSEY_BOLD_SONG) } });
-    process.stdout.write(out.split('\n').filter(l => l.includes('survivors=')).join('\n') + '\n');
-  }
+  const build = !skipBuild && (!onlySections || onlySections.includes(sec.n));
+  const argv = ['build_best.mjs', '--words', wordsFile, '--window', `${isFirst ? 0 : w.start_s},${w.song_end_of_hook},${clipEnd}`, '--N', String(N), '--out', dir, '--map', mapPath, '--palette', palettePath, '--title', song.title];
+  return { sec, w, label, dir, isFirst, build, argv, seconds: 0, out: '' };
+});
+{
+  const queue = jobs.filter(j => j.build), errors = [];
+  const runOne = j => new Promise(resolve => {
+    const t0 = Date.now();
+    trackChild(execFile('node', j.argv, { cwd: engine, encoding: 'utf8', maxBuffer: 1 << 26, env: { ...process.env, KTE_JERSEY_BOLD: String(JERSEY_BOLD_SONG) } }, (err, stdout, stderr) => {
+      j.seconds = (Date.now() - t0) / 1000; j.out = stdout ?? '';
+      if (err) errors.push(`${j.label}: ${err.message}\n${stderr ?? ''}`);
+      else console.log(`${j.label}: built in ${j.seconds.toFixed(1)} s`);
+      resolve();
+    }));
+  });
+  const tPool = Date.now();
+  await Promise.all(Array.from({ length: Math.min(JOBS, queue.length) }, async () => { while (queue.length && !errors.length) await runOne(queue.shift()); }));
+  defaultSignalsForSyncWork();
+  if (errors.length) { console.error(`SECTION BUILD FAILED:\n${errors.join('\n')}`); process.exit(1); }
+  if (jobs.some(j => j.build)) console.log(`section builds: ${jobs.filter(j => j.build).length} in ${((Date.now() - tPool) / 1000).toFixed(1)} s with ${JOBS} at a time`);
+}
+for (const { sec, w, label, dir, isFirst, out, seconds } of jobs) {
+  if (out) process.stdout.write(out.split('\n').filter(l => l.includes('survivors=')).join('\n') + '\n');
   const scene = JSON.parse(fs.readFileSync(path.join(dir, 'scene.json'), 'utf8'));
   const log = JSON.parse(fs.readFileSync(path.join(dir, 'build log.json'), 'utf8'));
   const fails = Object.fromEntries(Object.entries(log.checkFailures ?? {}).map(([k, v]) => [k, v]));
-  rows.push({ checkFrequency: log.checkFrequency, label, built: N, survivors: log.survivorsOfN, chosen: `#${log.buildIndex}${log.passed ? '' : ' (severity fallback)'}`, severity: severity(log), pops: log.pops, worst: worstReadingLoss(log), gate: (log.checkFailures?.[SHOWN_GATE] ?? []).length, shownRepair: log.shownRepair, failures: fails, flags: (log.rulingFlags ?? []).length, seconds: ((Date.now() - t0) / 1000).toFixed(1) });
+  rows.push({ checkFrequency: log.checkFrequency, label, built: N, survivors: log.survivorsOfN, chosen: `#${log.buildIndex}${log.passed ? '' : ' (severity fallback)'}`, severity: severity(log), pops: log.pops, worst: worstReadingLoss(log), gate: (log.checkFailures?.[SHOWN_GATE] ?? []).length, shownRepair: log.shownRepair, failures: fails, flags: (log.rulingFlags ?? []).length, seconds: seconds.toFixed(1) });
   for (const [k, v] of Object.entries(fails)) for (const m of v) flagged.push(`${label}: ${k}: ${m}`);
   parts.push({ number: sec.n, label, scene, startFrame: isFirst ? 0 : Math.round(w.start_s * FPS), ...(sec.seam ? { seam: sec.seam } : {}) });
 }
