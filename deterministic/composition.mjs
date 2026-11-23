@@ -68,13 +68,16 @@ export function tightenLone(scene, onsetOf, { until = scene.meta.frames } = {}) 
   return { log };
 }
 
-// Share of the word's letters inside the frame: a 9 x 3 grid over its cap band (the letters, not the padded box).
+// Share of the word's ink inside the frame: an 11 x 5 grid that includes the edges, over the letter band, or over the
+// whole box for a word drawn on its own background block (brief 4: CUTS on a navy block showed its lower half and the
+// foot of its letters at the top edge while a 9 x 3 grid inside the band found nothing in frame).
+export const hasBlock = w => !!w.colours?.background || (w.pad ?? 0) > 0.2 * (w.cap ?? Infinity);
 function inFrameShare(w, f, pose, vfov) {
   const I = globalThis.KT_INTERP;
-  const X = I.wordXform(w, f), band = Math.min(1, (w.cap ?? w.h) / w.h);
+  const X = I.wordXform(w, f), band = hasBlock(w) ? 1 : Math.min(1, (w.cap ?? w.h) / w.h);
   let inside = 0, total = 0;
-  for (let i = 0; i < 9; i++) for (let j = 0; j < 3; j++) {
-    const u = -1 + (2 * i + 1) / 9, v = (-1 + (2 * j + 1) / 3) * band;
+  for (let i = 0; i <= 10; i++) for (let j = 0; j <= 4; j++) {
+    const u = -1 + i / 5, v = (-1 + j / 2) * band;
     const q = I.project(X(add(w.C, add(mul(w.R, u * w.w / 2), mul(w.U, v * w.h / 2)))), pose, vfov);
     total++;
     if (q && Math.abs(q.x) <= 1 && Math.abs(q.y) <= 1) inside++;
@@ -115,17 +118,20 @@ export function hideEdgeClutter(scene, onsetOf, { until = scene.meta.frames } = 
       const sa = inFrameShare(w, a, I.poseAt(scene.cams, a), vfov), sb = inFrameShare(w, b - 1, I.poseAt(scene.cams, b - 1), vfov);
       if (!(sa > 0 || sb > 0) || (sa > CLIP_SHARE && sb > CLIP_SHARE)) continue;
       // Also the last frames of a short camera move into the hold on which the word is already cut by the edge.
-      let g = a;
-      const K = h.k >= 0 ? scene.cams[h.k] : null;
+      let g = a, e = b;
+      const K = h.k >= 0 ? scene.cams[h.k] : null, Kn = h.n >= 0 ? scene.cams[h.n] : null;
+      // Only while another word is whole in frame, so the hide never leaves the frame empty.
+      const other = f => scene.words.some(x => x !== w && !x.reveal_copy_of && drawn(x, f) &&
+        inFrameShare(x, f, I.poseAt(scene.cams, f), vfov) > CLIP_SHARE);
+      const clipped = f => drawn(w, f) && !I.wordMoving(w, f) && inFrameShare(w, f, I.poseAt(scene.cams, f), vfov) <= CLIP_SHARE;
+      // And into the first frames of a short camera move out of the hold, while the word is still cut.
+      if (Kn && Kn.f0 === h.end && Kn.f1 - Kn.f0 <= MOVE_TAIL) while (e < Kn.f1 && clipped(e) && other(e)) e++;
       if (a === h.start && K && K.f1 === h.start && K.f1 - K.f0 <= MOVE_TAIL) {
-        // Only while another word is whole in frame, so the hide never leaves the frame empty.
-        const other = f => scene.words.some(x => x !== w && !x.reveal_copy_of && drawn(x, f) &&
-          inFrameShare(x, f, I.poseAt(scene.cams, f), vfov) > CLIP_SHARE);
         while (g - 1 >= Math.max(K.f0, focusTo) && drawn(w, g - 1) && !I.wordMoving(w, g - 1) &&
           inFrameShare(w, g - 1, I.poseAt(scene.cams, g - 1), vfov) <= CLIP_SHARE && other(g - 1)) g--;
       }
-      hide(w, g, b);
-      log.push(`${w.id} ${w.text}: hidden ${g}-${b} (${Math.round(100 * Math.max(sa, sb))}% of its letters in frame)`);
+      hide(w, g, e);
+      log.push(`${w.id} ${w.text}: hidden ${g}-${e} (${Math.round(100 * Math.max(sa, sb))}% of its letters in frame)`);
     }
   }
   return { log };
