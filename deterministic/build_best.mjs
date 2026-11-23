@@ -15,6 +15,8 @@ import { evaluateScene } from './checks.mjs';
 import { repairShown, gateFailures } from './shown_gate.mjs';
 // Hard gate (Jefferson, rough cut 4): no severity fallback, demotion or ruling waives it.
 export const SHOWN_GATE = '13.1.0_every_sung_word_shown_whole';
+// Readable size and sparse frames (engine fix brief 3, items 2 and 4): ranked right after the shown-whole gate.
+export const SIZE_CHECK = '13.1.20_readable_size_and_sparse_frames';
 import { renderProvenanceMarkdown } from './provenance.mjs';
 import { plaqueSheet, trailSheet } from './debug_svg.mjs';
 
@@ -245,6 +247,11 @@ export function buildSingle({
     evaluation.checks[OVERLAP_GATE] = { failures: overlap.overlaps };
     evaluation.failedChecks.push(OVERLAP_GATE);
     evaluation.passed = false;
+  }
+  const soft = [...(shownRepair.small ?? []), ...(shownRepair.sparse ?? [])];
+  if (soft.length) {
+    evaluation.checks[SIZE_CHECK] = { failures: soft.map(x => `${x.id} (${x.text}) sung at ${x.onsetF}: ${x.why}`) };
+    evaluation.failedChecks.push(SIZE_CHECK); // ranks candidates (survivors too); it does not by itself fail one
   }
   // The overlap repair retires words after the shown-whole repair ran: judge the focused words again on the scene as
   // it is written, so a candidate cannot pass (or rank) on a stale shown-whole result.
@@ -479,6 +486,7 @@ export function worstReadingLoss(log) {
   return worst;
 }
 export const gateCount = log => (log.checkFailures?.[SHOWN_GATE] ?? []).length;
+export const sizeCount = log => (log.checkFailures?.[SIZE_CHECK] ?? []).length;
 
 // Ruling B20 severity: 10 x readable-anchor failures + 5 x clean-motion overlaps + 3 x flashes + 2 x focus + 1 x other.
 export function severity(log) {
@@ -561,13 +569,13 @@ export function buildBest({
   let pool;
   let flagged = false;
   if (survivors.length >= 3) {
-    pool = [...survivors].sort((a, b) => b.buildLog.score - a.buildLog.score || a.buildLog.buildIndex - b.buildLog.buildIndex);
+    pool = [...survivors].sort((a, b) => sizeCount(a.buildLog) - sizeCount(b.buildLog) || b.buildLog.score - a.buildLog.score || a.buildLog.buildIndex - b.buildLog.buildIndex);
   } else {
     flagged = true;
     // 4.4: If fewer than 3 survive, keep the three with fewest failed checks and flag the clip.
     // Fable's ruling B20 (22 November 2026): survivors first, then the lowest severity, ties by score.
     pool = [...eligible]
-      .sort((a, b) => (b.buildLog.passed - a.buildLog.passed) || gateCount(a.buildLog) - gateCount(b.buildLog) || worstReadingLoss(a.buildLog).loss - worstReadingLoss(b.buildLog).loss || severity(a.buildLog) - severity(b.buildLog) || b.buildLog.score - a.buildLog.score || a.buildLog.buildIndex - b.buildLog.buildIndex)
+      .sort((a, b) => (b.buildLog.passed - a.buildLog.passed) || gateCount(a.buildLog) - gateCount(b.buildLog) || sizeCount(a.buildLog) - sizeCount(b.buildLog) || worstReadingLoss(a.buildLog).loss - worstReadingLoss(b.buildLog).loss || severity(a.buildLog) - severity(b.buildLog) || b.buildLog.score - a.buildLog.score || a.buildLog.buildIndex - b.buildLog.buildIndex)
       .slice(0, Math.max(3, survivors.length));
   }
 

@@ -27,6 +27,12 @@ import { fileURLToPath } from 'node:url';
 import './interp.js';
 
 export const SHOWN_FRAMES = 6, ONSET_SLACK = 2, PICKUP_CAP = 15, MIN_STILL = 8, MIN_MOVE = 4;
+// Readable size (engine fix brief 3, Fable rough cut 3 item 12, 22 November 2026): a sung word's letters reach
+// MIN_LETTER of the frame height within SIZE_DELAY frames of its onset. Calibrated on rough cut 3: every word Fable
+// called a speck measured 2.4% to 9.4% letter height at onset + 3 frames; readable words measured 12% to 44%.
+// Sparse frame (item 10): two consecutive small words (under SPARSE_SMALL) more than a third of the frame apart, with
+// no anchor word (at least SPARSE_ANCHOR) whole in frame.
+export const MIN_LETTER = 0.10, SPECK_FLOOR = 0.04, SPECK_GROWTH = 1.5, SIZE_DELAY = 3, SPARSE_SMALL = 0.12, SPARSE_ANCHOR = 0.15, SPARSE_GAP = 2 / 3;
 const add = (a, b) => a.map((x, i) => x + b[i]);
 const sub = (a, b) => a.map((x, i) => x - b[i]);
 const mul = (a, k) => a.map(x => x * k);
@@ -39,7 +45,7 @@ const opacityAt = (w, f) => {
   return v;
 };
 // Posed corners of w at frame f (motion applied), or null when it is not drawn.
-function cornersAt(w, f) {
+export function cornersAt(w, f) {
   const I = globalThis.KT_INTERP;
   if (!(w.on <= f) || (w.off != null && f >= w.off) || opacityAt(w, f) <= 0.05) return null;
   const X = I.wordXform(w, f);
@@ -77,6 +83,24 @@ export function fullyShown(w, f, pose, vfov) {
   return dot(Nt, sub(pose.position, mid)) > 0;
 }
 
+// Letter height of w at frame f as a share of the frame height (its cap height along its own up axis, so a sideways
+// word is measured by its letters, not its length), or null when it is not drawn or not wholly in front of the camera.
+export function letterHeight(w, f, pose, vfov, aspect = 16 / 9) {
+  const I = globalThis.KT_INTERP;
+  const cs = cornersAt(w, f);
+  if (!cs) return null;
+  const q = cs.map(c => I.project(c, pose, vfov));
+  if (q.some(x => !x)) return null;
+  const mid = (a, b) => [(a.x + b.x) / 2 * aspect, (a.y + b.y) / 2];
+  const lo = mid(q[0], q[1]), hi = mid(q[3], q[2]);
+  return Math.hypot(hi[0] - lo[0], hi[1] - lo[1]) / 2 * (w.cap / w.h);
+}
+const centreOf = (w, f, pose, vfov) => {
+  const cs = cornersAt(w, f); if (!cs) return null;
+  const q = cs.map(c => globalThis.KT_INTERP.project(c, pose, vfov)); if (q.some(x => !x)) return null;
+  return [q.reduce((a, x) => a + x.x, 0) / 4, q.reduce((a, x) => a + x.y, 0) / 4];
+};
+
 // Sung words of a scene: { w, onsetF }. `onsetOf(w)` returns the onset frame or null for words that are not sung.
 export function sungWords(scene, onsetOf) {
   return scene.words.filter(w => !w.reveal_copy_of && !w.echo && !w.replaced_by)
@@ -106,7 +130,35 @@ export function gateFailures(scene, onsetOf, { until = Infinity } = {}) {
     if (stuck > 1) why.push(`sits still partly out of frame on ${stuck} frames before it comes to rest`);
     // Partly shown while focused is the hard failure; wholly out of frame is a dropped word (allowed under busyness,
     // logged, and the repair still tries to show it).
-    if (why.length) out.push({ id: w.id, text: w.text, onsetF, appear: A, kind: part > 0 || stuck > 1 ? 'partial' : 'unshown', why: why.join('; ') });
+    if (why.length) { out.push({ id: w.id, text: w.text, onsetF, appear: A, kind: part > 0 || stuck > 1 ? 'partial' : 'unshown', why: why.join('; ') }); continue; }
+    const D = Math.max(onsetF, A) + SIZE_DELAY;
+    if (D >= until) continue;
+    const h = letterHeight(w, D, poseAt(D), vfov);
+    if (h == null || h >= MIN_LETTER) continue;
+    // A rider that is small by design in its own framing is not a speck. A speck is sung in the outgoing layout and
+    // only grows once the camera arrives (it reaches SPECK_GROWTH times its onset size within the next second), or is
+    // under SPECK_FLOOR outright.
+    let later = 0;
+    for (let f = D + 2; f <= D + 30 && (w.off == null || f < w.off) && f < until; f += 2) later = Math.max(later, letterHeight(w, f, poseAt(f), vfov) ?? 0);
+    if (h < SPECK_FLOOR || later >= SPECK_GROWTH * h) out.push({ id: w.id, text: w.text, onsetF, appear: A, kind: 'small', size: h,
+      why: `letters ${(100 * h).toFixed(1)}% of the frame height at frame ${D} (onset + ${D - onsetF}), under ${100 * MIN_LETTER}%${later >= SPECK_GROWTH * h ? `; ${(100 * later).toFixed(1)}% once the camera arrives` : ''}` });
+  }
+  // Sparse frame: consecutive small sung words far apart with no anchor word in view.
+  const sung = sungWords(scene, onsetOf).sort((a, b) => a.onsetF - b.onsetF);
+  const flagged = new Set(out.map(x => x.id));
+  for (let i = 1; i < sung.length; i++) {
+    const a = sung[i - 1], b = sung[i];
+    if (flagged.has(b.w.id) || b.onsetF - a.onsetF > 20 || b.onsetF >= until) continue;
+    const D = Math.max(b.onsetF, appearanceFrame(b.w)) + SIZE_DELAY, pose = poseAt(D);
+    const ha = letterHeight(a.w, D, pose, vfov), hb = letterHeight(b.w, D, pose, vfov);
+    if (ha == null || hb == null || ha >= SPARSE_SMALL || hb >= SPARSE_SMALL) continue;
+    const ca = centreOf(a.w, D, pose, vfov), cb = centreOf(b.w, D, pose, vfov);
+    if (Math.hypot(ca[0] - cb[0], ca[1] - cb[1]) <= SPARSE_GAP) continue;
+    const anchor = scene.words.some(x => x !== a.w && x !== b.w && !x.reveal_copy_of && fullyShown(x, D, pose, vfov) && (letterHeight(x, D, pose, vfov) ?? 0) >= SPARSE_ANCHOR);
+    if (anchor) continue;
+    out.push({ id: b.w.id, text: b.w.text, onsetF: b.onsetF, appear: appearanceFrame(b.w), kind: 'sparse',
+      why: `${a.w.text} and ${b.w.text} (letters ${(100 * ha).toFixed(1)}% and ${(100 * hb).toFixed(1)}%) sit ${(Math.hypot(ca[0] - cb[0], ca[1] - cb[1]) / 2 * 100).toFixed(0)}% of the frame apart at frame ${D} with no anchor word in view` });
+    flagged.add(b.w.id);
   }
   return out;
 }
@@ -129,7 +181,7 @@ function partlyShown(w, f, pose, vfov) {
 }
 
 // Pose with the same orientation that fits the posed corners of `ws` (each at its own frame) with reading margins.
-function fitPose(pose, pts, vfov, mx = 0.94, my = 0.90) {
+export function fitPose(pose, pts, vfov, mx = 0.94, my = 0.90) {
   const tv = Math.tan((vfov * Math.PI) / 360), th = tv * 16 / 9;
   const loc = pts.map(p => { const d = sub(p, pose.target); return [dot(d, pose.R), dot(d, pose.U), dot(d, pose.N)]; });
   const u0 = Math.min(...loc.map(l => l[0])), u1 = Math.max(...loc.map(l => l[0]));
@@ -140,15 +192,16 @@ function fitPose(pose, pts, vfov, mx = 0.94, my = 0.90) {
   const target = add(pose.target, add(mul(pose.R, uc), mul(pose.U, vc)));
   return { target, R: pose.R, U: pose.U, N: pose.N, dist };
 }
-const samePose = (a, b) => a && b && Math.abs(a.dist - b.dist) < 1e-6 && a.target.every((x, i) => Math.abs(x - b.target[i]) < 1e-6);
+export const samePose = (a, b) => a && b && Math.abs(a.dist - b.dist) < 1e-6 && a.target.every((x, i) => Math.abs(x - b.target[i]) < 1e-6);
 
 export function repairShown(scene, onsetOf, { until = Infinity } = {}) {
   const I = globalThis.KT_INTERP, vfov = scene.meta.vfov ?? 40;
   const log = [];
-  const cost = fl => fl.reduce((s, x) => s + (x.kind === 'partial' ? 1000 : 1), 0);
+  const cost = fl => fl.reduce((s, x) => s + (x.kind === 'partial' ? 1000 : x.kind === 'unshown' ? 10 : 5), 0);
+  const unshown = fl => fl.filter(x => x.kind === 'unshown').length;
   const partials = fl => fl.filter(x => x.kind === 'partial').length;
   let fails = gateFailures(scene, onsetOf, { until });
-  const before = partials(fails), beforeUnshown = fails.length - before;
+  const before = partials(fails), beforeUnshown = unshown(fails), beforeSmall = fails.length - before - beforeUnshown;
   const sung = sungWords(scene, onsetOf);
   const tried = new Set();
   for (let guard = 0; guard < 400 && fails.length; guard++) {
@@ -167,13 +220,31 @@ export function repairShown(scene, onsetOf, { until = Infinity } = {}) {
     const n0 = cost(fails);
     const snapshot = JSON.stringify(scene.cams), onBefore = w.on;
     let done = null;
+    const shownKind = fw.kind === 'partial' || fw.kind === 'unshown';
+    // S. A word sung while still small: the move that brings it to reading size lands by the deadline (onset + 3):
+    //    started earlier, made shorter, or both. Each try is kept only when it lowers the cost.
+    if (fw.kind === 'small') {
+      const D = Math.max(o, A) + SIZE_DELAY;
+      const ni = keys.findIndex(K => K.f1 > D && K.f0 <= D + 45 && K.f0 < until && (letterHeight(w, Math.max(K.f1, A), { ...K.to, position: add(K.to.target, mul(K.to.N, K.to.dist)) }, vfov) ?? 0) >= MIN_LETTER);
+      if (ni >= 0) {
+        const N = keys[ni], len = N.f1 - N.f0, prevEnd = ni > 0 ? keys[ni - 1].f1 : 0;
+        const tries = [[N.f0 - (N.f1 - D), D], [N.f0, D], [Math.max(prevEnd + 2, D - len), D], [Math.max(prevEnd + 2, D - MIN_MOVE), D]];
+        const was = [N.f0, N.f1];
+        for (const [f0, f1] of tries) {
+          if (f0 < prevEnd + 1 || f1 - f0 < (N.verb === 'cut' ? 0 : MIN_MOVE) || (f0 === was[0] && f1 === was[1])) continue;
+          N.f0 = f0; N.f1 = f1;
+          if (cost(gateFailures(scene, onsetOf, { until })) < n0) { done = `${w.id} ${w.text}: camera ${N.verb} ${was[0]}-${was[1]} now ${f0}-${f1}, so the word is at reading size by frame ${D}`; break; }
+          N.f0 = was[0]; N.f1 = was[1];
+        }
+      }
+    }
     const wholeFrom = s => { for (let f = s; f <= Math.max(s + SHOWN_FRAMES - 1, o); f++) if (!fullyShown(w, f, I.poseAt(scene.cams, f), vfov)) return false; return true; };
     // 0. A word with no entrance motion: switch it on later, when the frame has room for it, inside the sync window.
-    if (A === w.on && !(w.motion ?? []).length) {
+    if (shownKind && A === w.on && !(w.motion ?? []).length) {
       for (let s = w.on + 1; s <= o; s++) if (wholeFrom(s)) { w.on = s; done = `${w.id} ${w.text}: switched on at ${s} instead of ${onBefore}, when it fits whole`; break; }
     }
     // 1. Start the next move earlier, so the camera is on the word's landing when it appears.
-    if (!done && n >= 0 && k >= 0) {
+    if (shownKind && !done && n >= 0 && k >= 0) {
       const N = keys[n];
       const shift = N.f1 - A;
       const to = { ...N.to, position: add(N.to.target, mul(N.to.N, N.to.dist)) };
@@ -184,7 +255,7 @@ export function repairShown(scene, onsetOf, { until = Infinity } = {}) {
     }
     // 2. The word appears whole, but the camera leaves too soon: start the next move later and keep its landing (a
     //    shorter move, never under MIN_MOVE frames), or hold a cut back by a few frames.
-    if (!done && n >= 0) {
+    if (shownKind && !done && n >= 0) {
       const N = keys[n], need = last + 1 - N.f0;
       const whole = fullyShown(w, A, I.poseAt(keys, A), vfov);
       if (need > 0 && whole && N.verb !== 'cut' && N.f1 > N.f0 && N.f1 - (N.f0 + need) >= MIN_MOVE) {
@@ -236,6 +307,7 @@ export function repairShown(scene, onsetOf, { until = Infinity } = {}) {
     if (cost(after) < n0) { fails = after; log.push(done); tried.clear(); }
     else { scene.cams = JSON.parse(snapshot); w.on = onBefore; }
   }
-  return { before, after: partials(fails), beforeUnshown, afterUnshown: fails.length - partials(fails), log,
-    remaining: fails.filter(x => x.kind === 'partial'), dropped: fails.filter(x => x.kind !== 'partial') };
+  return { before, after: partials(fails), beforeUnshown, afterUnshown: unshown(fails), beforeSmall, log,
+    remaining: fails.filter(x => x.kind === 'partial'), dropped: fails.filter(x => x.kind === 'unshown'),
+    small: fails.filter(x => x.kind === 'small'), sparse: fails.filter(x => x.kind === 'sparse') };
 }
