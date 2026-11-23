@@ -1,0 +1,5 @@
+# Projected overlap and opening
+
+1. Supplement 9.6.2 and 13.1.3 with a frame-by-frame projection check. The slab tests describe world-space collision and sparse landing sight lines. Dominance judges relative size and clean motion checks entrances. Those checks can miss two separate plaques covering one another or words tangling between landings. Measure word texture envelopes and panel occluders through the viewer projection, and retire an earlier word or panel at the first conflict when its reading window has elapsed. Supersede severity-only eligibility with overlap-free eligibility when available. Report remaining conflicts and fail a joined lyric sequence that still contains any.
+2. Extend the blank-transit rule to frame zero. More than one second before the first visible content fails the build. Fill instrumental pickups with moving song-supplied images when provided or the moving song title otherwise. End the opening at vocal onset.
+3. Song inputs may bind a team name or nickname to its actual wordmark typeface and colours. Report an explicitly missing face in the whole-song build provenance.

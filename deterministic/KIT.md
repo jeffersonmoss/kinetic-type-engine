@@ -128,3 +128,9 @@ ffmpeg -i "<Title> - FULL VIDEO 16x9.mp4" -vf transpose=1 -c:a copy "<Title> - F
 ```
 
 44. Cleanup: delete renders, temp folders and test outputs only through `~/.claude/scripts/safe_rm.py --by "<who>" --reason "<why>" PATH...` (7-day undo). Keep the final master, the input folder and the provenance file.
+
+## Moving openings and team wordmarks
+
+- `intro` in `song settings.json` is a list of `{image, hold_s, dissolve_s?, exit?}`. Image paths are relative to the song input. The first starts on frame zero. Each next image begins its dissolve after the preceding hold and the last image ends at vocal onset. Give the last image a positive hold and omit its dissolve. It drifts and scales during the hold, then cuts by default. Set `exit: "slide"` for a lateral exit. PNG, JPEG, WebP and SVG assets are embedded in the final scene. With a pre-vocal gap and no images, the song title fills it. Up to one second of opening blank is allowed to accommodate a short pickup.
+- `team_wordmarks` maps individual team names and nicknames to `{font, colours}`. Supply a local TTF, OTF, WOFF or WOFF2. Colours may specify `text`, `stroke` and `background`. Matching ignores case and surrounding punctuation. A null font retains existing lettering and logs the missing face explicitly. The viewer fits supplied faces to the planned word box.
+- The projected overlap gate scans the lyric sequence before the pullback. It uses clipped word texture rectangles as a conservative ink envelope and checks projected panel obstruction. It may retire old words and plaques. The selector uses overlap-free variants whenever any exist. Remaining overlaps fail the whole-song build and are listed with times and words. Candidate check frequencies count how many candidates failed each check.

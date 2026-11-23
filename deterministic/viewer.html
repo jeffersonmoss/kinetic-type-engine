@@ -272,10 +272,12 @@ function drawIntro(frame){
   if(!active.length)return;
   output.save();
   output.fillStyle='#000';output.fillRect(0,0,W,H);
+  output.globalCompositeOperation='lighter';
   for(const item of active){
     const elapsed=frame-item.start, progress=elapsed/(item.end-item.start);
-    // The outgoing image stays opaque under the incoming image during the dissolve.
-    output.globalAlpha=item.fadeIn ? Math.min(1,elapsed/item.fadeIn) : 1;
+    const fadeIn=item.fadeIn ? Math.min(1,elapsed/item.fadeIn) : 1;
+    const fadeOut=item.fade ? Math.min(1,(item.end-frame)/item.fade) : 1;
+    output.globalAlpha=fadeIn*fadeOut;
     const slide=item.exit==='slide' ? Math.max(0,(progress-.88)/.12)**2 : 0;
     const x=W/2+Math.sin(progress*Math.PI)*W*.025+slide*W;
     const y=H/2-Math.sin(progress*Math.PI)*H*.02;
