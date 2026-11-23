@@ -310,7 +310,7 @@ export function fillEmptyFrames(scene, { from = 0, until = scene.meta.frames, on
 // its life and does not make it partly shown or unshown at its onset. Otherwise: in a hold that is its focus window it is
 // dropped for its whole life (opacity 0, w.dropped = 'size', exempt from the shown-whole gates like a keyword-mode
 // drop); in a later hold it is hidden for that hold when another word meeting its minimum stays on screen there. Echoes,
-// reveal copies, wordmarks and words on a hinge or a clip plane are not resized.
+// reveal copies and wordmarks are not resized; a hinge word is measured but not grown.
 // crowdedWords 4 (brief 6, was 3): HE, TURNS and a small sideways HE in a mostly empty frame were judged crowded, so the
 // small HE passed at 9.5%; three words with room around them are not crowded.
 export const SIZE_DEFAULTS = Object.freeze({ minH: 0.09, roomFactor: 1.5, crowdedWords: 4, crowdedArea: 0.30 });
@@ -326,9 +326,24 @@ function boxCoverage(w, f, pose, vfov) {
   return Math.abs(a) / 2 / 4;
 }
 const resizable = w => !w.reveal_copy_of && !w.echo && !w.wordmark && !w.dropped && !w.size_kept;
-// A word on a hinge or entering past a clip plane (tick, slide-out) cannot grow (its plane and hinge stay put), but it
-// is still measured and dropped or hidden like any other.
-const growable = w => !(w.motion ?? []).some(s => s.kind === 'hinge') && !(w.clip ?? []).length;
+// A hinge word is not grown (its hinge axis is fixed in the world). A word entering past a clip plane (a rider sliding
+// out from behind its host's edge) is grown with its slide scaled by the same factor, and kept only if it still starts
+// wholly behind the plane and is wholly past it when the clip ends (Rough cut 6b, ARE at 34 s).
+const growable = w => !(w.motion ?? []).some(s => s.kind === 'hinge');
+const clipEntranceOk = (scene, w) => {
+  const byId = new Map(scene.words.map(x => [x.id, x])), I = globalThis.KT_INTERP;
+  const side = (f, cs) => {
+    const cl = I.wordClips(w, f, byId);
+    return cl.map(({ P, n }) => cs.map(c => (c[0] - P[0]) * n[0] + (c[1] - P[1]) * n[1] + (c[2] - P[2]) * n[2]));
+  };
+  for (const c of w.clip ?? []) {
+    const raw = f => { const X = I.wordXform(w, f); return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => X(add(w.C, add(mul(w.R, a * w.w / 2), mul(w.U, b * w.h / 2))))); };
+    const start = side(c.f0, raw(c.f0)), end = c.f1 - 1 >= c.f0 ? side(c.f1 - 1, raw(c.f1)) : [];
+    if (start.some(ds => ds.some(d => d > 1e-6 * (1 + Math.abs(d))))) return false;   // some of it shows at the start
+    if (end.some(ds => ds.some(d => d < -1e-6 * (1 + Math.abs(d))))) return false;    // still cut when the clip ends
+  }
+  return true;
+};
 export function enforceMinSize(scene, onsetOf, { until = scene.meta.frames, settings = {} } = {}) {
   const S = { ...SIZE_DEFAULTS, ...settings };
   const I = globalThis.KT_INTERP, vfov = scene.meta.vfov ?? 40, fps = scene.meta.fps ?? 30;
@@ -387,11 +402,13 @@ export function enforceMinSize(scene, onsetOf, { until = scene.meta.frames, sett
     if (k <= MAX_GROW && growable(w)) {
       const lo = Math.max(0, w.on), hi = Math.min(until, w.off ?? until);
       const ovBefore = overlapsWithDrops(lo, hi), failBefore = ownFailures(w);
-      const keep = JSON.stringify({ C: w.C, w: w.w, h: w.h, cap: w.cap, fontPx: w.fontPx, pad: w.pad });
+      const keep = JSON.stringify({ C: w.C, w: w.w, h: w.h, cap: w.cap, fontPx: w.fontPx, pad: w.pad, motion: w.motion });
+      const clipped = (w.clip ?? []).length > 0;
       let done = false;
       for (const pv of PIVOTS) {
         grow(w, k, pv);
-        if (overlapsWithDrops(lo, hi) <= ovBefore && ownFailures(w) <= failBefore) {
+        if (clipped) w.motion = (w.motion ?? []).map(m => m.kind === 'shift' ? { ...m, from: mul(m.from, k), to: mul(m.to, k) } : m);
+        if ((!clipped || clipEntranceOk(scene, w)) && overlapsWithDrops(lo, hi) <= ovBefore && ownFailures(w) <= failBefore) {
           counts.grown++; done = true;
           log.push(`${w.id} ${w.text}: grown x${k.toFixed(2)}${pv[0] || pv[1] ? ` from its ${['', 'left', 'right'][pv[0] === -1 ? 1 : pv[0] === 1 ? 2 : 0]}${pv[0] && pv[1] ? ' ' : ''}${['', 'bottom', 'top'][pv[1] === -1 ? 1 : pv[1] === 1 ? 2 : 0]} ${pv[0] && pv[1] ? 'corner' : 'edge'}` : ''} (letters ${(100 * was).toFixed(1)}% under the ${(100 * Math.max(...short.map(x => x.min))).toFixed(1)}% minimum)`);
           break;
@@ -414,7 +431,7 @@ export function enforceMinSize(scene, onsetOf, { until = scene.meta.frames, sett
       // empty-screen rule then brings back no overlap).
       drops.push(w); counts.dropped++;
       const x = short.find(s => s.focused);
-      log.push(`${w.id} ${w.text}: dropped (letters ${(100 * x.size).toFixed(1)}% at frame ${x.f}, minimum ${(100 * x.min).toFixed(1)}% ${x.crowded ? 'crowded' : 'with room'}; ${growable(w) ? 'growing would overlap or leave it partly shown' : 'it enters past a clip plane or on a hinge, so it cannot grow'})`);
+      log.push(`${w.id} ${w.text}: dropped (letters ${(100 * x.size).toFixed(1)}% at frame ${x.f}, minimum ${(100 * x.min).toFixed(1)}% ${x.crowded ? 'crowded' : 'with room'}; ${growable(w) ? 'growing would overlap or leave it partly shown' : (w.clip ?? []).length ? 'growing would overlap, leave it partly shown, or break its entrance past its host' : 'it enters on a hinge, so it cannot grow'})`);
       continue;
     }
     for (const x of short) {
