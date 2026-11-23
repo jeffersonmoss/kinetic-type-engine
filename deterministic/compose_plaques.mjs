@@ -1,6 +1,6 @@
 // Plaque composition: rulebook section 7.
 import { stream, weightedChoice, cooldownFactor } from './rng.mjs';
-import { KIT } from './style.mjs';
+import { KIT, JERSEY_BOLD, isJerseyFont } from './style.mjs';
 
 export function measure(text, font, cap, metrics) {
   const m = metrics.fonts[font];
@@ -32,8 +32,12 @@ export function letterExtents(text, font, cap, metrics) {
   return out;
 }
 
+// Jersey fonts are drawn bold by an outward stroke JERSEY_BOLD x cap wide (brief 5): the box carries that width so
+// layout and the overlap checks see the drawn letters. Song setting jersey_bold reaches here as KTE_JERSEY_BOLD.
+export const jerseyBold = () => Number(process.env.KTE_JERSEY_BOLD ?? JERSEY_BOLD);
 export function wordBox(text, font, cap, kind, metrics) {
-  const { textW, fontPx } = measure(text, font, cap, metrics);
+  const m = measure(text, font, cap, metrics), fontPx = m.fontPx;
+  const textW = m.textW + (isJerseyFont(font) ? jerseyBold() * cap : 0);
   const block = kind === 'block';
   const pad = (block ? 0.28 : 0.08) * cap;
   return { w: textW + 2 * pad, h: cap + 2 * pad + (block ? 0.10 : 0.15) * cap, fontPx, pad };

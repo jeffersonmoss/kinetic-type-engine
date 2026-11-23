@@ -19,7 +19,8 @@ const scene=new THREE.Scene();
 const camera=new THREE.PerspectiveCamera(S.meta.vfov ?? 40,W/H,20,2e5);
 const FAM={anton:'Anton',serif:'Graduate',barlow:'"Barlow Condensed"',bebas:'"Bebas Neue"',gothic:'"League Gothic"',shoulders:'"Big Shoulders Display"',collegiate:'Graduate',wide:'"Archivo Black"',stencil:'"Saira Stencil One"',teko:'Teko'};
 const WEIGHT={barlow:700,shoulders:900,teko:700};
-const ST={'heat-flame':{bg:'#D0102E',fill:'flame'},heat:{bg:'#98002E',fill:'#ffffff',border:'#ffffff'},'sixers-white':{bg:'#FFFFFF',fill:'#006BB6'},cavs:{bg:'#860038',fill:'#FDBB30',border:'#FDBB30'},lakers:{bg:'#552583',fill:'#FDB927',border:'#FDB927'},sixers:{bg:'#006BB6',fill:'#ffffff'},'sixers-red':{fill:'#ED174C'},'sixers-outline':{stroke:'#ED174C'},cream:{fill:'#F3EBDD'},'cream-outline':{stroke:'#F3EBDD'},white:{fill:'#FFFFFF'},grey:{fill:'#7d7a76',outline:'#FFFFFF'},teal:{fill:'#2EC4B6'},'teal-block':{bg:'#2EC4B6',fill:'#0b0b0d'},'teal-outline':{stroke:'#2EC4B6'},gold:{fill:'#FDB927'}};
+const JERSEY=['collegiate']; // style.mjs JERSEY_FONTS
+const ST={'heat-flame':{bg:'#D0102E',fill:'flame'},heat:{bg:'#98002E',fill:'#ffffff',border:'#ffffff'},'sixers-white':{bg:'#FFFFFF',fill:'#006BB6'},cavs:{bg:'#860038',fill:'#FDBB30',border:'#FDBB30'},lakers:{bg:'#552583',fill:'#FDB927',border:'#FDB927'},sixers:{bg:'#006BB6',fill:'#ffffff'},'sixers-red':{fill:'#ED174C'},'sixers-outline':{stroke:'#ED174C'},cream:{fill:'#F3EBDD'},'cream-outline':{stroke:'#F3EBDD'},white:{fill:'#FFFFFF'},grey:{fill:'#808080'},teal:{fill:'#2EC4B6'},'teal-block':{bg:'#2EC4B6',fill:'#0b0b0d'},'teal-outline':{stroke:'#2EC4B6'},gold:{fill:'#FDB927'}};
 // Song-agnostic (22 November 2026): palette styles this table lacks come from the scene's palette (build_best writes meta.palette.styles).
 for(const ps of (S.meta.palette?.styles ?? [])) if(!ST[ps.id]){const c=ps.colours ?? {};ST[ps.id]=ps.kind==='outline' ? {stroke:c.stroke ?? c.text} : {...(c.background ? {bg:c.background} : {}), fill:c.text ?? '#F3EBDD', ...(c.border ? {border:c.border} : {})};}
 await Promise.all(Object.entries(FAM).map(([k,f])=>document.fonts.load(`${WEIGHT[k]||400} 100px ${f}`)));
@@ -88,12 +89,20 @@ function wordTexture(w) {
   const bg=override.background ?? style.bg;if(bg){g.fillStyle=bg;g.fillRect(0,0,c.width,c.height);}
   g.font=`${WEIGHT[w.font]||400} ${w.fontPx*px}px ${FAM[w.font]||'Anton'}`;g.textAlign='center';g.textBaseline='alphabetic';
   const base=c.height/2+w.cap*px/2,stroke=override.stroke ?? style.stroke;
-  if(stroke){g.lineWidth=.06*w.cap*px;g.strokeStyle=stroke;g.strokeText(w.text,c.width/2,base);}
+  // Jersey fonts drawn bold (engine fix brief 5): an outward stroke in the letter's own colour, meta.jersey_bold x cap wide,
+  // mitred so the corners stay square; layout (compose_plaques wordBox) adds the same width.
+  const JB=JERSEY.includes(w.font) && !w.stripes && !w.wordmark ? (S.meta.jersey_bold ?? .10)*w.cap*px : 0;
+  const bolden=()=>{if(JB){g.lineJoin='miter';g.miterLimit=2;g.lineWidth=JB;g.strokeStyle=g.fillStyle;g.strokeText(w.text,c.width/2,base);}};
+  if(stroke && JB){ // hollow jersey outline: a ring around the bolded letter
+    g.lineJoin='miter';g.miterLimit=2;g.lineWidth=JB+.12*w.cap*px;g.strokeStyle=stroke;g.strokeText(w.text,c.width/2,base);
+    g.globalCompositeOperation='destination-out';g.lineWidth=JB;g.strokeText(w.text,c.width/2,base);g.fillText(w.text,c.width/2,base);g.globalCompositeOperation='source-over';
+  } else if(stroke){g.lineWidth=.06*w.cap*px;g.strokeStyle=stroke;g.strokeText(w.text,c.width/2,base);}
   else {
     const fill=w.style==='heat-flame' ? 'flame' : (override.text ?? style.fill);
     if(fill==='flame'){const gr=g.createLinearGradient(0,base,0,base-w.cap*px);gr.addColorStop(0,'#F9A01B');gr.addColorStop(.55,'#FFD23F');gr.addColorStop(1,'#ffffff');g.fillStyle=gr;}
     else g.fillStyle=fill ?? '#F3EBDD';
-    if(style.outline && !w.stripes){g.lineJoin='round';g.lineWidth=.07*w.cap*px;g.strokeStyle=style.outline;g.strokeText(w.text,c.width/2,base);g.fillStyle=fill ?? '#F3EBDD';} // grey: white outline so it reads on black
+    const edge=override.outline; // white edge only where the engine keeps it (brief 5: the largest words only)
+    if(edge && !w.stripes){g.lineJoin='round';g.lineWidth=JB+.07*w.cap*px;g.strokeStyle=edge;g.strokeText(w.text,c.width/2,base);g.fillStyle=fill ?? '#F3EBDD';} // grey: white outline so it reads on black
     if(w.stripes){ // one colour per character, never bands (Jefferson: KING!, RING! = red, blue, white, blue, red)
       let fpx=w.fontPx*px, heavy=0;
       if(w.jersey){ // 76ers jersey look: collegiate Graduate, thickened in each letter's own colour, fitted to the box
@@ -122,7 +131,7 @@ function wordTexture(w) {
         h.fillStyle=style.flames[1];tongue(x,step*.6,ht*.58,lean*.6);
       }
       g.drawImage(L,0,0);
-    } else g.fillText(w.text,c.width/2,base);
+    } else {bolden();g.fillText(w.text,c.width/2,base);}
     if(style.border){const b=.07*w.cap*px;g.lineWidth=b;g.strokeStyle=style.border;g.strokeRect(b/2,b/2,c.width-b,c.height-b);} // ring boxes: border in the letter colour (Jefferson 22 Nov: Heat plain white on red, no flames, no edge)
 
   }

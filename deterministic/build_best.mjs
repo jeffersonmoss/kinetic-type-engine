@@ -6,7 +6,7 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { seedFor } from './rng.mjs';
 import { planWords } from './plan_words.mjs';
-import { checkPalette, checkSlots, assignStyles, resolvePlaqueWordStyles } from './style.mjs';
+import { checkPalette, checkSlots, assignStyles, resolvePlaqueWordStyles, normalizePalette } from './style.mjs';
 import { composePlaques } from './compose_plaques.mjs';
 import { planTrail } from './plan_trail.mjs';
 import { planCameraAndVisibility } from './camera.mjs';
@@ -702,6 +702,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToP
   const map = JSON.parse(fs.readFileSync(mapFile, 'utf8'));
   const metrics = JSON.parse(fs.readFileSync(metricsFile, 'utf8'));
   const palette = JSON.parse(fs.readFileSync(paletteFile, 'utf8'));
+  normalizePalette(palette); // brief 5: cream, white or flat grey text; team colours kept for team styles
 
   const result = buildBest({
     wordsInput, map, metrics, palette, title, salt, N, pick, clipName,

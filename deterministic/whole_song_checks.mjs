@@ -31,6 +31,7 @@ export function checkSync(scene, events) {
     }
     used.add(w.id);
     if (w.on > f + LATE_FRAMES) late.push(`${w.id} ${w.text}: switches on at frame ${w.on}, sung at ${f} (${w.on - f} frames late)`);
+    if (w.dropped) { dropped.push(`${w.id} ${w.text} sung at ${ev.t.toFixed(2)} s (frame ${f}): dropped (${w.dropped}), allowed`); continue; }
     let shown = false;
     for (let g = f - 2; g <= f + 8 && !shown; g++) shown = fullyShown(w, g, I.poseAt(scene.cams, g), vfov);
     if (!shown) dropped.push(`${w.id} ${w.text} sung at ${ev.t.toFixed(2)} s (frame ${f}): never wholly in frame around its onset`);
@@ -43,7 +44,7 @@ export function checkHolds(scene, events, { until = Infinity } = {}) {
   const sungF = events.map(e => ({ f: Math.round(e.t * fps), k: normText(e.text), e })).filter(x => x.k && x.f < until).sort((a, b) => a.f - b.f);
   const act = new Set();
   // Words appearing whole, with ink that renders.
-  for (const w of scene.words.filter(x => !x.reveal_copy_of && x.on < until)) {
+  for (const w of scene.words.filter(x => !x.reveal_copy_of && !x.dropped && x.on < until)) {
     if (!inkOk(w)) continue;
     const A = appearanceFrame(w);
     if (fullyShown(w, A, I.poseAt(scene.cams, A), vfov)) for (let f = w.on; f <= A; f++) act.add(f);
@@ -63,7 +64,7 @@ export function checkHolds(scene, events, { until = Infinity } = {}) {
   for (const e of scene.elements ?? []) if (e.on != null) act.add(e.on);
   // Pulses: instrumental ones are general activity; others count only for a sung event with their own text.
   const ownPulse = new Map(); // text -> frames
-  for (const w of scene.words.filter(x => !x.reveal_copy_of)) for (const t of w.pulses ?? []) {
+  for (const w of scene.words.filter(x => !x.reveal_copy_of && !x.dropped)) for (const t of w.pulses ?? []) {
     const p = Math.round(t * fps);
     if (!fullyShown(w, p, I.poseAt(scene.cams, p), vfov)) continue;
     const k = normText(w.text);

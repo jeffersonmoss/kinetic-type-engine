@@ -19,7 +19,8 @@ import { fileURLToPath } from 'node:url';
 import './interp.js';
 import { checkSync, checkHolds } from './whole_song_checks.mjs';
 import { assemble, hideWhenGone, buildReveal, checkReveal, endOnWord, checkStillEnding } from './assemble_sections.mjs';
-import { tightenLone, hideEdgeClutter, hideUnreadable, fillEmptyFrames, emptyFrames } from './composition.mjs';
+import { tightenLone, hideEdgeClutter, hideUnreadable, fillEmptyFrames, emptyFrames, enforceMinSize, noOutlines, undoSizeForEmpty } from './composition.mjs';
+import { JERSEY_BOLD } from './style.mjs';
 import { keywordPlan, fastWordsOn } from './keywords.mjs';
 import { severity, worstReadingLoss, SHOWN_GATE } from './build_best.mjs';
 import { repairShown, gateFailures } from './shown_gate.mjs';
@@ -33,6 +34,9 @@ const inputDir = path.resolve(args.find((a, i) => !a.startsWith('--') && !(i > 0
 if (!fs.existsSync(path.join(inputDir, 'song settings.json'))) { console.error(`usage: node build_song.mjs "<song workspace>/engine input" [--out <folder>]\nno "song settings.json" in ${inputDir}`); process.exit(2); }
 const inp = f => (f == null ? null : path.resolve(inputDir, f));
 const song = JSON.parse(fs.readFileSync(path.join(inputDir, 'song settings.json'), 'utf8'));
+const nameKey = t => String(t).toUpperCase().replace(/[’]/g, "'").replace(/^[^A-Z0-9]+|[^A-Z0-9']+$/g, '').replace(/'S$/, '');
+const PLAYER_NAMES = new Set((song.player_names ?? []).map(nameKey));
+const JERSEY_BOLD_SONG = song.jersey_bold ?? JERSEY_BOLD; // brief 5: outward stroke on jersey fonts, x cap
 // --all-words: build with keyword mode off whatever the song settings say (for comparisons).
 if (args.includes('--all-words')) song.fast_words = { ...(song.fast_words ?? {}), mode: 'all_words' };
 const OUT = path.resolve(opt('--out', path.join(inputDir, '../engine output/Whole song')));
@@ -86,7 +90,9 @@ function sectionWords(sec) {
     if (keywords.dropped.has(gi)) continue;
     const w = map.words[gi];
     outLines.find(x => x.id === l.id).words.push(words.length);
-    words.push({ t: w.start_s, end: w.end_s, text: display(w.text), line: l.id, id: `w${String(words.length + 1).padStart(2, '0')}` });
+    // Player names (song setting player_names) take the jersey font, like jersey numbers (brief 5, change 2).
+    const accent = PLAYER_NAMES.has(nameKey(w.text));
+    words.push({ t: w.start_s, end: w.end_s, text: display(w.text), line: l.id, id: `w${String(words.length + 1).padStart(2, '0')}`, ...(accent ? { accent: true } : {}) });
   }
   return { section: sec.n, name: sec.name, start_s: lines[0].start_s, song_end_of_hook: lines.at(-1).end_s, lines: outLines, words };
 }
@@ -113,7 +119,7 @@ for (const sec of song.sections) {
   const t0 = Date.now();
   if (!skipBuild && (!onlySections || onlySections.includes(sec.n))) {
     // The first section built (no opening given) starts its clip at 0 s so the intro is covered.
-    const out = execFileSync('node', ['build_best.mjs', '--words', wordsFile, '--window', `${isFirst ? 0 : w.start_s},${w.song_end_of_hook},${clipEnd}`, '--N', String(N), '--out', dir, '--map', mapPath, '--palette', palettePath, '--title', song.title], { cwd: engine, encoding: 'utf8', maxBuffer: 1 << 26 });
+    const out = execFileSync('node', ['build_best.mjs', '--words', wordsFile, '--window', `${isFirst ? 0 : w.start_s},${w.song_end_of_hook},${clipEnd}`, '--N', String(N), '--out', dir, '--map', mapPath, '--palette', palettePath, '--title', song.title], { cwd: engine, encoding: 'utf8', maxBuffer: 1 << 26, env: { ...process.env, KTE_JERSEY_BOLD: String(JERSEY_BOLD_SONG) } });
     process.stdout.write(out.split('\n').filter(l => l.includes('survivors=')).join('\n') + '\n');
   }
   const scene = JSON.parse(fs.readFileSync(path.join(dir, 'scene.json'), 'utf8'));
@@ -181,25 +187,51 @@ if (lone.log.length) {
   const again = repairShownAndOverlap(finalObj, onsetOf, { until: revealF0, retireOccluded: true });
   joint = { ...again, shownLog: [...joint.shownLog, ...again.shownLog], overlapLog: [...joint.overlapLog, ...again.overlapLog] };
 }
+// Size (engine fix brief 5): every word big enough to be seen or not shown; song settings min_word_h (letters as a share
+// of the frame height, default 0.092: the larger HE at 41 s in Big Toothy Grins rough cut 5), room_factor (1.5),
+// crowded_words (3) and crowded_area (0.30).
+const size = enforceMinSize(finalObj, onsetOf, { until: revealF0, settings: {
+  ...(song.min_word_h != null ? { minH: song.min_word_h } : {}), ...(song.room_factor != null ? { roomFactor: song.room_factor } : {}),
+  ...(song.crowded_words != null ? { crowdedWords: song.crowded_words } : {}), ...(song.crowded_area != null ? { crowdedArea: song.crowded_area } : {}) } });
 const clutter = hideEdgeClutter(finalObj, onsetOf, { until: revealF0 });
 // Brief 4: text upside down, mirrored or seen from behind is hidden outside its focus window.
 const unreadable = hideUnreadable(finalObj, onsetOf, { until: revealF0 });
+// No outlines (brief 5, change 2): every word solid. Runs again after the song appearance pass, which adds the wordmarks.
+const palStyles = finalObj.meta.palette?.styles ?? [];
+const flatOf = id => palStyles.find(x => x.outline_twin === id)?.id ?? null;
+const outlines = noOutlines(finalObj, { flatOf });
+finalObj.meta.jersey_bold = JERSEY_BOLD_SONG;
 const stillEnding = checkStillEnding(finalObj, { minHoldFrames: MIN_END_HOLD });
 if (!stillEnding.pass) process.exitCode = 1;
 const overlapRepair = { retired: joint.overlapLog };
-const overlapFinal = { overlaps: joint.overlaps };
-if (overlapFinal.overlaps.length) process.exitCode = 1;
+
 const appearance = songAppearance(finalObj, song, inp, Math.min(...map.words.map(w => w.start_s)));
 if (!appearance.pass) process.exitCode = 1;
+outlines.log.push(...noOutlines(finalObj, { flatOf }).log);
 // After the song appearance pass, which adds the intro overlays (badge, title card) that count as on screen.
 // Something on screen (Jefferson, 22 November 2026): no empty stretch longer than song setting empty_gap_max_s (default
 // 0.25 s: 7 frames at 30 fps, so 8 or more empty frames in a row fail), and the first and last frames are never empty.
 const EMPTY_MAX_S = song.empty_gap_max_s ?? 0.25, emptyMaxF = Math.floor(EMPTY_MAX_S * FPS + 1e-9);
+// The empty-screen rule outranks the size rule: the fills are tried on a copy first, and any size drop or hide inside a
+// stretch the fills cannot clear is undone on the real scene before the real fills (so no fill is built around a word
+// that then comes back).
+const sizeUndone = [];
+for (let round = 0; round < 2; round++) {
+  const trial = JSON.parse(JSON.stringify(finalObj));
+  const left = fillEmptyFrames(trial, { from: 0, until: frames, onsetOf, maxFrames: emptyMaxF }).remaining;
+  const undone = undoSizeForEmpty(finalObj, left);
+  sizeUndone.push(...undone);
+  if (!undone.length) break;
+}
 const fill = fillEmptyFrames(finalObj, { from: 0, until: frames, onsetOf, maxFrames: emptyMaxF });
+for (const w of finalObj.words) { delete w.size_restore; delete w.size_hides; }
 const emptyEnds = [0, frames - 1].filter(f => emptyFrames(finalObj, { from: f, until: f + 1 }).length);
 if (emptyEnds.length) { process.exitCode = 1; console.error(`EMPTY ${emptyEnds.map(f => f ? 'LAST' : 'FIRST').join(' AND ')} FRAME FAIL (not waivable)`); }
 // No section pick, fallback or song setting waives this (Jefferson, 22 November 2026: dead screen is the kiss of death).
 if (fill.remaining.length) { process.exitCode = 1; console.error(`EMPTY STRETCH OVER ${EMPTY_MAX_S} s FAIL (not waivable): ${fill.remaining.map(r => `${r.start}-${r.end}`).join(', ')}`); }
+// The overlap gate judges the scene as written, after the size, outline and fill passes (brief 5).
+const overlapFinal = { overlaps: scanOverlap(finalObj, { until: revealF0 }).overlaps };
+if (overlapFinal.overlaps.length) process.exitCode = 1;
 fs.writeFileSync(finalScene, JSON.stringify(finalObj, null, 1));
 const syncCheck = checkSync(finalObj, sung), holdCheck = checkHolds(finalObj, sung, { until: revealF0 });
 const shownFinal = gateFailures(finalObj, onsetOf, { until: revealF0 });
@@ -250,6 +282,8 @@ md.push('## Readable size and composition', '',
   `Words sung while still small (letters under 10% of the frame height at onset + 3 frames; reported, not gated): ${smallFinal.length}.`, ...smallFinal.map(x => `- ${x.id} ${x.text} at ${(x.onsetF / FPS).toFixed(2)} s: ${x.why}`), '',
   `Sparse frames (two small consecutive words far apart, no anchor word in view): ${sparseFinal.length}.`, ...sparseFinal.map(x => `- ${x.id} ${x.text} at ${(x.onsetF / FPS).toFixed(2)} s: ${x.why}`), '',
   `Lone focus words brought closer: ${lone.log.length}.`, ...lone.log.map(x => `- ${x}`), '',
+  `Size (brief 5, big enough or not shown; minimum ${size.settings.minH} of the frame height when crowded, ${size.settings.roomFactor} x that with room): ${size.counts.grown} grown, ${size.counts.dropped} dropped, ${size.counts.hidden} hidden for a later hold, ${size.counts.keptSmall} kept small to avoid an empty screen; ${sizeUndone.length} drops or hides undone because they left a stretch over ${EMPTY_MAX_S} s empty that the fills could not clear.`, ...size.log.map(x => `- ${x}`), ...sizeUndone.map(x => `- undone: ${x}`), '',
+  `No outlines (brief 5, change 2: every word solid): ${outlines.log.length} changed.`, ...outlines.log.map(x => `- ${x}`), '',
   `Edge clutter hidden (non-focus words with letters cut by the frame edge during a hold): ${clutter.log.length}.`, ...clutter.log.map(x => `- ${x}`), '',
   `Unreadable text hidden (upside down, mirrored or from behind, outside its focus window): ${unreadable.log.length}.${unreadable.focused.length ? ` Focus words shown that way (not hidden): ${unreadable.focused.join(', ')}.` : ''}`, ...unreadable.log.map(x => `- ${x}`), '',
   `First and last frames: ${emptyEnds.length ? `FAIL, empty frame ${emptyEnds.join(' and ')}` : 'PASS, something on screen'}. Empty stretches over ${EMPTY_MAX_S} s (${emptyMaxF} frames), whole song: ${fill.short.length} shorter gaps allowed (longest ${Math.max(0, ...fill.short.map(r => r.end - r.start + 1))} frames). ${fill.remaining.length ? `FAIL, ${fill.remaining.length} runs: ${fill.remaining.map(r => `${r.start}-${r.end} (${(r.start / FPS).toFixed(2)} s)`).join(', ')}` : 'PASS, none'}. Filled: ${fill.log.length}.`, ...fill.log.map(x => `- ${x}`), '');
@@ -273,7 +307,7 @@ console.log('sync', JSON.stringify({ late: syncCheck.late.length, dropped: syncC
 console.log('shown whole', JSON.stringify({ sweepBefore: shownSweep.before, sweepAfter: shownSweep.after, finalPartial: partialFinal.length, finalDropped: droppedFinal.length }), 'echoes', finalObj.words.filter(w => w.echo).length);
 console.log('entrances', JSON.stringify(counts['Whole song']), 'pop reasons', JSON.stringify(popWhy));
 console.log('reveal check', JSON.stringify(revealCheck), 'still ending', JSON.stringify(stillEnding));
-console.log('size', JSON.stringify({ small: smallFinal.length, sparse: sparseFinal.length, lone: lone.log.length, clutter: clutter.log.length, unreadable: unreadable.log.length, unreadableFocus: unreadable.focused.length, emptyEnds, filled: fill.log.length, shortGaps: fill.short.length, longestShortGap: Math.max(0, ...fill.short.map(r => r.end - r.start + 1)), emptyRuns: fill.remaining.map(r => `${r.start}-${r.end}`) }));
+console.log('size', JSON.stringify({ grown: size.counts.grown, dropped: size.counts.dropped, hiddenSmall: size.counts.hidden, keptSmall: size.counts.keptSmall, sizeUndone: sizeUndone.length, outlinesFlat: outlines.log.length, small: smallFinal.length, sparse: sparseFinal.length, lone: lone.log.length, clutter: clutter.log.length, unreadable: unreadable.log.length, unreadableFocus: unreadable.focused.length, emptyEnds, filled: fill.log.length, shortGaps: fill.short.length, longestShortGap: Math.max(0, ...fill.short.map(r => r.end - r.start + 1)), emptyRuns: fill.remaining.map(r => `${r.start}-${r.end}`) }));
 console.log('reveal', JSON.stringify(reveal), 'revealF0', revealF0, 'hidden', hideLog.filter(l => l.includes('hidden')).length);
 console.log(el.split('\n').filter(l => /CHECKS|FAIL|^  /.test(l)).join('\n'));
 console.log('wordmarks', JSON.stringify(appearance.wordmarkUse.map(({ name, used, words }) => ({ name, used, words }))), 'opening blank', appearance.blank);

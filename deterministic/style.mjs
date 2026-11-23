@@ -13,6 +13,41 @@ export function contrast(a, b) {
   return (x + 0.05) / (y + 0.05);
 }
 
+// Text colours (engine fix brief 5, Jefferson 22 November 2026): text is cream or white, or a flat grey (about 75% or
+// 50%) for words meant to be quiet. Team colours stay for team words. A team style has a background block, shares its
+// group with one, is a block's flat_fill, or says team: true; its colours are kept when chromatic. Every other text
+// colour (and on_panel colour) snaps to the nearest of TEXT_COLOURS.
+export const TEXT_COLOURS = Object.freeze({ cream: '#F3EBDD', white: '#FFFFFF', 'grey-75': '#BFBFBF', 'grey-50': '#808080' });
+// Jersey fonts (brief 5): the face that stands for jersey lettering. Drawn bold by an outward stroke in the letter's
+// own colour, JERSEY_BOLD x cap wide (half of it outside the glyph), which wordBox adds to the text width.
+export const JERSEY_FONTS = Object.freeze(['collegiate']);
+export const JERSEY_BOLD = 0.10;
+export const isJerseyFont = font => JERSEY_FONTS.includes(font);
+const rgb = hex => hex.replace('#', '').match(/../g).map(x => parseInt(x, 16));
+const chromatic = hex => { const c = rgb(hex); return (Math.max(...c) - Math.min(...c)) / Math.max(1, Math.max(...c)) > 0.25; };
+export function teamStyleIds(palette) {
+  const blocks = palette.styles.filter(s => s.kind === 'block' || s.colours?.background);
+  const groups = new Set(blocks.map(s => s.group).filter(Boolean)), fills = new Set(blocks.map(s => s.flat_fill).filter(Boolean));
+  return new Set(palette.styles.filter(s => s.team || s.kind === 'block' || s.colours?.background || groups.has(s.group) ||
+    (fills.has(s.id) && chromatic(s.colours?.text ?? '#ffffff'))).map(s => s.id));
+}
+export function nearestTextColour(hex) {
+  const c = rgb(hex);
+  return Object.values(TEXT_COLOURS).map(v => [v, rgb(v).reduce((d, x, i) => d + (x - c[i]) ** 2, 0)]).sort((a, b) => a[1] - b[1])[0][0];
+}
+export function normalizePalette(palette) {
+  const team = teamStyleIds(palette), log = [];
+  for (const st of palette.styles) {
+    if (team.has(st.id) && chromatic(st.colours?.text ?? '#ffffff')) continue;
+    for (const [obj, key] of [[st.colours ?? {}, 'text'], [st, 'on_panel']]) {
+      if (!obj[key]) continue;
+      const to = nearestTextColour(obj[key]);
+      if (to.toLowerCase() !== obj[key].toLowerCase()) { log.push(`${st.id} ${key} ${obj[key]} -> ${to}`); obj[key] = to; }
+    }
+  }
+  return log;
+}
+
 export function checkPalette(palette) {
   const check = (a, b, floor, label) => {
     const value = contrast(a, b);
@@ -230,6 +265,7 @@ export function resolvePlaqueWordStyles(plaqueWords, palette, surface) {
     if (style.kind === 'outline') {
       cols.stroke = style.colours.text;
     }
+    if (style.edge) cols.outline = style.edge; // a white edge on a flat word; outlinePolicy keeps it on the largest words only
     w.colours = cols;
   }
   return changes;

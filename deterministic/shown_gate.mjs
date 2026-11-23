@@ -116,7 +116,8 @@ const centreOf = (w, f, pose, vfov) => {
 
 // Sung words of a scene: { w, onsetF }. `onsetOf(w)` returns the onset frame or null for words that are not sung.
 export function sungWords(scene, onsetOf) {
-  return scene.words.filter(w => !w.reveal_copy_of && !w.echo && !w.replaced_by)
+  // A word dropped for size (brief 5: shown big enough or not at all) is exempt, like a keyword-mode drop.
+  return scene.words.filter(w => !w.reveal_copy_of && !w.echo && !w.replaced_by && !w.dropped)
     .map(w => ({ w, onsetF: onsetOf(w) })).filter(x => x.onsetF != null);
 }
 export function gateFailures(scene, onsetOf, { until = Infinity } = {}) {
