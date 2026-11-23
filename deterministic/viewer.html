@@ -9,12 +9,18 @@
 <script type="module">
 import * as THREE from 'three';
 const S=window.SCENE, I=globalThis.KT_INTERP, W=1280, H=720;
-const renderer=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});
+const hasStageLayers=!!((S.backdrops&&S.backdrops.length)||(S.props&&S.props.length));
+const renderer=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true,...(hasStageLayers?{alpha:true}:{})});
 renderer.setPixelRatio(1);renderer.setSize(W,H);renderer.localClippingEnabled=true;
 const colours=S.meta.palette ?? S.meta.colours ?? {};
-renderer.setClearColor(colours.ground ?? '#0b0b0d');
+if(hasStageLayers)renderer.setClearColor(0x000000,0);
+else renderer.setClearColor(colours.ground ?? '#0b0b0d');
 const canvas=document.createElement('canvas');canvas.width=W;canvas.height=H;document.body.appendChild(canvas);
 const output=canvas.getContext('2d');
+const sampleCanvas=hasStageLayers?document.createElement('canvas'):null;
+if(sampleCanvas){sampleCanvas.width=W;sampleCanvas.height=H;}
+const sampleCtx=sampleCanvas?sampleCanvas.getContext('2d'):null;
+if(sampleCtx)sampleCtx.imageSmoothingQuality='high';
 const scene=new THREE.Scene();
 const camera=new THREE.PerspectiveCamera(S.meta.vfov ?? 40,W/H,20,2e5);
 const FAM={anton:'Anton',serif:'Graduate',barlow:'"Barlow Condensed"',bebas:'"Bebas Neue"',gothic:'"League Gothic"',shoulders:'"Big Shoulders Display"',collegiate:'Graduate',wide:'"Archivo Black"',stencil:'"Saira Stencil One"',teko:'Teko'};
@@ -52,6 +58,12 @@ const intro = await Promise.all((S.intro ?? []).map(async item => {
   await image.decode();
   return {...item, image};
 }));
+const stageImages = Object.fromEntries(await Promise.all(Object.entries(S.stageImages ?? {}).map(async ([key, src]) => {
+  const image = new Image();
+  image.src = src;
+  await image.decode();
+  return [key, image];
+})));
 await document.fonts.ready;
 const V=a=>new THREE.Vector3(...a);
 const dot=(a,b)=>a.reduce((s,x,i)=>s+x*b[i],0);
@@ -232,7 +244,7 @@ for(const p of S.plaques){
       if(corners.some(c=>dot(n,sub(c,q.C))< -1))continue; // spec 43.6: zero-gap hinge corners lie on the neighbour's plane // only trim the growth, never the panel itself
       clips.push(new THREE.Plane(V(n),-dot(n,q.C)));
     }
-    const face=new THREE.MeshBasicMaterial({color:colours.ground ?? '#0b0b0d',side:THREE.DoubleSide,clippingPlanes:clips,polygonOffset:true,polygonOffsetFactor:2,polygonOffsetUnits:4});
+    const face=new THREE.MeshBasicMaterial({color:colours.ground ?? '#0b0b0d',colorWrite:!hasStageLayers,side:THREE.DoubleSide,clippingPlanes:clips,polygonOffset:true,polygonOffsetFactor:2,polygonOffsetUnits:4});
     mesh=new THREE.Mesh(new THREE.PlaneGeometry(p.w+2*m,p.h+2*m),face);orient(mesh,p.R,p.U,p.N);
     mesh.position.copy(V(p.C));scene.add(mesh);
   }
@@ -319,6 +331,88 @@ function stampScale(v,f){
 // Jefferson 22 Nov: the word throws off the ripple. It grows with the outline at the outline's own speed
 // (1x to 2x over RIP_T) up to THROW_PEAK, then eases back to size while the outline keeps going out and fading.
 const RIP_T=.45, THROW_PEAK=1.18, THROW_BACK=.16;
+// Brief 17: prebuild ghost/outline ripple canvases for screen-space props (same brief 13 + brief 16 padded silhouette
+// compositing as wordmarks, cropped to p.rippleBox so cable-hung props ripple cleanly from the banner's own edge).
+const propRipples=new Map();
+if(hasStageLayers && window.KT_RIPPLE){
+  for(const p of (S.props ?? [])){
+    if(!(p.pulses && p.pulses.length))continue;
+    const img=stageImages[p.image];if(!img)continue;
+    const rb=p.rippleBox ?? {x0:0,y0:p.anchorY ?? 0,x1:p.w,y1:p.h};
+    const sx=Math.max(0,rb.x0), sy=Math.max(0,rb.y0), sw=Math.max(1,rb.x1-sx), sh=Math.max(1,rb.y1-sy);
+    const rw=Math.max(1,Math.round(sw)), rh=Math.max(1,Math.round(sh));
+    const wc=document.createElement('canvas');wc.width=rw;wc.height=rh;
+    const wg=wc.getContext('2d');wg.imageSmoothingQuality='high';
+    wg.drawImage(img,sx,sy,sw,sh,0,0,rw,rh);
+    const rip=p.ripple && typeof p.ripple==='object' ? p.ripple : {kind:'ghost'};
+    const isGhost=rip.kind==='ghost';
+    const r=Math.max(2,Math.round(rh*(rip.edge_width ?? .025)));
+    const o=document.createElement('canvas');o.width=rw+2*r;o.height=rh+2*r;const q=o.getContext('2d');
+    const outline=colour=>{
+      const ec=document.createElement('canvas');ec.width=o.width;ec.height=o.height;const eg=ec.getContext('2d');
+      for(let a=0;a<16;a++)eg.drawImage(wc,r+Math.cos(a*Math.PI/8)*r,r+Math.sin(a*Math.PI/8)*r);
+      eg.globalCompositeOperation='destination-out';eg.drawImage(wc,r,r);
+      if(colour){eg.globalCompositeOperation='source-in';eg.fillStyle=colour;eg.fillRect(0,0,ec.width,ec.height);}
+      return ec;
+    };
+    if(isGhost){
+      const fillOp=rip.fill_opacity ?? .6, edgeOp=rip.edge_opacity ?? .9;
+      if(fillOp>0){
+        const fc=document.createElement('canvas');fc.width=o.width;fc.height=o.height;const fg=fc.getContext('2d');
+        fg.drawImage(wc,r,r);
+        if(rip.fill){fg.globalCompositeOperation='source-in';fg.fillStyle=rip.fill;fg.fillRect(0,0,fc.width,fc.height);}
+        q.globalAlpha=fillOp;q.drawImage(fc,0,0);
+      }
+      if(edgeOp>0){q.globalAlpha=edgeOp;q.drawImage(outline(rip.edge ?? null),0,0);}
+      q.globalAlpha=1;
+    }else{
+      const edgeOp=rip.edge_opacity ?? 1;
+      q.globalAlpha=edgeOp;q.drawImage(outline(rip.edge ?? null),0,0);q.globalAlpha=1;
+    }
+    propRipples.set(p.id,{canvas:o,rw,rh,behind:rip.behind ?? isGhost,fadePow:rip.fade_power ?? (isGhost?2.5:1.5),scaleDelta:rip.scale_delta ?? 1});
+  }
+}
+function drawBackdrops(ctx,t){
+  for(const b of (S.backdrops ?? [])){
+    const alpha=I.backdropOpacity(b,t);if(!(alpha>0))continue;
+    const img=stageImages[b.image];if(!img)continue;
+    const rect=I.backdropRect(b,W,H);
+    ctx.save();ctx.globalAlpha=alpha;ctx.drawImage(img,rect.ox,rect.oy,rect.dw,rect.dh);ctx.restore();
+  }
+}
+function drawProps(ctx,t,layer){
+  const fps=S.meta.fps ?? 30, bds=S.backdrops ?? [];
+  for(const p of (S.props ?? [])){
+    if((p.layer ?? 'under_words')!==layer)continue;
+    const img=stageImages[p.image];if(!img)continue;
+    const st=I.propScreenRects(p,t,bds,W,H);if(!st)continue;
+    const rip=propRipples.get(p.id);
+    const drawRipples=()=>{
+      if(!rip||!p.pulses)return;
+      const cx=st.rip.x+st.rip.w/2, cy=st.rip.y+st.rip.h/2;
+      const uw=st.rip.w*(rip.canvas.width/rip.rw), uh=st.rip.h*(rip.canvas.height/rip.rh);
+      for(const pt of p.pulses){
+        const d=(t-pt*fps)/fps;
+        if(d>=0&&d<RIP_T){
+          const x=d/RIP_T, sc=1+x*rip.scaleDelta, dw=uw*sc, dh=uh*sc;
+          ctx.save();ctx.globalAlpha=st.opacity*Math.pow(1-x,rip.fadePow);
+          ctx.drawImage(rip.canvas,cx-dw/2,cy-dh/2,dw,dh);ctx.restore();
+        }
+      }
+    };
+    if(rip&&rip.behind)drawRipples();
+    ctx.save();ctx.globalAlpha=st.opacity;ctx.drawImage(img,st.draw.x,st.draw.y,st.draw.w,st.draw.h);ctx.restore();
+    if(rip&&!rip.behind)drawRipples();
+  }
+}
+function propMotionPx(frame){
+  let m=0;const bds=S.backdrops ?? [];
+  for(const p of (S.props ?? [])){
+    const a=I.propScreenRects(p,frame,bds,W,H), b=I.propScreenRects(p,frame+.5,bds,W,H);
+    if(a&&b)m=Math.max(m,Math.hypot(b.draw.x-a.draw.x,b.draw.y-a.draw.y));
+  }
+  return m;
+}
 function throwScale(w,f){const fps=S.meta.fps??30,P=w.pulse_peak??THROW_PEAK;let k=1;for(const t of (w.pulses||[])){const d=(f-t*fps)/fps, tp=(P-1)*RIP_T;
   if(d>=0&&d<tp)k=Math.max(k,1+d/RIP_T);else if(d>=tp&&d<tp+THROW_BACK){const x=(d-tp)/THROW_BACK;k=Math.max(k,1+(P-1)*(.5+.5*Math.cos(Math.PI*x)));}}
   return k;}
@@ -393,9 +487,10 @@ function setPose(frame){
 function sampleCount(frame){
   if(!window.KT_BLUR)return 1;
   const a=I.poseAt(S.cams,frame),b=I.poseAt(S.cams,frame+.5),q=I.project(a.target,b,S.meta.vfov ?? 40);
-  if(!q){const m=hasMotion?wordMotionPx(frame):0;return m<4?1:Math.max(2,Math.min(32,Math.ceil(m/3)));}
+  const pm=hasStageLayers?propMotionPx(frame):0;
+  if(!q){const m=Math.max(hasMotion?wordMotionPx(frame):0,pm);return m<4?1:Math.max(2,Math.min(32,Math.ceil(m/3)));}
   const roll=Math.atan2(dot(a.R,b.U),dot(a.R,b.R));
-  const shift=Math.max(Math.hypot(q.x*W/2,q.y*H/2)+300*Math.abs(roll),hasMotion?wordMotionPx(frame):0);
+  const shift=Math.max(Math.hypot(q.x*W/2,q.y*H/2)+300*Math.abs(roll),hasMotion?wordMotionPx(frame):0,pm);
   // Brief 6: samples at most 3 px apart (was 10, capped at 12). Two half-strength copies 13 px apart read as a drop
   // shadow (SHOOTING at 101.6 s in rough cut 6); under 4 px of motion is drawn sharp.
   return shift<4 ? 1 : Math.max(2,Math.min(32,Math.ceil(shift/3)));
@@ -438,9 +533,24 @@ window.renderAt=(seconds)=>{
   const frame=Math.abs(rawFrame-Math.round(rawFrame))<1e-4 ? Math.round(rawFrame) : rawFrame;
   const count=sampleCount(frame);visibility(frame);
   output.globalCompositeOperation='source-over';output.globalAlpha=1;output.clearRect(0,0,W,H);
-  for(let k=0;k<count;k++){
-    const t=frame+(count===1?0:.5*k/(count-1));setPose(t);applyWordPoses(t);renderer.render(scene,camera);
-    output.globalAlpha=1/(k+1);output.drawImage(renderer.domElement,0,0);
+  if(hasStageLayers){
+    const ground=colours.ground ?? '#0b0b0d';
+    for(let k=0;k<count;k++){
+      const t=frame+(count===1?0:.5*k/(count-1));
+      sampleCtx.globalCompositeOperation='source-over';sampleCtx.globalAlpha=1;
+      sampleCtx.fillStyle=ground;sampleCtx.fillRect(0,0,W,H);
+      drawBackdrops(sampleCtx,t);
+      drawProps(sampleCtx,t,'under_words');
+      setPose(t);applyWordPoses(t);renderer.render(scene,camera);
+      sampleCtx.globalAlpha=1;sampleCtx.drawImage(renderer.domElement,0,0);
+      drawProps(sampleCtx,t,'over_words');
+      output.globalAlpha=1/(k+1);output.drawImage(sampleCanvas,0,0);
+    }
+  }else{
+    for(let k=0;k<count;k++){
+      const t=frame+(count===1?0:.5*k/(count-1));setPose(t);applyWordPoses(t);renderer.render(scene,camera);
+      output.globalAlpha=1/(k+1);output.drawImage(renderer.domElement,0,0);
+    }
   }
   output.globalAlpha=1;drawCaption(frame);drawIntro(frame);return true;
 };

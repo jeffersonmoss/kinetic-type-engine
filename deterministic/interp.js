@@ -216,5 +216,93 @@
     return out;
   }
 
-  globalThis.KT_INTERP = Object.freeze({ ease, movePose, poseAt, project, quaternion, slerp, rotateAxis, wordState, wordShift, wordXform, wordMoving, wordClips });
+  // ---- Screen-space backdrops and hoisted props (engine fix brief 17, 23 November 2026) ----
+  const SHARP_EASE = Object.freeze({ a: 2, b: 4, x0: 0.34 });
+
+  // Maps backdrop pixel coordinates (bx, by) to screen pixels (sx, sy) for a W x H frame.
+  function backdropRect(b, W = 1280, H = 720) {
+    const bw = b.w || W, bh = b.h || H, fit = b.fit ?? 'cover';
+    if (fit === 'stretch') return { ox: 0, oy: 0, sx: W / bw, sy: H / bh, dw: W, dh: H };
+    const s = fit === 'contain' ? Math.min(W / bw, H / bh) : Math.max(W / bw, H / bh);
+    const dw = bw * s, dh = bh * s;
+    return { ox: (W - dw) / 2, oy: (H - dh) / 2, sx: s, sy: s, dw, dh };
+  }
+
+  function windowAlpha(win, frame) {
+    if (frame < win.start || frame >= win.end) return 0;
+    const fin = win.fadeIn > 0 ? clamp((frame - win.start) / win.fadeIn, 0, 1) : 1;
+    const fout = win.fadeOut > 0 ? clamp((win.end - frame) / win.fadeOut, 0, 1) : 1;
+    return fin * fout;
+  }
+
+  function backdropOpacity(b, frame) {
+    return (b.opacity ?? 1) * windowAlpha(b, frame);
+  }
+
+  function propOpacityAt(p, frame) {
+    let best = 0, refIndex = -1;
+    for (const win of p.windows ?? []) {
+      const a = windowAlpha(win, frame);
+      if (a > best) { best = a; refIndex = win.refIndex ?? -1; }
+    }
+    return { opacity: (p.opacity ?? 1) * best, refIndex };
+  }
+
+  // Keyframed prop pose in backdrop (or screen) pixels: sharp-eased along segments, held still between them.
+  function propPoseAt(p, frame) {
+    let x = p.x0 ?? 0, y = p.y0 ?? 0;
+    for (const s of p.segments ?? []) {
+      if (frame < s.f0) break;
+      if (frame >= s.f1) { x = s.x1; y = s.y1; continue; }
+      const u = (frame - s.f0) / Math.max(1e-9, s.f1 - s.f0);
+      const e = ease(u, s.ease ?? SHARP_EASE);
+      return { x: s.x0 + (s.x1 - s.x0) * e, y: s.y0 + (s.y1 - s.y0) * e, moving: s.x0 !== s.x1 || s.y0 !== s.y1 };
+    }
+    return { x, y, moving: false };
+  }
+
+  // Screen-space draw, collision (hit) and ripple rectangles of prop `p` at `frame`, or null when inactive.
+  function propScreenRects(p, frame, backdrops = [], W = 1280, H = 720) {
+    const { opacity, refIndex } = propOpacityAt(p, frame);
+    if (!(opacity > 0)) return null;
+    const B = refIndex >= 0 && backdrops[refIndex]
+      ? backdropRect(backdrops[refIndex], W, H)
+      : { ox: 0, oy: 0, sx: 1, sy: 1, dw: W, dh: H };
+    const pose = propPoseAt(p, frame);
+    const ps = p.scale ?? 1;
+    const bx0 = pose.x - (p.anchorX ?? 0) * ps;
+    const by0 = pose.y - (p.anchorY ?? 0) * ps;
+    const draw = { x: B.ox + bx0 * B.sx, y: B.oy + by0 * B.sy, w: p.w * ps * B.sx, h: p.h * ps * B.sy };
+    const hb = p.hitBox ?? { x0: 0, y0: p.anchorY ?? 0, x1: p.w, y1: p.h };
+    const hit = {
+      x0: B.ox + (bx0 + hb.x0 * ps) * B.sx,
+      y0: B.oy + (by0 + hb.y0 * ps) * B.sy,
+      x1: B.ox + (bx0 + hb.x1 * ps) * B.sx,
+      y1: B.oy + (by0 + hb.y1 * ps) * B.sy,
+    };
+    const rb = p.rippleBox ?? { x0: 0, y0: p.anchorY ?? 0, x1: p.w, y1: p.h };
+    const rip = {
+      x: B.ox + (bx0 + rb.x0 * ps) * B.sx,
+      y: B.oy + (by0 + rb.y0 * ps) * B.sy,
+      w: (rb.x1 - rb.x0) * ps * B.sx,
+      h: (rb.y1 - rb.y0) * ps * B.sy,
+    };
+    return { opacity, moving: pose.moving, draw, hit, rip, x: pose.x, y: pose.y, refIndex };
+  }
+
+  // True when any photographic backdrop or on-screen prop is visibly drawn at `frame` (brief 17: not a dead screen).
+  function stageVisible(scene, frame, W = 1280, H = 720) {
+    const bds = scene.backdrops ?? [];
+    for (const b of bds) if (backdropOpacity(b, frame) > 0.05) return true;
+    for (const p of scene.props ?? []) {
+      const st = propScreenRects(p, frame, bds, W, H);
+      if (st && st.opacity > 0.05 && st.hit.x1 > 0 && st.hit.x0 < W && st.hit.y1 > 0 && st.hit.y0 < H) return true;
+    }
+    return false;
+  }
+
+  globalThis.KT_INTERP = Object.freeze({
+    ease, movePose, poseAt, project, quaternion, slerp, rotateAxis, wordState, wordShift, wordXform, wordMoving, wordClips,
+    SHARP_EASE, backdropRect, backdropOpacity, propOpacityAt, propPoseAt, propScreenRects, stageVisible,
+  });
 })();

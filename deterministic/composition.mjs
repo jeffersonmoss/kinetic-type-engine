@@ -287,8 +287,9 @@ function nearCamera(w, f, pose) {
 // before stay on until the next word is visible, when that adds no projected overlap. Remaining empty runs are listed.
 function anyVisible(scene, f, pose, vfov, sideFill = 1) {
   const I = globalThis.KT_INTERP;
-  // Something on screen: an intro overlay (badge, title card), a picture element or a word.
+  // Something on screen: an intro overlay (badge, title card), a photographic backdrop or on-screen prop (brief 17), a picture element or a word.
   if ((scene.intro ?? []).some(x => f >= x.start && f < x.end)) return true;
+  if (I.stageVisible?.(scene, f)) return true;
   const filling = [...scene.words, ...(scene.elements ?? [])].filter(w => {
     const on = (w.on <= f && (w.off == null || f < w.off)) || (w.reveal_on != null && f >= w.reveal_on);
     if (!on || opacityAt(w, f) <= 0.05) return false;

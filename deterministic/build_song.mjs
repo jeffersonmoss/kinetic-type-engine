@@ -1,5 +1,5 @@
 import { songAppearance } from './song_appearance.mjs';
-import { scanOverlap, repairShownAndOverlap, tamePulses } from './overlap_gate.mjs';
+import { scanOverlap, repairShownAndOverlap, tamePulses, checkPropWordOverlap } from './overlap_gate.mjs';
 // Build a whole song with the deterministic engine (song-agnostic driver, 22 November 2026; generalised from the Room for
 // One prototype's "videos/Room for One - whole song.mjs", W2 commit 4e2d2b0). See KIT.md.
 //   1. An optional approved opening scene is used as is (Room for One: build #144).
@@ -382,6 +382,12 @@ if (fill.remaining.length) { process.exitCode = 1; console.error(`EMPTY STRETCH 
 const pulseLog = tamePulses(finalObj, { until: revealF0 });
 const overlapFinal = { overlaps: scanOverlap(finalObj, { until: revealF0 }).overlaps };
 if (overlapFinal.overlaps.length) process.exitCode = 1;
+// Brief 17 item 10: a prop must never cover any part of a sung word during its focus window.
+const propOverlap = checkPropWordOverlap(finalObj, onsetOf, { until: frames });
+if (!propOverlap.pass) {
+  process.exitCode = 1;
+  console.error(`PROP COVERS SUNG WORD FAIL: ${propOverlap.violations.length} intervals: ${propOverlap.violations.slice(0, 8).map(v => v.summary).join('; ')}`);
+}
 const syncCheck = checkSync(finalObj, sung), holdCheck = checkHolds(finalObj, sung, { until: revealF0 });
 const shownFinal = gateFailures(finalObj, onsetOf, { until: revealF0 });
 const partialFinal = shownFinal.filter(x => x.kind === 'partial'), droppedFinal = shownFinal.filter(x => x.kind === 'unshown');
@@ -455,6 +461,14 @@ md.push('', '## Fly-through, swell release, largest word, lone holds (brief 8)',
 md.push('', '## Zoom entrances (size floor)', '', `${zoomFloor.length} zoom entrances start larger, at no less than half the size minimum with room.`, '', ...zoomFloor.map(x => `- ${x}`));
 md.push('', '## Projected overlap', '', `${overlapFinal.overlaps.length} remaining intervals (${overlapFinal.overlaps.length ? 'FAIL' : 'PASS'}), scanned with each sung pulse at its peak. Pulses lowered or dropped: ${pulseLog.length}.`, '', ...pulseLog.map(x => `- Pulse: ${x}`),
   ...overlapRepair.retired.map(x => `- Repair: ${x}`), ...overlapFinal.overlaps.map(x => `- ${x}`));
+if (appearance.backdrops.length || appearance.props.length) {
+  md.push('', '## Backdrops and props (brief 17)', '',
+    `Backdrops: ${appearance.backdrops.length}. Props: ${appearance.props.length}.`, '',
+    ...appearance.backdrops.map(x => `- Backdrop: ${x}`),
+    ...appearance.props.map(x => `- Prop: ${x}`), '',
+    `Prop covers sung word during focus window (hard gate): ${propOverlap.violations.length} intervals (${propOverlap.pass ? 'PASS' : 'FAIL'}).`,
+    ...propOverlap.violations.map(v => `- FAIL: ${v.summary}`));
+}
 md.push('', '## Ending', '', `Still ending (camera still for the last ${MIN_END_HOLD} frames, no word moving on the last frame): ${stillEnding.pass ? 'PASS' : `FAIL: ${stillEnding.problems.join('; ')}`}.`, '');
 if (!REVEAL_ON) md.push(`Reveal off (song settings ending). The song ends on ${reveal.word}, at rest from frame ${reveal.restFrame} (${(reveal.restFrame / FPS).toFixed(2)} s) and held still to the last frame.${reveal.sungAfter.length ? ` Words sung after it (${reveal.sungAfter.join(', ')}) play first; the camera cuts back at frame ${reveal.cutBack}.` : ''}`, '');
 else md.push('## Reveal', '', `${revealF0 < plannedRevealF0 ? `Moved earlier from frame ${plannedRevealF0} so the pull-back lands and holds still before the end. ` : ''}${reveal.stoppedAt ? `The pull-back stops at the ${(REVEAL_MIN_COVERAGE * 100).toFixed(0)}% coverage floor, centred (distance ${reveal.stoppedAt.from.toFixed(0)} -> ${reveal.stoppedAt.to.toFixed(0)}; the whole layout would cover ${(reveal.stoppedAt.coverageWhole * 100).toFixed(1)}%). ` : ''}Starts at frame ${revealF0} (${(revealF0 / FPS).toFixed(2)} s), pulls back until frame ${reveal.f1} (${(reveal.f1 / FPS).toFixed(2)} s), then holds still for ${((frames - reveal.f1) / FPS).toFixed(2)} s to the end. Compacted layout (assemble_sections.mjs compactLayout): ${reveal.compaction?.chains} chains; gaps between chains in the true layout ${JSON.stringify(reveal.compaction?.gapsBefore)} units; largest gap between consecutive plaques after compaction ${reveal.compaction?.largestGapAfter} units; dropped ${reveal.compaction?.dropped.length ?? 0}. The reveal shows ${reveal.tail} of ${reveal.of} plaques. Reveal check on frame ${revealCheck.frame} (needs 20%; the reveal was laid out for ${(REVEAL_MIN_COVERAGE * 100).toFixed(0)}%): ${(revealCheck.coverage * 100).toFixed(1)}% of the frame covered, ${revealCheck.plaquesInFrame} of ${revealCheck.plaquesShown} shown plaques in frame, ${revealCheck.pass ? 'PASS' : 'FAIL'}.`, '', ...(reveal.compaction?.log ?? []).map(l => `- ${l}`), '');
@@ -500,5 +514,6 @@ console.log('size', JSON.stringify({ staticHidden: staticHide.log.length, static
 console.log('reveal', JSON.stringify(reveal), 'revealF0', revealF0, 'hidden', hideLog.filter(l => l.includes('hidden')).length);
 console.log(el.split('\n').filter(l => /CHECKS|FAIL|^  /.test(l)).join('\n'));
 console.log('wordmarks', JSON.stringify(appearance.wordmarkUse.map(({ name, used, words }) => ({ name, used, words }))), 'opening blank', appearance.blank);
+if (appearance.backdrops.length || appearance.props.length) console.log('stage layers', JSON.stringify({ backdrops: appearance.backdrops.length, props: appearance.props.length, propOverlapViolations: propOverlap.violations.length }));
 console.log('keywords', JSON.stringify({ on: fastWordsOn(song.fast_words), stretches: keywords.stretches.map(st => `${st.start.toFixed(2)}-${st.end.toFixed(2)}@${st.peak.toFixed(1)}`), dropped: keywords.dropped.size }));
 if (gatesFailed) console.error(`GATES FAILED: no final scene written. Inspection copy: ${failedScene}`); else console.log('scene to render:', finalScene);

@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import zlib from 'node:zlib';
 
-export function pngAlphaBox(file) {
+export function pngAlphaBox(file, { minY = 0, maxY = Infinity, alphaMin = 128 } = {}) {
   const b = fs.readFileSync(file);
   if (b.readUInt32BE(0) !== 0x89504e47) return null;
   let o = 8, W, H, depth, type, interlace, idat = [], trns = null;
@@ -29,7 +29,9 @@ export function pngAlphaBox(file) {
       const p = a + up - c, pa = Math.abs(p - a), pb = Math.abs(p - up), pc = Math.abs(p - c);
       row[i] = (row[i] + [0, a, up, (a + up) >> 1, pa <= pb && pa <= pc ? a : pb <= pc ? up : c][f]) & 255;
     }
-    for (let x = 0; x < W; x++) if (alphaOf(row, x) > 128) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; y1 = y; }
+    if (y >= minY && y <= maxY) {
+      for (let x = 0; x < W; x++) if (alphaOf(row, x) > alphaMin) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; y1 = y; }
+    }
     prev = row;
   }
   if (x1 < 0) return null;

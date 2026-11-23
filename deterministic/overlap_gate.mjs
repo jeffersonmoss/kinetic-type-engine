@@ -1,4 +1,4 @@
-import { inkOk, repairShown, gateFailures } from './shown_gate.mjs';
+import { inkOk, repairShown, gateFailures, sungWords, appearanceFrame } from './shown_gate.mjs';
 
 export const OVERLAP_GATE = '13.1.19_projected_word_overlap';
 const I = globalThis.KT_INTERP;
@@ -213,4 +213,101 @@ export function repairShownAndOverlap(scene, onsetOf, { from = 0, until, retireO
   const partial = gateFailures(scene, onsetOf, { until }).filter(x => x.kind === 'partial');
   const remaining = scanOverlap(scene, { from, until }).overlaps;
   return { shownLog, overlapLog, partial, overlaps: remaining };
+}
+
+function polyArea(poly) {
+  let a = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const p = poly[i], q = poly[(i + 1) % poly.length];
+    a += p[0] * q[1] - q[0] * p[1];
+  }
+  return Math.abs(a) * 0.5;
+}
+
+// Engine fix brief 17 (Jefferson, 23 November 2026: "never let a prop cover a sung word"):
+// Fails the join if any visible screen-space prop's body box overlaps any part of a sung word's projected box during
+// that word's focus window ([min(appearance, onset), max(appearance, onset) + focusRead)). Backdrops are background
+// and are not checked here. Returns { violations, pass }.
+export function checkPropWordOverlap(scene, onsetOf, { until = scene.meta.frames, W = 1280, H = 720, focusRead = 15 } = {}) {
+  const props = scene.props ?? [];
+  if (!props.length) return { violations: [], pass: true };
+  const fps = scene.meta.fps ?? 30, vfov = scene.meta.vfov ?? 40;
+  const backdrops = scene.backdrops ?? [];
+  const byId = new Map(scene.words.map(w => [w.id, w]));
+  const poseCache = new Map();
+  const poseAt = f => poseCache.get(f) ?? poseCache.set(f, I.poseAt(scene.cams, f)).get(f);
+  const propCache = new Map();
+  const propRectsAt = f => propCache.get(f) ?? propCache.set(f, props.map(p => {
+    const st = I.propScreenRects(p, f, backdrops, W, H);
+    if (!st || st.opacity <= 0.05) return null;
+    const x0 = Math.max(0, st.hit.x0), y0 = Math.max(0, st.hit.y0);
+    const x1 = Math.min(W, st.hit.x1), y1 = Math.min(H, st.hit.y1);
+    return x1 > x0 && y1 > y0 ? { p, x0, y0, x1, y1 } : null;
+  }).filter(Boolean)).get(f);
+  const violations = [];
+  for (const { w, onsetF } of sungWords(scene, onsetOf)) {
+    if (onsetF >= until || !inkOk(w)) continue;
+    const A = appearanceFrame(w);
+    const fa = Math.max(0, Math.min(A, onsetF));
+    const fb = Math.min(until, Math.max(A, onsetF) + focusRead);
+    const corners = rectangle(w);
+    const openRuns = new Map();
+    const closeRun = (key, run) => {
+      openRuns.delete(key);
+      violations.push({
+        wordId: w.id, word: w.text, onsetFrame: onsetF, onset_s: +(onsetF / fps).toFixed(2),
+        focusStart: fa, focusEnd: fb - 1, propId: run.p.id, propLabel: run.p.label ?? run.p.id,
+        start: run.start, end: run.end, frames: run.end - run.start + 1,
+        start_s: +(run.start / fps).toFixed(2), end_s: +((run.end + 1) / fps).toFixed(2),
+        maxShare: +run.maxShare.toFixed(4), maxAreaPx: Math.round(run.maxAreaPx), peakFrame: run.peakFrame,
+        summary: `${w.id} ${w.text} (onset ${(onsetF / fps).toFixed(2)} s, focus ${fa}-${fb - 1}) covered by prop ${run.p.id} (${run.p.label ?? run.p.id}) on frames ${run.start}-${run.end} (${(run.start / fps).toFixed(2)}-${((run.end + 1) / fps).toFixed(2)} s, ${run.end - run.start + 1} frames): peak ${(run.maxShare * 100).toFixed(1)}% of word (${Math.round(run.maxAreaPx)} px^2 at frame ${run.peakFrame})`,
+      });
+    };
+    for (let f = fa; f < fb; f++) {
+      const activeProps = propRectsAt(f);
+      const hitProps = new Set();
+      if (activeProps.length && visible(w, f) && !((w.opacity ?? []).filter(([k]) => k <= f).at(-1)?.[1] <= 0.05)) {
+        const pose = poseAt(f);
+        const X = I.wordXform(w, f);
+        const normal = sub(X(w.C.map((c, i) => c + w.N[i])), X(w.C));
+        if (dot(normal, sub(pose.position, X(w.C))) > 0) {
+          let shape = corners.map(X);
+          const k = drawnScale(w, f, fps);
+          if (k !== 1) { const c = X(w.C); shape = shape.map(pt => pt.map((x, i) => c[i] + (x - c[i]) * k)); }
+          for (const plane of I.wordClips(w, f, byId)) shape = clip(shape, pt => dot(plane.n, sub(pt, plane.P)));
+          const depth = pt => -dot(sub(pt, pose.position), pose.N);
+          let poly = clip(shape, pt => depth(pt) - 20).map(pt => I.project(pt, pose, vfov)).filter(Boolean).map(pt => [pt.x, pt.y]);
+          for (const axis of [0, 1]) for (const sign of [-1, 1]) poly = clip(poly, pt => 1 + sign * pt[axis]);
+          const screenPoly = poly.map(([nx, ny]) => [(nx + 1) * W / 2, (1 - ny) * H / 2]);
+          const wordArea = screenPoly.length >= 3 ? polyArea(screenPoly) : 0;
+          if (wordArea >= 1) {
+            for (const pr of activeProps) {
+              let inter = screenPoly;
+              inter = clip(inter, pt => pt[0] - pr.x0);
+              inter = clip(inter, pt => pr.x1 - pt[0]);
+              inter = clip(inter, pt => pt[1] - pr.y0);
+              inter = clip(inter, pt => pr.y1 - pt[1]);
+              const ovArea = inter.length >= 3 ? polyArea(inter) : 0;
+              if (ovArea > 1) {
+                const share = ovArea / wordArea;
+                hitProps.add(pr.p.id);
+                const cur = openRuns.get(pr.p.id);
+                if (cur && cur.end === f - 1) {
+                  cur.end = f;
+                  if (share > cur.maxShare) { cur.maxShare = share; cur.maxAreaPx = ovArea; cur.peakFrame = f; }
+                } else {
+                  if (cur) closeRun(pr.p.id, cur);
+                  openRuns.set(pr.p.id, { p: pr.p, start: f, end: f, maxShare: share, maxAreaPx: ovArea, peakFrame: f });
+                }
+              }
+            }
+          }
+        }
+      }
+      for (const [pid, run] of [...openRuns.entries()]) if (!hitProps.has(pid)) closeRun(pid, run);
+    }
+    for (const [pid, run] of [...openRuns.entries()]) closeRun(pid, run);
+  }
+  violations.sort((a, b) => a.start - b.start || a.wordId.localeCompare(b.wordId));
+  return { violations, pass: violations.length === 0 };
 }
