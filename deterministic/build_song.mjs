@@ -1,5 +1,5 @@
 import { songAppearance } from './song_appearance.mjs';
-import { scanOverlap } from './overlap_gate.mjs';
+import { scanOverlap, repairShownAndOverlap } from './overlap_gate.mjs';
 // Build a whole song with the deterministic engine (song-agnostic driver, 22 November 2026; generalised from the Room for
 // One prototype's "videos/Room for One - whole song.mjs", W2 commit 4e2d2b0). See KIT.md.
 //   1. An optional approved opening scene is used as is (Room for One: build #144).
@@ -148,8 +148,11 @@ let el = 'No picture elements (song settings has no "picture_elements").';
 if (song.picture_elements) el = execFileSync('node', ['run_elements.mjs', inp(song.picture_elements), notes, finalScene], { cwd: engine, encoding: 'utf8' });
 else fs.copyFileSync(notes, finalScene);
 const finalObj = JSON.parse(fs.readFileSync(finalScene, 'utf8'));
-const overlapRepair = scanOverlap(finalObj, { until: revealF0, repair: true, retireOccluded: true });
-const overlapFinal = scanOverlap(finalObj, { until: revealF0 });
+// The final joined scene is repaired for both rules together (shown whole and projected overlap), alternating until
+// neither repair changes anything; the checks below then judge the scene exactly as it is written.
+const joint = repairShownAndOverlap(finalObj, onsetOf, { until: revealF0, retireOccluded: true });
+const overlapRepair = { retired: joint.overlapLog };
+const overlapFinal = { overlaps: joint.overlaps };
 if (overlapFinal.overlaps.length) process.exitCode = 1;
 const appearance = songAppearance(finalObj, song, inp, Math.min(...map.words.map(w => w.start_s)));
 if (!appearance.pass) process.exitCode = 1;
@@ -188,7 +191,8 @@ md.push('', '## Candidate check frequency', '', ...rows.filter(r => r.checkFrequ
   `- ${r.label}: ${Object.entries(r.checkFrequency).sort((a,b) => b[1]-a[1]).map(([name,n]) => `${name} ${n}/${N}`).join(', ')}`));
 md.push('', '## Opening and team wordmarks', '', appearance.intro,
   `Opening blank: ${appearance.blank} frames (limit ${FPS} frames / 1 s): ${appearance.pass ? 'PASS' : 'FAIL'}.`,
-  ...appearance.wordmarks.map(x => `- ${x}`));
+  ...appearance.wordmarks.map(x => `- ${x}`), '',
+  `Wordmark use: ${['image', 'font', 'neither'].map(k => `${k}: ${appearance.wordmarkUse.filter(x => x.used === k).map(x => x.name).join(', ') || 'none'}`).join('; ')}.`);
 md.push('', '## Projected overlap', '', `${overlapFinal.overlaps.length} remaining intervals (${overlapFinal.overlaps.length ? 'FAIL' : 'PASS'}).`, '',
   ...overlapRepair.retired.map(x => `- Repair: ${x}`), ...overlapFinal.overlaps.map(x => `- ${x}`));
 md.push('', '## Reveal', '', `Starts at frame ${revealF0} (${(revealF0 / FPS).toFixed(2)} s), pulls back until frame ${reveal.f1} (${(reveal.f1 / FPS).toFixed(2)} s), then holds still for ${((frames - reveal.f1) / FPS).toFixed(2)} s to the end. Compacted layout (assemble_sections.mjs compactLayout): ${reveal.compaction?.chains} chains; gaps between chains in the true layout ${JSON.stringify(reveal.compaction?.gapsBefore)} units; largest gap between consecutive plaques after compaction ${reveal.compaction?.largestGapAfter} units; dropped ${reveal.compaction?.dropped.length ?? 0}. The reveal shows ${reveal.tail} of ${reveal.of} plaques. Reveal check on frame ${revealCheck.frame} (needs 20%; the reveal was laid out for ${(REVEAL_MIN_COVERAGE * 100).toFixed(0)}%): ${(revealCheck.coverage * 100).toFixed(1)}% of the frame covered, ${revealCheck.plaquesInFrame} of ${revealCheck.plaquesShown} shown plaques in frame, ${revealCheck.pass ? 'PASS' : 'FAIL'}.`, '', ...(reveal.compaction?.log ?? []).map(l => `- ${l}`), '');
@@ -197,7 +201,7 @@ md.push('## Flagged for Jefferson', '', ...(flagged.length ? flagged.map((f, i) 
 const sp = finalObj.meta.sung_pulses ?? { added: [], skipped: [] };
 const popWhy = {};
 for (const r of rows) for (const p of r.pops ?? []) popWhy[p.why] = (popWhy[p.why] ?? 0) + 1;
-md.push('## Shown whole (focused word)', '', `Joined scene before its sweep: ${shownSweep.before} partly shown, ${shownSweep.beforeUnshown} wholly out of frame. After the sweep: ${shownSweep.after} partly shown, ${shownSweep.afterUnshown} out. Final scene (after echoes and picture elements): ${partialFinal.length} partly shown (${partialFinal.length ? 'FAIL' : 'PASS'}), ${droppedFinal.length} dropped.`, '', 'Sweep repairs:', '', ...shownSweep.log.map(x => `- ${x}`), '', 'Partly shown (failures):', '', ...(partialFinal.length ? partialFinal.map(x => `- ${x.id} ${x.text} (onset frame ${x.onsetF}): ${x.why}`) : ['- none']), '', 'Dropped (wholly out of frame around their onset):', '', ...(droppedFinal.length ? droppedFinal.map(x => `- ${x.id} ${x.text} (onset frame ${x.onsetF}): ${x.why}`) : ['- none']), '');
+md.push('## Shown whole (focused word)', '', `Joined scene before its sweep: ${shownSweep.before} partly shown, ${shownSweep.beforeUnshown} wholly out of frame. After the sweep: ${shownSweep.after} partly shown, ${shownSweep.afterUnshown} out. Final scene (after echoes and picture elements): ${partialFinal.length} partly shown (${partialFinal.length ? 'FAIL' : 'PASS'}), ${droppedFinal.length} dropped.`, '', 'Sweep repairs:', '', ...shownSweep.log.map(x => `- ${x}`), '', 'Final-scene repairs (shown whole and overlap together):', '', ...(joint.shownLog.length ? joint.shownLog.map(x => `- ${x}`) : ['- none']), '', 'Partly shown (failures):', '', ...(partialFinal.length ? partialFinal.map(x => `- ${x.id} ${x.text} (onset frame ${x.onsetF}): ${x.why}`) : ['- none']), '', 'Dropped (wholly out of frame around their onset):', '', ...(droppedFinal.length ? droppedFinal.map(x => `- ${x.id} ${x.text} (onset frame ${x.onsetF}): ${x.why}`) : ['- none']), '');
 md.push('## Entrances', '', '| Section | Entrances | Pops (echoes included) | Share | By primitive |', '|---|---|---|---|---|', ...Object.entries(counts).map(([k, r]) => `| ${k} | ${r.total} | ${r.pop} | ${(r.share * 100).toFixed(1)}% | ${r.byPrim ? Object.entries(r.byPrim).map(([p, n]) => `${p} ${n}`).join(', ') : ''} |`), '', `Pop reasons in the built sections: ${Object.entries(popWhy).map(([k, n]) => `${k} ${n}`).join(', ')}.`, '');
 md.push('## Whole-song checks', '', `Sync: ${syncCheck.late.length} late (${syncCheck.pass ? 'PASS' : 'FAIL'}); ${syncCheck.dropped.length} lyric words dropped.`, ...syncCheck.late.map(x => `- late: ${x}`), ...syncCheck.dropped.map(x => `- dropped: ${x}`), '', `Idle stretches (sung events more than 2 s after any visible activity that uses them): ${holdCheck.holds.length}${holdCheck.longest ? `; longest ${holdCheck.longest.seconds} s` : ''} (${holdCheck.pass ? 'PASS' : 'FAIL'}).`, ...holdCheck.holds.map(h => `- from frame ${h.from} to ${h.to}: ${h.seconds} s, ${h.sungInside} sung events (${h.words.join(' ')})`), '');
 md.push('## Sung repeats and ad-libs', '', ...sp.added.map((a, i) => `${i + 1}. ${a.text} (${a.id}) at ${a.t} s, frame ${a.frame} (${a.source}, ${a.treatment ?? 'pulse'})`), '', 'Dropped:', '', ...(sp.skipped.length ? sp.skipped.map(x => `- ${x}`) : ['- none']), '', `Instrumental beat pulses: ${(sp.beat ?? []).length} (${(sp.beat ?? []).map(b => `${b.text}@${b.t}`).join(', ')}).`, '');
@@ -215,4 +219,5 @@ console.log('entrances', JSON.stringify(counts['Whole song']), 'pop reasons', JS
 console.log('reveal check', JSON.stringify(revealCheck));
 console.log('reveal', JSON.stringify(reveal), 'revealF0', revealF0, 'hidden', hideLog.filter(l => l.includes('hidden')).length);
 console.log(el.split('\n').filter(l => /CHECKS|FAIL|^  /.test(l)).join('\n'));
+console.log('wordmarks', JSON.stringify(appearance.wordmarkUse.map(({ name, used, words }) => ({ name, used, words }))), 'opening blank', appearance.blank);
 console.log('scene to render:', finalScene);

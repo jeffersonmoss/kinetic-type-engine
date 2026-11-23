@@ -1,4 +1,4 @@
-import { inkOk } from './shown_gate.mjs';
+import { inkOk, repairShown, gateFailures } from './shown_gate.mjs';
 
 export const OVERLAP_GATE = '13.1.19_projected_word_overlap';
 const I = globalThis.KT_INTERP;
@@ -123,4 +123,23 @@ export function scanOverlap(scene, { from = 0, until = scene.meta.frames, repair
     item = item.previous;
   }
   return { overlaps, retired };
+}
+
+// Both whole-scene rules together (engine fix brief 2, 22 November 2026): the shown-whole repair moves the camera,
+// which can create projected overlaps; the overlap repair retires and delays words, which the shown-whole check must
+// see. Alternate the two until neither changes anything, then report the final state of both. The focused word shown
+// partly is Jefferson's absolute rule; no fallback waives it, so the result names every remaining partial.
+export function repairShownAndOverlap(scene, onsetOf, { from = 0, until, retireOccluded = false, rounds = 4 } = {}) {
+  const shownLog = [], overlapLog = [];
+  let shown, overlap;
+  for (let round = 0; round < rounds; round++) {
+    shown = repairShown(scene, onsetOf, { until });
+    overlap = scanOverlap(scene, { from, until, repair: true, retireOccluded });
+    shownLog.push(...shown.log.map(x => `round ${round + 1}: ${x}`));
+    overlapLog.push(...overlap.retired.map(x => `round ${round + 1}: ${x}`));
+    if (!shown.log.length && !overlap.retired.length) break;
+  }
+  const partial = gateFailures(scene, onsetOf, { until }).filter(x => x.kind === 'partial');
+  const remaining = scanOverlap(scene, { from, until }).overlaps;
+  return { shownLog, overlapLog, partial, overlaps: remaining };
 }

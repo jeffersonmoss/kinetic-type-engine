@@ -15,8 +15,9 @@
 //   1. if the next camera move frames it, that move starts earlier so it lands when the word appears, by at most
 //      PICKUP_CAP frames (the 0.5 s pickup cap), keeping MIN_STILL still frames on the outgoing hold;
 //   2. if it appears whole but the camera leaves too soon, the next move starts later (shorter, never under
-//      MIN_MOVE frames) or a cut is held back a few frames;
-//   3. otherwise the hold it appears in is reframed to fit every word that appears or is sung in it, riders included,
+//      MIN_MOVE frames), a cut is held back a few frames, a short move is delayed whole (2b, at most PICKUP_CAP),
+//      or, failing that, the short move becomes a cut on its own landing frame (2c);
+//   3. otherwise the hold it appears in (the opening hold too, before the first camera key) is reframed to fit every word that appears or is sung in it, riders included,
 //      as tightly as the 0.94 x 0.90 reading margins allow (tight composition).
 // A repair is kept only when it lowers the cost (a partly shown word costs 1000, a dropped word 1).
 import fs from 'node:fs';
@@ -192,12 +193,29 @@ export function repairShown(scene, onsetOf, { until = Infinity } = {}) {
       } else if (need > 0 && whole && N.f1 === N.f0 && need <= ONSET_SLACK + 2) {
         N.f0 += need; N.f1 += need;
         done = `${w.id} ${w.text}: cut moved ${need} frames later (to ${N.f0}), so the word stays whole through frame ${last}`;
+      } else if (need > 0 && whole && N.f1 > N.f0) {
+        // A move too short to start later. 2b: delay the whole move (its landing too) by at most PICKUP_CAP frames,
+        // keeping MIN_STILL still frames before the following key. 2c: when the delayed landing would cost another
+        // word (a count-in sung a few frames apart), make the move a cut on its own landing frame instead, so the
+        // landing time is kept and the word holds still until then.
+        const was = { f0: N.f0, f1: N.f1, verb: N.verb };
+        if (need <= PICKUP_CAP && (n + 1 >= keys.length || keys[n + 1].f0 - (N.f1 + need) >= MIN_STILL)) {
+          N.f0 += need; N.f1 += need;
+          if (cost(gateFailures(scene, onsetOf, { until })) < n0) done = `${w.id} ${w.text}: camera move delayed ${need} frames (now ${N.f0}-${N.f1}), so the word stays whole through frame ${last}`;
+          else Object.assign(N, was);
+        }
+        if (!done && N.f0 + need <= N.f1) {
+          N.f0 = N.f1; N.verb = 'cut'; N.cut_from = was.verb;
+          done = `${w.id} ${w.text}: ${was.verb} ${was.f0}-${was.f1} becomes a cut at ${N.f1} (its landing), so the word stays whole through frame ${last}`;
+        }
       }
     }
     // 3. Reframe the hold so every word that appears or is sung during it fits together (riders included), as
-    //    tightly as the reading margins allow (tight composition: no empty band is kept around them).
-    if (!done && k >= 0) {
-      const K = keys[k], holdEnd = n >= 0 ? keys[n].f0 : Infinity;
+    //    tightly as the reading margins allow (tight composition: no empty band is kept around them). With no key
+    //    finished yet (k = -1) the hold is the opening one, before the first key, posed by that key's `from`.
+    if (!done && (k >= 0 || (keys.length && keys[0].f0 > A))) {
+      const opening = k < 0;
+      const K = opening ? { f0: 0, f1: 0, to: keys[0].from } : keys[k], holdEnd = opening ? keys[0].f0 : n >= 0 ? keys[n].f0 : Infinity;
       const group = sung.filter(s => { const a = appearanceFrame(s.w); return ((a >= K.f1 && a < holdEnd) || (s.onsetF >= K.f1 && s.onsetF < holdEnd)) && s.onsetF < until; });
       if (!group.some(s => s.w === w)) group.push({ w, onsetF: o });
       const pts = [];
@@ -206,13 +224,14 @@ export function repairShown(scene, onsetOf, { until = Infinity } = {}) {
         const P = fitPose(K.to, pts, vfov);
         if (P.dist > 0) {
           const old = K.to;
-          K.to = P;
-          if (n >= 0 && samePose(keys[n].from, old)) keys[n].from = P;
-          done = `${w.id} ${w.text}: hold after key ${K.f0}-${K.f1} reframed to fit the ${group.length} words that appear in it (${group.map(s => s.w.text).join(' ')}), distance ${old.dist.toFixed(0)} -> ${P.dist.toFixed(0)}`;
+          if (opening) keys[0].from = P;
+          else K.to = P;
+          if (!opening && n >= 0 && samePose(keys[n].from, old)) keys[n].from = P;
+          done = `${w.id} ${w.text}: ${opening ? 'opening hold' : `hold after key ${K.f0}-${K.f1}`} reframed to fit the ${group.length} words that appear in it (${group.map(s => s.w.text).join(' ')}), distance ${old.dist.toFixed(0)} -> ${P.dist.toFixed(0)}`;
         }
       }
     }
-    if (!done) continue;
+    if (!done) { scene.cams = JSON.parse(snapshot); w.on = onBefore; continue; }
     const after = gateFailures(scene, onsetOf, { until });
     if (cost(after) < n0) { fails = after; log.push(done); tried.clear(); }
     else { scene.cams = JSON.parse(snapshot); w.on = onBefore; }

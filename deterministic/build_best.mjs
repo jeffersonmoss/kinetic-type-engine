@@ -12,7 +12,7 @@ import { planTrail } from './plan_trail.mjs';
 import { planCameraAndVisibility } from './camera.mjs';
 import { planJoints, applyRepeatRunGroups } from './plan_joints.mjs';
 import { evaluateScene } from './checks.mjs';
-import { repairShown } from './shown_gate.mjs';
+import { repairShown, gateFailures } from './shown_gate.mjs';
 // Hard gate (Jefferson, rough cut 4): no severity fallback, demotion or ruling waives it.
 export const SHOWN_GATE = '13.1.0_every_sung_word_shown_whole';
 import { renderProvenanceMarkdown } from './provenance.mjs';
@@ -245,6 +245,18 @@ export function buildSingle({
     evaluation.checks[OVERLAP_GATE] = { failures: overlap.overlaps };
     evaluation.failedChecks.push(OVERLAP_GATE);
     evaluation.passed = false;
+  }
+  // The overlap repair retires words after the shown-whole repair ran: judge the focused words again on the scene as
+  // it is written, so a candidate cannot pass (or rank) on a stale shown-whole result.
+  if (overlap.retired.length) {
+    const known = new Set(shownRepair.remaining.map(x => x.id));
+    const fresh = gateFailures(scene, onsetOf, { until: gateUntil }).filter(x => x.kind === 'partial' && !known.has(x.id));
+    if (fresh.length) {
+      shownRepair.remaining.push(...fresh);
+      evaluation.checks[SHOWN_GATE] = { failures: shownRepair.remaining.map(x => `${x.id} (${x.text}) sung at ${x.onsetF}: ${x.why}`) };
+      if (!evaluation.failedChecks.includes(SHOWN_GATE)) evaluation.failedChecks.unshift(SHOWN_GATE);
+      evaluation.passed = false;
+    }
   }
 
   // Build structured build log (4.1, 18.7.4) and pin snapshot (18.8.8).
@@ -539,8 +551,12 @@ export function buildBest({
   for (const { buildLog } of all) for (const check of buildLog.failedChecks) {
     checkFrequency[check] = (checkFrequency[check] ?? 0) + 1;
   }
-  const passingOverlap = all.filter(r => !r.buildLog.checkFailures[OVERLAP_GATE]?.length);
-  const eligible = passingOverlap.length ? passingOverlap : all;
+  // Eligibility tiers (engine fix brief 2, 22 November 2026): a partly shown focused word is Jefferson's absolute rule
+  // and outranks overlap, which the joined-scene repair can still fix. Whole and overlap-free first, then whole, then
+  // the rest (ranked below by fewest partly shown words).
+  const noOverlap = r => !r.buildLog.checkFailures[OVERLAP_GATE]?.length, whole = r => !gateCount(r.buildLog);
+  const tiers = [all.filter(r => whole(r) && noOverlap(r)), all.filter(whole), all];
+  const eligible = tiers.find(t => t.length);
   const survivors = all.filter(r => r.buildLog.passed);
   let pool;
   let flagged = false;
