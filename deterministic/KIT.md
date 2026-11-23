@@ -59,7 +59,7 @@ cd "/Users/jeffersonmoss/Experiments/Kinetic Type Engine/deterministic"
 node build_song.mjs "<song workspace>/engine input" --out "<song workspace>/engine output/<run name>"
 ```
 
-18. Options: `--N 200` (candidates per section), `--skip-build` (reuse the section builds already in the output folder), `--reveal-coverage 0.2` (least share of the last frame the reveal layout aims to cover; the reveal check itself always asks for 20%).
+18. Options: `--N 200` (candidates per section), `--skip-build` (reuse the section builds already in the output folder), `--sections 4,5` (rebuild only those sections, reuse the rest, then re-join; for an input change local to them, such as a respelled word), `--reveal-coverage 0.2` (least share of the last frame the reveal layout aims to cover; the reveal check itself always asks for 20%).
 19. Time: Room for One's 8 sections at N 200 take roughly 8 minutes on Thing 2. It needs no browser, so it runs inside an agent sandbox.
 20. Output: one folder per section (scene, build log, provenance, plaque sheets), `sections/` (the words files), `Whole song - scene.json` (joined), `Whole song - notes - scene.json`, `Whole song - final - scene.json` (THE SCENE TO RENDER), `Whole song - sung words.json`, the click track, and `Whole song - provenance and flags.md`.
 21. Exit code 1 when a whole-song check fails (sync, idleness, a partly shown focused word, the reveal coverage or safety). The scene is still written; the provenance file says which check failed.
