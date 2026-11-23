@@ -86,7 +86,7 @@ for (const w of scene.words) {
   // Per-word overrides (song settings word_overrides, by song-map index): name false (a pun), score (bulb digits).
   const ov = song.word_overrides?.[String(w.map_index)] ?? {};
   if (w.score || ov.score || ov.name === false) continue;
-  if ((players.has(t) || isNum) && !(isJerseyFont(w.font) || w.jersey))
+  if ((players.has(t) || isNum) && !(isJerseyFont(w.font) || w.jersey || (song.jersey_font && w.font === song.jersey_font)))
     fails.push({ rule: 4, f: w.on, to: w.on + 30, word: `${w.id} ${w.text}`, what: `${isNum ? 'number' : 'player name'} in ${w.font}, not the jersey font`, rebuild: 'set it in the bold jersey font (needs the section re-planned: the box width changes)' });
   if (teams.has(t) && !(w.wordmark && (w.wordmark.image || w.wordmark.family)))
     fails.push({ rule: 4, f: w.on, to: w.on + 30, word: `${w.id} ${w.text}`, what: 'team name not drawn as the team wordmark (no wordmark image or font supplied)', rebuild: 'supply the wordmark image in song settings team_wordmarks; a re-join is enough' });

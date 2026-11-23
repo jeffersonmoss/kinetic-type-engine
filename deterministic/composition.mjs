@@ -1301,3 +1301,44 @@ export function hideStaticPartials(scene, onsetOf, { until = scene.meta.frames }
   }
   return { log, focused: [...new Set(focused)] };
 }
+
+// Wordmark size (brief 12 item 1): the even-margin cut can only shrink a wordmark's box, so each image wordmark is then
+// grown back toward a target letter height: its own size before the cut, or the median of the song's image wordmarks
+// before the cut if that is larger (so PORTLAND is sized like the WOLVES moments). Tried at the full step, then 3/4,
+// 1/2 and 1/4 of it (in log scale), about the centre, then each edge midpoint and corner; kept only with no new overlap
+// for the word, no new partly-shown or unshown frame at its onset and no static partial. Reported.
+export function growWordmarks(scene, onsetOf, { until = scene.meta.frames } = {}) {
+  const I = globalThis.KT_INTERP, vfov = scene.meta.vfov ?? 40, log = [];
+  const marks = scene.words.filter(w => w.wordmark?.image && w.wordmark.pre_cap && !w.reveal_copy_of && !w.echo && !w.dropped && w.on < until);
+  const at = w => { const o = onsetOf(w) ?? w.on; return Math.min(until - 1, o + G.SHOWN_FRAMES); };
+  const size = w => G.letterHeight(w, at(w), I.poseAt(scene.cams, at(w)), vfov);
+  const pre = new Map(marks.map(w => { const h = size(w); return [w, h == null ? null : h * w.wordmark.pre_cap / w.cap]; }));
+  const known = [...pre.values()].filter(x => x != null).sort((a, b) => a - b);
+  if (!known.length) return log;
+  const median = known[Math.floor(known.length / 2)];
+  const ownFail = w => gateFailures({ ...scene, words: [w] }, onsetOf, { until }).filter(x => x.kind === 'partial' || x.kind === 'unshown').length;
+  const ov = (w, a, b) => scanOverlap(scene, { from: a, until: b }).overlaps.filter(o => o.includes(`${w.id} `)).length;
+  const pivots = [[0, 0], [0, -1], [0, 1], [-1, 0], [1, 0], [-1, -1], [1, -1], [-1, 1], [1, 1]];
+  for (const w of marks) {
+    const now = size(w); if (now == null) continue;
+    const target = Math.max(pre.get(w) ?? 0, median), full = target / now;
+    if (full <= 1.01) continue;
+    const a = Math.max(0, w.on), b = Math.min(until, w.off ?? until), ov0 = ov(w, a, b), f0 = ownFail(w);
+    const keep = JSON.stringify({ C: w.C, w: w.w, h: w.h, cap: w.cap, fontPx: w.fontPx, pad: w.pad });
+    const back = () => Object.assign(w, JSON.parse(keep));
+    let done = null;
+    for (const t of [1, 0.75, 0.5, 0.25]) {
+      const k = Math.exp(Math.log(full) * t);
+      for (const [pu, pv] of pivots) {
+        const P = add(w.C, add(mul(w.R, pu * w.w / 2), mul(w.U, pv * w.h / 2)));
+        w.C = add(P, mul(w.C.map((x, i) => x - P[i]), k));
+        for (const key of ['w', 'h', 'cap', 'fontPx', 'pad']) if (typeof w[key] === 'number') w[key] *= k;
+        if (ov(w, a, b) <= ov0 && ownFail(w) <= f0 && !staticPartials(scene, { words: [w], until }).length) { done = { k, pu, pv }; break; }
+        back();
+      }
+      if (done) break;
+    }
+    log.push(`${w.id} ${w.text} at ${(w.t ?? 0).toFixed(2)} s: letters ${(100 * now).toFixed(1)}%, target ${(100 * target).toFixed(1)}% (${target === median && (pre.get(w) ?? 0) < median ? 'the song\'s median wordmark' : 'its size before the even-margin cut'}): ${done ? `grown x${done.k.toFixed(2)} to ${(100 * now * done.k).toFixed(1)}%` : 'kept: every growth would overlap a word, cut it at an edge or leave it static and partly on screen'}`);
+  }
+  return log;
+}

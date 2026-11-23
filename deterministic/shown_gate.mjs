@@ -66,6 +66,7 @@ export function inkOk(w) {
   if (!(w.cap > 0) || !(w.h > 0) || !(w.w > 0)) return false;
   if (w.h < w.cap * 0.999) return false;
   if (w.jersey) return true; // the jersey face is fitted to the box by the viewer
+  if (w.wordmark?.image) return true; // an image wordmark is fitted to its box by the viewer (brief 12: even margins)
   return !(w.fontPx > 0) || textWidth(w.text, w.font, w.fontPx) <= w.w * 1.02;
 }
 export function fullyShown(w, f, pose, vfov) {

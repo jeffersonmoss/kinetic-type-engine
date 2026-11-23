@@ -99,7 +99,10 @@ export function applyWordRoles(scene, { mapWords, display, song, names = [], met
   const flags = keywordFlags(mapWords, { names, keep: song.fast_words?.keep ?? [], overrides });
   const playerKey = new Set((song.player_names ?? []).map(T));
   const metrics = metricsPath ? JSON.parse(fs.readFileSync(metricsPath, 'utf8')) : null;
-  const jersey = JERSEY_FONTS[0];
+  // Brief 12 item 2: the jersey font is per song (song setting jersey_font, a font key in the kit's metrics, for
+  // example "barlow" for the Timberwolves' plain condensed sans); default the kit's jersey font (Graduate).
+  const jersey = song.jersey_font ?? JERSEY_FONTS[0];
+  if (song.jersey_font && metricsPath && !JSON.parse(fs.readFileSync(metricsPath, 'utf8')).fonts[song.jersey_font]) throw Error(`song setting jersey_font "${song.jersey_font}" is not a font in ${metricsPath}`);
   const log = { greyKeywords: [], greyNames: [], fontChanges: [], scores: [], numerals: [], displays: [], unmatched: [] };
   // Same cap height, so the height stays; the width is the new font's (with the jersey bold width when jersey).
   const reFont = (w, font) => {
@@ -134,7 +137,7 @@ export function applyWordRoles(scene, { mapWords, display, song, names = [], met
     }
     if (numeral?.kind === 'jersey') {
       w.score = false; w.jersey_number = true;
-      if (!JERSEY_FONTS.includes(w.font) && reFont(w, jersey)) log.fontChanges.push(`${w.id} ${w.text} at ${w.t.toFixed(2)} s: -> jersey font (jersey number)`);
+      if (w.font !== jersey && reFont(w, jersey)) log.fontChanges.push(`${w.id} ${w.text} at ${w.t.toFixed(2)} s: -> jersey font ${jersey} (jersey number)`);
       if (isGrey(w)) ungrey(w);
     }
     const isName = o.name ?? playerKey.has(T(w.text).replace(/'S$/, ''));
@@ -155,7 +158,7 @@ export function applyWordRoles(scene, { mapWords, display, song, names = [], met
       }
     }
     if (isName && !w.wordmark && !w.score) {
-      if (!JERSEY_FONTS.includes(w.font) && reFont(w, jersey)) log.fontChanges.push(`${w.id} ${w.text} at ${w.t.toFixed(2)} s: -> jersey font (player name)`);
+      if (w.font !== jersey && reFont(w, jersey)) log.fontChanges.push(`${w.id} ${w.text} at ${w.t.toFixed(2)} s: -> jersey font ${jersey} (player name)`);
       if (isGrey(w)) log.greyNames.push(`${w.id} ${w.text} at ${w.t.toFixed(2)} s: ${ungrey(w)} -> cream (player name)`);
     }
     if (w.keyword && isGrey(w)) log.greyKeywords.push(`${w.id} ${w.text} at ${w.t.toFixed(2)} s: ${ungrey(w)} -> cream (keyword: ${w.keyword_why})`);
@@ -165,6 +168,7 @@ export function applyWordRoles(scene, { mapWords, display, song, names = [], met
   for (const w of scene.words) {
     const src = byId.get(w.reveal_copy_of ?? null);
     if (src && isGrey(w) && !isGrey(src)) ungrey(w);
+    if (src && (src.player_name || src.jersey_number) && w.font !== src.font && reFont(w, src.font)) log.fontChanges.push(`${w.id} ${w.text} (reveal copy): -> ${src.font}, like its source`);
   }
   return { flags, log };
 }

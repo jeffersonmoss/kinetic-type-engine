@@ -96,9 +96,11 @@ function wordTexture(w) {
     if(bg){g.fillStyle=bg;g.fillRect(0,0,c.width,c.height);}
     const img=w.wordmark.image && wordmarkImages[w.wordmark.image];
     if(img){ // the team's own wordmark image: aspect kept, fitted where the lettering would be, tinted through its alpha
-      const k=Math.min(c.width*.94/img.naturalWidth,c.height*.9/img.naturalHeight);
+      // Brief 12: on a block (wordmark.margin set), the ink fills the box inside an even margin on all four sides.
+      const ink=w.wordmark.ink, mg=w.wordmark.margin;
+      const k=mg!=null&&ink ? c.height/(1+2*mg)/(img.naturalHeight*(ink.y1-ink.y0)) : Math.min(c.width*.94/img.naturalWidth,c.height*.9/img.naturalHeight);
       const dw=Math.max(1,Math.round(img.naturalWidth*k)), dh=Math.max(1,Math.round(img.naturalHeight*k));
-      const x=Math.round((c.width-dw)/2), y=Math.round((c.height-dh)/2);
+      const x=mg!=null&&ink ? Math.round((c.width-dw*(ink.x1-ink.x0))/2-ink.x0*dw) : Math.round((c.width-dw)/2), y=mg!=null&&ink ? Math.round((c.height-dh*(ink.y1-ink.y0))/2-ink.y0*dh) : Math.round((c.height-dh)/2);
       const tinted=colour=>{const L=document.createElement('canvas');L.width=dw;L.height=dh;const h=L.getContext('2d');h.imageSmoothingQuality='high';
         h.drawImage(img,0,0,dw,dh);if(colour){h.globalCompositeOperation='source-in';h.fillStyle=colour;h.fillRect(0,0,dw,dh);}return L;};
       // Outlines (stroke, then an outer accent) by stamping the alpha silhouette around a ring: a cheap dilation.

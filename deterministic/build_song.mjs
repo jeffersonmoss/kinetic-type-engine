@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 import './interp.js';
 import { checkSync, checkHolds } from './whole_song_checks.mjs';
 import { assemble, hideWhenGone, buildReveal, checkReveal, endOnWord, checkStillEnding } from './assemble_sections.mjs';
-import { tightenLone, hideEdgeClutter, hideUnreadable, hideFlythrough, SIDE_FILL, placeInRoom, loneHolds, LONE_HOLD, swellRelease, largestGreyToCream, fillEmptyFrames, swellSmallWords, floorZoomEntrances, pairHoldHides, emptyFrames, enforceMinSize, noOutlines, undoSizeForEmpty, hideStaticPartials, staticPartials, STATIC_RATE, STATIC_FRAMES } from './composition.mjs';
+import { tightenLone, hideEdgeClutter, hideUnreadable, hideFlythrough, SIDE_FILL, placeInRoom, growWordmarks, loneHolds, LONE_HOLD, swellRelease, largestGreyToCream, fillEmptyFrames, swellSmallWords, floorZoomEntrances, pairHoldHides, emptyFrames, enforceMinSize, noOutlines, undoSizeForEmpty, hideStaticPartials, staticPartials, STATIC_RATE, STATIC_FRAMES } from './composition.mjs';
 import { JERSEY_BOLD } from './style.mjs';
 import { keywordPlan, fastWordsOn, wordRanks } from './keywords.mjs';
 import { applyWordRoles, teamColourNames } from './word_roles.mjs';
@@ -268,6 +268,8 @@ const appearance = songAppearance(finalObj, song, inp, Math.min(...map.words.map
 if (!appearance.pass) process.exitCode = 1;
 outlines.log.push(...noOutlines(finalObj, { flatOf }).log);
 // Brief 8 item 55: image wordmarks are sized by their letters (set by the song appearance pass), grown if small.
+// Brief 12: wordmarks cut to even margins grow back toward their earlier size (or the song's median wordmark).
+const wordmarkGrowth = growWordmarks(finalObj, onsetOf, { until: revealF0 });
 { const r = enforceMinSize(finalObj, onsetOf, { until: revealF0, settings: finalObj.meta.size_rule ?? {}, wordmarks: true });
   size.log.push(...r.log.map(x => `(wordmarks) ${x}`)); size.counts.grown += r.counts.grown; size.counts.keptSmall += r.counts.keptSmall; size.wordmarks = r.log; }
 // Brief 7 item 4: zoom entrances start at no less than half the size minimum.
@@ -389,7 +391,7 @@ for (const s of seams) md.push(`| ${s.section} | ${s.frame} | ${s.verb} | ${s.fr
 md.push('', '## Candidate check frequency', '', ...rows.filter(r => r.checkFrequency).map(r =>
   `- ${r.label}: ${Object.entries(r.checkFrequency).sort((a,b) => b[1]-a[1]).map(([name,n]) => `${name} ${n}/${N}`).join(', ')}`));
 md.push('', '## Opening and team wordmarks', '', appearance.intro,
-  `Opening blank: ${appearance.blank} frames (limit ${FPS} frames / 1 s): ${appearance.pass ? 'PASS' : 'FAIL'}.`,
+  `Opening blank: ${appearance.blank} frames (limit ${FPS} frames / 1 s): ${appearance.pass ? 'PASS' : 'FAIL'}.`, '', `Wordmark blocks (brief 12): centred with an even margin of 0.25 x the ink height on all four sides; growth back toward the song's wordmark size: ${wordmarkGrowth.length}.`, ...wordmarkGrowth.map(x => `- ${x}`), '',
   ...appearance.wordmarks.map(x => `- ${x}`), '',
   `Wordmark use: ${['image', 'font', 'neither'].map(k => `${k}: ${appearance.wordmarkUse.filter(x => x.used === k).map(x => x.name).join(', ') || 'none'}`).join('; ')}.`);
 { const L = roles.log, kw = finalObj.words.filter(w => w.keyword && !w.reveal_copy_of), kwDropped = kw.filter(w => w.dropped);

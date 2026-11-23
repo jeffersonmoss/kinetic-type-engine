@@ -23,6 +23,7 @@ function imageSize(file) {
   }
   return null;
 }
+export const WORDMARK_MARGIN = 0.25; // brief 12: even margin round a wordmark on a block, as a share of its ink height
 export function songAppearance(scene, song, resolve, firstOnset) {
   const fps = scene.meta.fps ?? 30;
   const introEnd = Math.round(firstOnset * fps);
@@ -77,6 +78,22 @@ export function songAppearance(scene, song, resolve, firstOnset) {
       if (dims) {
         const k = Math.min(w.w * 0.94 / dims.width, w.h * 0.9 / dims.height);
         w.cap = dims.height * k * share;
+        // Brief 12 item 1.1: a wordmark image on a block sits centred with an even margin on all four sides, measured
+        // from the artwork's ink (its alpha box, else the whole image), not its file box. The box is cut to the ink's
+        // shape plus WORDMARK_MARGIN x the ink height on every side, about its centre, and never grows (so it adds no
+        // overlap); the viewer draws the ink into that inner rectangle.
+        const bg = style.colours?.background ?? w.colours?.background;
+        if (bg) {
+          const ink = dims.alpha ?? { x0: 0, y0: 0, x1: 1, y1: 1 };
+          const aspect = (dims.width * (ink.x1 - ink.x0)) / (dims.height * (ink.y1 - ink.y0));
+          let inkH = dims.height * k * (ink.y1 - ink.y0);
+          const fit = Math.min(1, w.w / (inkH * aspect + 2 * WORDMARK_MARGIN * inkH), w.h / (inkH * (1 + 2 * WORDMARK_MARGIN)));
+          w.wordmark.pre_cap = w.cap; // letter height before the cut, for the wordmark growth pass (brief 12)
+          inkH *= fit;
+          w.w = inkH * aspect + 2 * WORDMARK_MARGIN * inkH; w.h = inkH * (1 + 2 * WORDMARK_MARGIN); w.pad = WORDMARK_MARGIN * inkH;
+          w.cap = inkH * (style.letter_share ?? 1);
+          w.wordmark.ink = ink; w.wordmark.margin = WORDMARK_MARGIN;
+        }
       }
     }
     const kinds = [...new Set(matched.map(w => (w.echo ? 'sung echo' : w.reveal_copy_of ? 'reveal copy' : 'lyric')))].join(', ');
