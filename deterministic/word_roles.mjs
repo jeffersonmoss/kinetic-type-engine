@@ -62,8 +62,8 @@ export function mapIndexOf(w, mapWords, display = x => x) {
 
 const GREYS = new Set(['grey', 'grey-75', 'grey-50']);
 const isGreyHex = c => typeof c === 'string' && [TEXT_COLOURS['grey-75'], TEXT_COLOURS['grey-50']].includes(c.toUpperCase());
-const isGrey = w => GREYS.has(w.style) || isGreyHex(w.colours?.text);
-const ungrey = w => { const was = w.style; w.style = 'cream'; if (w.colours?.text) w.colours.text = TEXT_COLOURS.cream; return was; };
+export const isGrey = w => GREYS.has(w.style) || isGreyHex(w.colours?.text);
+export const ungrey = w => { const was = w.style; w.style = 'cream'; if (w.colours?.text) w.colours.text = TEXT_COLOURS.cream; return was; };
 
 // Joined-scene pass: marks w.keyword (and w.keyword_why), applies name and score overrides, makes keywords and player
 // names never grey, gives player names the jersey font and takes it from a name match that the song input says is not

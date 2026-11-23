@@ -65,7 +65,7 @@ function scoreTexture(w,c,g,px){
       g.fillStyle=glow;g.beginPath();g.arc(x,y,r*2.1,0,7);g.fill();
       const core=g.createRadialGradient(x-.25*r,y-.25*r,0,x,y,r);core.addColorStop(0,'#FFE3B8');core.addColorStop(.45,'#FF8A3D');core.addColorStop(1,'#F2471C');
       g.fillStyle=core;
-    } else g.fillStyle='#2E2E30';
+    } else g.fillStyle='#24252B';
     g.beginPath();g.arc(x,y,r,0,7);g.fill();
   };
   digits.forEach((d,i)=>{
@@ -81,10 +81,14 @@ function wordTexture(w) {
   const c=document.createElement('canvas');c.width=Math.max(1,Math.ceil(w.w*px));c.height=Math.max(1,Math.ceil(w.h*px));
   const g=c.getContext('2d'), override=w.colours ?? {};
   if(w.score && /\d/.test(w.text)){
-    const bg=override.background;if(bg){g.fillStyle=bg;g.fillRect(0,0,c.width,c.height);}
+    // Brief 8 item 53: bulb digits always sit on a dark scoreboard panel (on a mid-colour block the unlit bulbs read
+    // as lit, so 43 read as 88); the word's block colour, if any, shows as a thin rim around it.
+    const bg=override.background, rim=bg?Math.max(2,Math.round(.06*w.cap*px)):0;
+    if(bg){g.fillStyle=bg;g.fillRect(0,0,c.width,c.height);}
+    g.fillStyle='#0A0F1C';g.fillRect(rim,rim,c.width-2*rim,c.height-2*rim);
     scoreTexture(w,c,g,px);
     const texture=new THREE.CanvasTexture(c);texture.colorSpace=THREE.SRGBColorSpace;texture.anisotropy=8;
-    return {texture,block:!!bg,canvas:c};
+    return {texture,block:true,canvas:c};
   }
   if(w.wordmark){
     const {family, colours: brand}=w.wordmark;
@@ -103,6 +107,9 @@ function wordTexture(w) {
       const sw=dh*.05;
       ring(brand.accent,sw*2);ring(brand.stroke,sw);
       g.drawImage(tinted(brand.tint ?? null),x,y);
+      // Brief 8 item 55: an edge colour (song setting colours.edge) frames an opaque wordmark that would sink into a
+      // dark background (PORTLAND's black block).
+      if(brand.edge){const e=Math.max(2,Math.round(dh*.045));g.strokeStyle=brand.edge;g.lineWidth=e;g.strokeRect(x+e/2,y+e/2,dw-e,dh-e);}
       const texture=new THREE.CanvasTexture(c);texture.colorSpace=THREE.SRGBColorSpace;texture.anisotropy=8;
       return {texture,block:!!bg,canvas:c};
     }

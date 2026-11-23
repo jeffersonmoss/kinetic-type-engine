@@ -9,6 +9,20 @@ const asset = (file, resolve, types) => {
   return `data:${type};base64,${fs.readFileSync(filename).toString('base64')}`;
 };
 
+// Natural size of a PNG (its IHDR, plus its alpha box when it has transparency) or an SVG (width and height attributes).
+function imageSize(file) {
+  const ext = path.extname(file).toLowerCase();
+  if (ext === '.png') {
+    const b = fs.readFileSync(file), width = b.readUInt32BE(16), height = b.readUInt32BE(20);
+    const a = pngAlphaBox(file);
+    return { width, height, alpha: a && (a.y1 - a.y0 < 0.999 || a.x1 - a.x0 < 0.999) ? a : null };
+  }
+  if (ext === '.svg') {
+    const t = fs.readFileSync(file, 'utf8'), wm = t.match(/<svg[^>]*\swidth="([\d.]+)/), hm = t.match(/<svg[^>]*\sheight="([\d.]+)/);
+    return wm && hm ? { width: +wm[1], height: +hm[1], alpha: null } : null;
+  }
+  return null;
+}
 export function songAppearance(scene, song, resolve, firstOnset) {
   const fps = scene.meta.fps ?? 30;
   const introEnd = Math.round(firstOnset * fps);
@@ -52,8 +66,18 @@ export function songAppearance(scene, song, resolve, firstOnset) {
     else if (style.font) fonts[family] = asset(style.font, resolve, {
       '.ttf':'font/ttf', '.otf':'font/otf', '.woff':'font/woff', '.woff2':'font/woff2',
     });
+    // Brief 8 item 55: an image wordmark's letters are measured, not its box. The viewer fits the image into the box
+    // (94% of its width, 90% of its height); the letters are letter_share of the image height (song setting, else the
+    // PNG's alpha box for a transparent image, else 1). w.cap becomes that letter height, so Type rule 1 and the size
+    // pass judge the lettering.
+    const dims = image ? imageSize(resolve(style.image)) : null;
+    const share = style.letter_share ?? (dims?.alpha ? dims.alpha.y1 - dims.alpha.y0 : 1);
     for (const w of matched) {
-      w.wordmark = { family: !image && style.font ? family : null, image, colours: style.colours ?? {} };
+      w.wordmark = { family: !image && style.font ? family : null, image, colours: style.colours ?? {}, ...(image ? { letter_share: share } : {}) };
+      if (dims) {
+        const k = Math.min(w.w * 0.94 / dims.width, w.h * 0.9 / dims.height);
+        w.cap = dims.height * k * share;
+      }
     }
     const kinds = [...new Set(matched.map(w => (w.echo ? 'sung echo' : w.reveal_copy_of ? 'reveal copy' : 'lyric')))].join(', ');
     const used = image ? `IMAGE ${style.image}` : style.font ? `FONT ${style.font}` : 'NEITHER: no wordmark image or font supplied; existing lettering retained with supplied colours';

@@ -9,6 +9,7 @@ import * as G from './shown_gate.mjs';
 import { appearanceFrame, sungWords, letterHeight, fullyShown, cornersAt, fitPose, samePose, gateFailures, SIZE_DELAY } from './shown_gate.mjs';
 import { scanOverlap } from './overlap_gate.mjs';
 import { JERSEY_FONTS } from './style.mjs';
+import { isGrey, ungrey } from './word_roles.mjs';
 
 export const LONE_MIN = 0.22, LONE_WIDTH = 0.8, FOCUS_READ = 15;
 const add = (a, b) => a.map((x, i) => x + b[i]);
@@ -153,6 +154,20 @@ function edgeOn(w, f, pose) {
   if (!(nl > 0) || !(dl > 0)) return false;
   return n.reduce((s, x, i) => s + x * d[i], 0) / (nl * dl) < Math.sin(EDGE_ON_DEG * Math.PI / 180);
 }
+// Sideways at the edge (brief 8 item 52: IN at 123.9 s): a word of SIDE_LETTERS letters or fewer turned 60 to 120
+// degrees from upright whose box touches or crosses the frame edge (within EDGE_GAP of it) reads as a stray mark, so
+// outside its focus window it is hidden while the camera is still, like an edge-on word.
+export const SIDE_LETTERS = 2, EDGE_GAP = 0.02;
+function sidewaysAtEdge(w, f, pose, vfov) {
+  if (String(w.text).replace(/[^A-Za-z0-9]/g, '').length > SIDE_LETTERS) return false;
+  const cs = cornersAt(w, f);
+  if (!cs) return false;
+  const q = cs.map(c => globalThis.KT_INTERP.project(c, pose, vfov));
+  if (q.some(x => !x)) return false;
+  const ang = Math.abs(Math.atan2(q[1].y - q[0].y, (q[1].x - q[0].x) * 16 / 9) * 180 / Math.PI);
+  if (ang < 60 || ang > 120) return false;
+  return q.some(x => Math.abs(x.x) >= 1 - EDGE_GAP || Math.abs(x.y) >= 1 - EDGE_GAP);
+}
 export function hideUnreadable(scene, onsetOf, { until = scene.meta.frames } = {}) {
   const I = globalThis.KT_INTERP, vfov = scene.meta.vfov ?? 40, fps = scene.meta.fps ?? 30, log = [], focused = [];
   const poses = new Map(), poseAt = f => poses.get(f) ?? poses.set(f, I.poseAt(scene.cams, f)).get(f);
@@ -161,11 +176,11 @@ export function hideUnreadable(scene, onsetOf, { until = scene.meta.frames } = {
     const [focusFrom, focusTo] = focusWindow(w, onsetOf, fps);
     const end = Math.min(until, w.off ?? until);
     let run = null;
-    const close = f => { if (run) { hide(w, run, f); log.push(`${w.id} ${w.text}: hidden ${run}-${f} (upside down, mirrored, from behind or edge-on)`); run = null; } };
+    const close = f => { if (run) { hide(w, run, f); log.push(`${w.id} ${w.text}: hidden ${run}-${f} (upside down, mirrored, from behind, edge-on, or a short word sideways at the frame edge)`); run = null; } };
     for (let f = Math.max(0, w.on); f < end; f++) {
       // Upside down counts while the camera is still; during a camera move a turning word may pass the vertical.
       const still = !scene.cams.some(k => k.f0 < f && f < k.f1);
-      const bad = drawn(w, f) && inFrameShare(w, f, poseAt(f), vfov) > 0 && (!G.readableOrientation(w, f, poseAt(f), vfov, { tilt: still }) || (still && edgeOn(w, f, poseAt(f))));
+      const bad = drawn(w, f) && inFrameShare(w, f, poseAt(f), vfov) > 0 && (!G.readableOrientation(w, f, poseAt(f), vfov, { tilt: still }) || (still && (edgeOn(w, f, poseAt(f)) || sidewaysAtEdge(w, f, poseAt(f), vfov))));
       if (bad && f >= focusFrom && f < focusTo) { focused.push(`${w.id} ${w.text} at frame ${f}`); close(f); continue; }
       if (bad && run == null) run = f;
       if (!bad) close(f);
@@ -175,6 +190,41 @@ export function hideUnreadable(scene, onsetOf, { until = scene.meta.frames } = {
   return { log, focused: [...new Set(focused.map(x => x.replace(/ at frame \d+$/, '')))] };
 }
 
+// Fly-through (brief 8 item 56: the camera passed through DAY's block at 79.8 s, a white flash): on a frame where a word's
+// letters are over FLY_LETTERS of the frame height, or its box covers over FLY_AREA of the frame, the word is hidden,
+// except while it must be shown whole (from where it comes to rest through its onset and SHOWN_FRAMES); those frames are
+// reported. Only while the camera moves: a word filling the frame at rest is a layout choice.
+// 0.9 (not 0.6): at 0.6, 219 hides in Big Toothy Grins 6c caught big words mid-whip that still read; DAY's flash
+// frames (letters 97% and 293%) are caught at 0.9.
+export const FLY_LETTERS = 0.9, FLY_AREA = 0.9;
+export function hideFlythrough(scene, onsetOf, { until = scene.meta.frames, letters = FLY_LETTERS, area = FLY_AREA } = {}) {
+  const I = globalThis.KT_INTERP, vfov = scene.meta.vfov ?? 40, log = [], focused = [];
+  for (const w of scene.words) {
+    if (w.reveal_copy_of) continue;
+    const o = onsetOf(w), mustEnd = o == null ? -1 : Math.max(appearanceFrame(w) + G.SHOWN_FRAMES - 1, o);
+    const end = Math.min(until, w.off ?? until);
+    let run = null;
+    const close = f => { if (run != null) { hide(w, run, f); log.push(`${w.id} ${w.text}: hidden ${run}-${f} (the camera passes through it: letters over ${Math.round(100 * letters)}% of the frame height or box over ${Math.round(100 * area)}% of the frame)`); run = null; } };
+    for (let f = Math.max(0, w.on); f < end; f++) {
+      const moving = scene.cams.some(k => k.f0 <= f && f <= k.f1);
+      let bad = false;
+      if (moving && drawn(w, f)) {
+        const pose = I.poseAt(scene.cams, f), h = letterHeight(w, f, pose, vfov);
+        bad = (h != null && h > letters) || boxCoverage(w, f, pose, vfov) > area || (h == null && inFrameShare(w, f, pose, vfov) > 0 && nearCamera(w, f, pose));
+      }
+      if (bad && f <= mustEnd) { focused.push(`${w.id} ${w.text} at frame ${f}`); close(f); continue; }
+      if (bad && run == null) run = f;
+      if (!bad) close(f);
+    }
+    close(end);
+  }
+  return { log, focused: [...new Set(focused.map(x => x.replace(/ at frame \d+$/, '')))] };
+}
+// Part of the word is behind the camera's near plane (the camera is inside or past it).
+function nearCamera(w, f, pose) {
+  const cs = cornersAt(w, f);
+  return !!cs && cs.some(p => -p.reduce((a, x, i) => a + (x - pose.position[i]) * pose.N[i], 0) < 1);
+}
 // No empty frame mid-song (brief 4): where no word is visible between the intro and the end, the words on screen just
 // before stay on until the next word is visible, when that adds no projected overlap. Remaining empty runs are listed.
 function anyVisible(scene, f, pose, vfov) {
@@ -187,7 +237,7 @@ function anyVisible(scene, f, pose, vfov) {
     const X = I.wordXform(w, f), c = X(w.C), n = X(add(w.C, w.N)).map((x, i) => x - c[i]);
     if (n.reduce((s, x, i) => s + x * (pose.position[i] - c[i]), 0) <= 0) return false;
     // Filled means a word at least FILLED_SHARE in frame and readable; an edge sliver does not count.
-    return inFrameShare(w, f, pose, vfov) >= FILLED_SHARE && G.readableOrientation(w, f, pose, vfov, { tilt: false });
+    return inFrameShare(w, f, pose, vfov) >= FILLED_SHARE && G.readableOrientation(w, f, pose, vfov, { tilt: false }) && !sliver(w, f, pose, vfov);
   });
   if (!filling.length) return false;
   // Brief 7 item 3: a frame whose only words are under the size minimum (Type rule 1, the minimum for that frame) is
@@ -196,6 +246,21 @@ function anyVisible(scene, f, pose, vfov) {
   const crowded = filling.length >= S.crowdedWords || filling.reduce((a, w) => a + boxCoverage(w, f, pose, vfov), 0) >= S.crowdedArea;
   const min = (crowded ? S.minH : S.roomFactor * S.minH) * EMPTY_SIZE_SLACK;
   return filling.some(w => { if (w.kind === 'element' || w.wordmark) return true; const h = letterHeight(w, f, pose, vfov); return h == null || h >= min; });
+}
+// Sliver (brief 8 item 50): a word seen nearly edge-on, its drawn width under SLIVER_ASPECT of its true width for its
+// drawn height (HE flipping in at 84.5 s), is unreadable, so it does not fill the frame. Measured on the projected box
+// (midpoints of opposite edges), so a hinge flip or a one-axis grow counts.
+export const SLIVER_ASPECT = 0.5;
+function sliver(w, f, pose, vfov) {
+  const cs = cornersAt(w, f);
+  if (!cs || !(w.w > 0) || !(w.h > 0)) return false;
+  const q = cs.map(c => globalThis.KT_INTERP.project(c, pose, vfov));
+  if (q.some(x => !x)) return false;
+  const A = 16 / 9, m = (a, b) => [(a.x + b.x) / 2 * A, (a.y + b.y) / 2];
+  const l = m(q[0], q[3]), r = m(q[1], q[2]), lo = m(q[0], q[1]), hi = m(q[3], q[2]);
+  const dw = Math.hypot(r[0] - l[0], r[1] - l[1]), dh = Math.hypot(hi[0] - lo[0], hi[1] - lo[1]);
+  if (!(dh > 0)) return true;
+  return dw / dh < SLIVER_ASPECT * (w.w / w.h);
 }
 // A word within 3% of its minimum still fills the frame (rounding, and the 13.4% HOWLS class of near misses).
 export const EMPTY_SIZE_SLACK = 0.97;
@@ -431,6 +496,81 @@ export function swellSmallWords(scene, { from = 0, until = scene.meta.frames, on
   return { log, remaining: all.filter(long), short: all.filter(r => !long(r)) };
 }
 
+// Swell release (brief 8 item 51): a word swelled xSWELL_BIG or more that shrinks back to its resting size reads as a
+// big-then-tiny jump. Tried in order, each kept only if it adds no projected overlap, static partly-on-screen word,
+// partly shown focused word or empty stretch over the limit: (1) hold the swelled size to the end of the word's life;
+// (2) settle at the square root of the swell; (3) release over RELEASE_SLOW frames, as far as its life allows.
+// Otherwise the swell is left and reported.
+export const SWELL_BIG = 2, RELEASE_SLOW = 12;
+export function swellRelease(scene, onsetOf, { until = scene.meta.frames, maxFrames = 7 } = {}) {
+  const fps = scene.meta.fps ?? 30, log = [];
+  const long = r => r.end - r.start + 1 > maxFrames;
+  for (const w of scene.words) {
+    const segs = (w.motion ?? []).filter(m => m.swell && m.kind === 'scale');
+    for (const up of segs.filter(m => m.from === 1 && m.to >= SWELL_BIG)) {
+      const dn = segs.find(m => m !== up && m.from === up.to && m.to === 1 && m.f0 >= up.f1);
+      if (!dn) continue;
+      const end = Math.min(until, w.off ?? until), k = up.to;
+      const lo = Math.max(0, dn.f0 - 2), hi = Math.min(until, end + maxFrames + 1);
+      const ov = () => overlapFrames(scanOverlap(scene, { from: lo, until: hi }).overlaps, fps);
+      const st = () => staticPartials(scene, { from: lo, until: hi }).length;
+      const pa = () => gateFailures(scene, onsetOf, { until }).filter(x => x.kind === 'partial').length;
+      const em = () => emptyFrames(scene, { from: lo, until: hi }).filter(long).length;
+      const before = [ov(), st(), pa(), em()], was = { f0: dn.f0, f1: dn.f1, to: dn.to };
+      const tries = [['held at its swelled size to its end', { to: k }],
+        [`settles at x${Math.sqrt(k).toFixed(2)}`, { to: Math.sqrt(k) }],
+        [`released over ${Math.min(RELEASE_SLOW, end - dn.f0)} frames`, { f1: Math.max(dn.f1, Math.min(end, dn.f0 + RELEASE_SLOW)) }]];
+      let ok = null;
+      for (const [name, t] of tries) {
+        Object.assign(dn, was, t);
+        if (t.to === k) dn.f1 = dn.f0 + 1;
+        const after = [ov(), st(), pa(), em()];
+        if (after.every((x, i) => x <= before[i])) { ok = name; break; }
+      }
+      if (!ok) Object.assign(dn, was);
+      log.push(`${w.id} ${w.text} (swelled x${k.toFixed(2)} at frame ${up.f0}): ${ok ?? 'left to shrink back to size (each other release adds an overlap, a cut or an empty stretch)'}`);
+    }
+  }
+  return log;
+}
+// Largest word never grey (brief 8 item 54: EVERY at 132 s and OFF at 136.5 s): on any frame, the word with the tallest
+// letters among those readable and at least half in frame is made cream if it is grey (its colour pass, word_roles).
+export function largestGreyToCream(scene, { until = scene.meta.frames } = {}) {
+  const I = globalThis.KT_INTERP, vfov = scene.meta.vfov ?? 40, log = [];
+  for (let f = 0; f < until; f++) {
+    const pose = I.poseAt(scene.cams, f);
+    let top = null, th = 0;
+    for (const w of scene.words) {
+      if (w.reveal_copy_of || w.wordmark || w.score || !drawn(w, f) || inFrameShare(w, f, pose, vfov) < FILLED_SHARE || !G.readableOrientation(w, f, pose, vfov, { tilt: false })) continue;
+      const h = letterHeight(w, f, pose, vfov) ?? 0;
+      if (h > th) { th = h; top = w; }
+    }
+    if (top && isGrey(top)) {
+      const was = ungrey(top);
+      for (const c of scene.words) if (c.reveal_copy_of === top.id && isGrey(c)) ungrey(c);
+      log.push(`${top.id} ${top.text} at ${(f / (scene.meta.fps ?? 30)).toFixed(2)} s: ${was} -> cream (the largest word on screen, ${(100 * th).toFixed(1)}% of the frame height)`);
+    }
+  }
+  return log;
+}
+// Lone holds (brief 8 item 49): stretches over LONE_HOLD frames in which one readable word is the only one on screen,
+// with the dropped words sung inside them (a drop that leaves a single word holding). Reported, not failed.
+export const LONE_HOLD = 30;
+export function loneHolds(scene, { until = scene.meta.frames, onsetOf } = {}) {
+  const I = globalThis.KT_INTERP, vfov = scene.meta.vfov ?? 40, out = [];
+  let run = null;
+  const close = f => { if (run && f - run.start > LONE_HOLD) out.push({ ...run, end: f - 1 }); run = null; };
+  for (let f = 0; f < until; f++) {
+    if ((scene.intro ?? []).some(x => f >= x.start && f < x.end)) { close(f); continue; }
+    const pose = I.poseAt(scene.cams, f);
+    const vis = scene.words.filter(w => !w.reveal_copy_of && drawn(w, f) && inFrameShare(w, f, pose, vfov) >= FILLED_SHARE && G.readableOrientation(w, f, pose, vfov, { tilt: false }));
+    if (vis.length === 1 && (!run || run.w === vis[0])) { run ??= { w: vis[0], start: f }; continue; }
+    close(f);
+    if (vis.length === 1) run = { w: vis[0], start: f };
+  }
+  close(until);
+  return out.map(r => ({ ...r, drops: scene.words.filter(x => x.dropped && onsetOf && onsetOf(x) != null && onsetOf(x) >= r.start - 15 && onsetOf(x) <= r.end) }));
+}
 // Size (engine fix brief 5, Jefferson 22 November 2026: "We should either show a word big enough to be seen or not
 // show it at all"). Per camera hold, each word whole in frame and at rest is measured at its largest (cap height as a
 // share of the frame height, letterHeight). Its minimum is minH when the frame is crowded and roomFactor x minH when it
@@ -474,7 +614,9 @@ const clipEntranceOk = (scene, w) => {
   }
   return true;
 };
-export function enforceMinSize(scene, onsetOf, { until = scene.meta.frames, settings = {} } = {}) {
+// wordmarks: true (brief 8 item 55) sizes only the image wordmarks, by their letter height (w.cap, set from the image's
+// letter share by the song appearance pass); one that cannot grow is kept and reported, never dropped or hidden.
+export function enforceMinSize(scene, onsetOf, { until = scene.meta.frames, settings = {}, wordmarks = false } = {}) {
   const S = { ...SIZE_DEFAULTS, ...settings };
   const I = globalThis.KT_INTERP, vfov = scene.meta.vfov ?? 40, fps = scene.meta.fps ?? 30;
   const poses = new Map(), poseAt = f => poses.get(f) ?? poses.set(f, I.poseAt(scene.cams, f)).get(f);
@@ -530,7 +672,8 @@ export function enforceMinSize(scene, onsetOf, { until = scene.meta.frames, sett
   const ownFailures = w => gateFailures({ ...scene, words: [w] }, onsetOf, { until }).filter(x => x.kind === 'partial' || x.kind === 'unshown').length;
   const drops = [];
   for (const w of scene.words) {
-    if (!resizable(w) || w.on >= until) continue;
+    if (wordmarks ? !(w.wordmark?.image && !w.reveal_copy_of && !w.echo && !w.dropped) : !resizable(w)) continue;
+    if (w.on >= until) continue;
     let sh = shownHolds(w), short = sh.filter(x => x.size < x.min - 1e-9);
     if (!short.length) continue;
     const k = Math.max(...short.map(x => x.min / x.size)) * 1.03, was = Math.max(...short.map(x => x.size));
@@ -551,6 +694,11 @@ export function enforceMinSize(scene, onsetOf, { until = scene.meta.frames, sett
         Object.assign(w, JSON.parse(keep));
       }
       if (done) { sh = shownHolds(w); short = sh.filter(x => x.size < x.min - 1e-9); if (!short.length) continue; }
+    }
+    if (wordmarks) {
+      const x = short[0]; counts.keptSmall++;
+      log.push(`${w.id} ${w.text}: wordmark kept under size (letters ${(100 * x.size).toFixed(1)}% at frame ${x.f}, minimum ${(100 * x.min).toFixed(1)}%; growing x${k.toFixed(2)} would overlap or leave it partly shown; Type rule 1 failure)`);
+      continue;
     }
     // Type rule 2 (brief 5 change 3): only non-important words are dropped. An important word (w.important: a name,
     // number or line-end rhyme word by keyword mode's ranking) that cannot grow stays and is reported as under size.
@@ -849,7 +997,7 @@ export function floorZoomEntrances(scene, { until = scene.meta.frames, settings 
   const floor = ZOOM_FLOOR * S.roomFactor * S.minH;
   for (const w of scene.words) {
     if (w.on >= until || w.reveal_copy_of) continue;
-    const seg = (w.motion ?? []).find(m => m.kind === 'scale' && !m.swell && m.f0 <= w.on + 1 && m.from < 1 && m.to === 1);
+    const seg = (w.motion ?? []).find(m => m.kind === 'scale' && !m.swell && !m.axis && m.f0 <= w.on + 1 && m.from < 1 && m.to === 1);
     if (!seg) continue;
     const settled = letterHeight(w, seg.f1, I.poseAt(scene.cams, seg.f1), vfov);
     if (!(settled > 0)) continue;
