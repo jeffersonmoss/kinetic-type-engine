@@ -1,0 +1,34 @@
+{
+  "about": "Durable per-team jersey font decisions for the Kinetic Type Engine (brief 15, 23 November 2026). Later songs for a team read this record instead of re-researching jersey lettering from scratch. No song reads this file automatically yet; a song only switches fonts once a font is finished, measured into fonts/*.metrics.json, and wired in song settings.json (jersey_font).",
+  "teams": {
+    "Minnesota Timberwolves": {
+      "chosen_look": "Classic Edition pointy lettering",
+      "description": "Flared pointed tips with a small split spur, as on the Classic Edition Black Trees and 1996–2008 Tree Era backs (GARNETT 21, GOBERT 27, EDWARDS 5).",
+      "applies_to": [
+        "player_names",
+        "jersey_numbers",
+        "team_names"
+      ],
+      "decision": "Jefferson, 23 November 2026 (via the lamelo chat)",
+      "status": "pending",
+      "font_file": "pending, being built in ~/Experiments/Timberwolves Classic Pointy Font/",
+      "kit_key": null,
+      "wired_in_songs": [],
+      "colours": {
+        "names": "#FFFFFF (white, no outline)",
+        "numbers": "#FFFFFF (white, no outline — per KIT Type rule 3)"
+      },
+      "alternates_not_chosen": [
+        {
+          "name": "Icon / Association / Statement chamfered sans (2017 to 2026, RARE Design custom)",
+          "years": "2017–2026",
+          "characteristics": "Condensed sans serif with 45-degree chamfered corners on curved letters (B C D G O R S U), flat squared stroke ends, and a crossbar-less A drawn as Λ (EDWΛRDS). Names white with no outline; numbers white with thin lake-blue outline on real jerseys (plain white under KIT Type rule 3).",
+          "why_not_chosen": "Jefferson chose the Classic Edition pointy lettering instead (23 November 2026)."
+        }
+      ],
+      "reference_folder": "~/Experiments/Big Toothy Grins Music Video/reference/Timberwolves jersey photos - expires 7 December 2026",
+      "reference_index": "~/Experiments/Big Toothy Grins Music Video/reference/Timberwolves jersey photos - expires 7 December 2026/Index.md",
+      "reference_note": "355 curated photos across 20 styles (222 backs); temporary reference folder expires 7 December 2026."
+    }
+  }
+}

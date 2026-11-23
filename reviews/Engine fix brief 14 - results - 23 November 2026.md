@@ -77,3 +77,10 @@ Every place checked for a green background block (or `#78BE20` Aurora Green):
 
 - Deleted my own temp folder `/tmp/brief14`.
 - Retired old wordmark files in `engine input/` (`WOLVES wordmark - real Timberwolves wordmark - Wikimedia Commons original.gif`, `WOLVES wordmark - real Timberwolves wordmark - transparent.png`) and older rough cuts (`6g` etc.) were left in place per rule 5; the two retired Wikimedia Commons WOLVES files can be archived or removed once 6h is approved.
+
+## 8. Engine fix brief 15 addendum (revised, 23 November 2026): durable team font record
+
+- Followed the revised brief 15 (`## REVISED, 23 November 2026: font choice dropped`): original items 1 to 3 (free Icon chamfered look-alike, setting `jersey_font`, `Λ` for `A`) were withdrawn; no font was wired into Big Toothy Grins (`jersey_font` remains unset / default Graduate).
+- Added `deterministic/team_fonts.json` with the durable Minnesota Timberwolves entry: chosen look `"Classic Edition pointy lettering"` (Jefferson, 23 November 2026), `font_file` `"pending, being built in ~/Experiments/Timberwolves Classic Pointy Font/"`, 2017–2026 RARE Design Icon chamfered font recorded under `alternates_not_chosen`, names white with no outline, numbers white, and reference folder `~/Experiments/Big Toothy Grins Music Video/reference/Timberwolves jersey photos - expires 7 December 2026` (355 photos / 222 backs).
+- Added a short process note under `## Engine fix brief 15 (23 November 2026)` in `deterministic/KIT.md` (outside `## Type rules`).
+- `Rough cut 6h - 23 November` already carries brief 14 with no font change, exits 0, and passes every gate (Type rules check: 18 failures, all Rule 1, `[18, 0, 0, 0]`); no code affecting the join changed, so 6h was not redundantly re-run.
