@@ -78,6 +78,16 @@ export function scanOverlap(scene, { from = 0, until = scene.meta.frames, repair
       if (repair && old.onset + Math.ceil(fps*.3) < f && old.onset < next.onset && !old.w.echo) {
         old.w.off = f;
         retired.push(`${old.w.id} ${old.w.text} retired at frame ${f} for ${next.w.id} ${next.w.text}`);
+      } else if (repair && retireOccluded && next.w.echo && f === next.w.on &&
+          f < Math.round(next.w.echo_of_events?.[0] * fps) + 3 && f + 1 < next.w.off) {
+        next.w.on = f + 1;
+        if (next.w.joint) next.w.joint.f0 = next.w.joint.f1 = next.w.on;
+        const event = scene.meta.sung_pulses?.added?.find(x => x.id === next.w.id);
+        if (event) {
+          event.frame = next.w.on;
+          event.treatment = `echo, ${next.w.off - next.w.on} frames after overlap repair`;
+        }
+        retired.push(`${next.w.id} ${next.w.text} delayed to frame ${next.w.on} to clear ${old.w.id} ${old.w.text}`);
       } else hit(a,b.w.id,`${b.w.id} ${b.w.text}`);
     }
     for (const {p,corners} of panels) {
