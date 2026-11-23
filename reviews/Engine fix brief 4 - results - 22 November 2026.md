@@ -4,10 +4,10 @@ Builder: Opus 5.5, for the T2 LeBron supervisor chat. Engine commits db9e8c7 (gr
 
 Builds:
 
-1. Big Toothy Grins: `engine output/Rough cut 5 - 22 November` (full rebuild, N 200, every section re-picked; the keyword-mode build that was there is in safe-delete, restorable for 7 days).
+1. Big Toothy Grins: `engine output/Rough cut 5 - 22 November` (full rebuild, N 200, every section re-picked; the keyword-mode build that was there is in safe-delete, restorable for 7 days). After Jefferson's map change (TELL-OH to TELL-O, word 118; HELL-OH to HELL-O, word 124), section 4 was rebuilt alone (`build_song.mjs --sections 4`, new option) and the song re-joined. The final scene shows w4019 TELL-O and w4025 HELL-O; neither old spelling appears in any output file. All numbers below are from that final join.
 2. Room for One: `engine output/Engine fix test 5 - 22 November` (full rebuild, `--reveal-coverage 0.05`).
 
-Both pass 0 projected overlap, 0 partly shown focused words, 0 blank opening frames and a still ending. Both exit 1: Big Toothy Grins because of the new black-frame gate (8 single-frame or two-frame runs left, see item 9); Room for One for that gate (2 single frames) plus the two failures it already had (reveal under 20%, 76ers ring 10 of 15 readable frames).
+Both pass 0 projected overlap, 0 partly shown focused words, 0 blank opening frames and a still ending. Both exit 1: Big Toothy Grins because of the new black-frame gate (6 single-frame or two-frame runs left, see item 9); Room for One for that gate (2 single frames) plus the two failures it already had (reveal under 20%, 76ers ring 10 of 15 readable frames).
 
 ## Group 1, blocking: 126.3 to 127.2 s, "and we attack"
 
@@ -35,12 +35,12 @@ Both pass 0 projected overlap, 0 partly shown focused words, 0 blank opening fra
    5.3. IT'S, 158.0 s: PARTLY. 7.2 to 7.5% (was 5.3 to 5.5%).
 6. Lone small words: PARTLY, by a planner change as asked. The rider floor in `plan_words.mjs` rose from 13% to 20% of the shot's biggest anchor (RIDER_FLOOR). AND at 126.4 s went from 5.8% to 11.4%, and WE is now shown. The build reports 2 lone words it brought closer (tightenLone) and 1 speck left (was 0 with the old floor, because the size rule only flags words that grow or sit under 4%).
 7. Edge slivers:
-   7.1. 59.6 s: PARTLY. EVERYONE shows 7% of its letters on 1 frame; CAN 85% on 1 frame. Rough cut 4 showed the sliver through the hold.
+   7.1. 59.6 s: FIXED. TELL-O and CAN are whole; nothing else is in frame.
    7.2. 157.9 s: PARTLY. LYLES, RIGHT, BACK and TO show cut letters on 1 to 2 frames (camera move).
    7.3. 164.9 s: FIXED. All words whole.
    7.4. 175.0 s: PARTLY. CIRCLE shows 33% of its letters on 1 frame.
-8. Black frames (new engine rule, `fillEmptyFrames`, and a gate that fails the build): 9 of Fable's 11 runs are gone (53.27, 71.37, 73.60, 84.43, 89.10, 111.6, 144.5, 155.17 and 160.33 s show no black frame). Left from his list: 55.37 s and 156.33 s, 1 frame each.
-9. New black runs after the rebuild, all 1 frame except one of 2: 26.57, 48.93, 50.07, 68.30, 122.83 (2 frames) and 126.03 s. Cause, checked on three of them: mid-pivot frames where every word turns past the plaque plane (1468, 3781), or the outgoing word slides out one frame before the incoming one appears (797). The fill tries (keep outgoing words on, switch incoming words on early, land the move early) were rejected there because they added overlaps or did not fill. A real fix is in the camera planner (pivots that cross the plane, or a one-frame handover on sweeps); not done in this pass. The floor-13 build of the same pass had 3 runs left, so the rider floor bought specks and WE at the cost of 5 extra single black frames through different section picks.
+8. Black frames (new engine rule, `fillEmptyFrames`, and a gate that fails the build): 10 of Fable's 11 runs are gone (53.27, 55.40, 71.37, 73.60, 84.43, 89.10, 111.6, 144.5, 155.17 and 160.33 s show no black frame). Left from his list: 156.33 s, 1 frame.
+9. Other black runs in the final scene, all 1 frame except one of 2: 26.57, 48.93, 50.07, 122.83 (2 frames) and 126.03 s. Cause, checked on three runs of the earlier join: mid-pivot frames where every word turns past the plaque plane (1468, 3781), or the outgoing word slides out one frame before the incoming one appears (797). The fill tries (keep outgoing words on, switch incoming words on early, land the move early) were rejected there because they added overlaps or did not fill. A real fix is in the camera planner (pivots that cross the plane, or a one-frame handover on sweeps); not done in this pass. A floor-13 build of the same pass had 3 runs left, so the rider floor bought specks and WE at the cost of extra single black frames through different section picks.
 
 ## Found on the way: Room for One's outro chant
 
@@ -55,7 +55,7 @@ Both pass 0 projected overlap, 0 partly shown focused words, 0 blank opening fra
 | Blank opening frames | 0 | 0 | 0 | 0 |
 | Still ending | yes | yes | yes | yes |
 | Dropped focused words | 3 | 2 | 2 | 4 |
-| Black runs mid-song (my detector) | 12 | 8 (7 of 1 frame) | 15, incl. the 16 s outro | 2 (1 frame each) |
+| Black runs mid-song (my detector) | 12 | 6 (5 of 1 frame) | 15, incl. the 16 s outro | 2 (1 frame each) |
 | Unreadable words hidden | none hidden | 116 | none hidden | 40 |
 | Focused words seen unreadably (left alone) | not measured | 5 | not measured | 1 |
 | Pop share | 17.7% | 18.1% | 27.1% | 28.5% |

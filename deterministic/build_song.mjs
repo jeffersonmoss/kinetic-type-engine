@@ -10,7 +10,7 @@ import { scanOverlap, repairShownAndOverlap } from './overlap_gate.mjs';
 //      beat pulses) and run_elements.mjs (the song's picture elements, if any) run over the whole scene.
 //   5. Whole-song checks, a click track of the repeats and ad-libs, and "Whole song - provenance and flags.md".
 // Usage: node build_song.mjs "<song workspace>/engine input" [--out "<song workspace>/engine output/<run name>"]
-//          [--N 200] [--skip-build] [--reveal-coverage 0.2]
+//          [--N 200] [--skip-build] [--sections 4,5] [--reveal-coverage 0.2]
 // Exit code 1 when a whole-song check fails (the report says which); the scene is still written.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -38,6 +38,8 @@ if (args.includes('--all-words')) song.fast_words = { ...(song.fast_words ?? {})
 const OUT = path.resolve(opt('--out', path.join(inputDir, '../engine output/Whole song')));
 const N = Number(opt('--N', 200));
 const skipBuild = args.includes('--skip-build');
+// --sections 4,5 rebuilds only those sections and re-joins the rest as built (an input change local to them).
+const onlySections = opt('--sections', null)?.split(',').map(Number) ?? null;
 // Least share of the last frame the reveal layout aims to cover (buildReveal). Lower it (for example 0.05) to reveal the
 // whole conflict-free tail; the reveal check still asks for 20% and then reports FAIL (Room for One's accepted exception).
 const REVEAL_MIN_COVERAGE = Number(opt('--reveal-coverage', 0.2));
@@ -109,7 +111,7 @@ for (const sec of song.sections) {
   const isFirst = !parts.length, isLast = sec === song.sections.at(-1);
   const clipEnd = isLast ? SONG_END : w.song_end_of_hook + READ_TAIL_S;
   const t0 = Date.now();
-  if (!skipBuild) {
+  if (!skipBuild && (!onlySections || onlySections.includes(sec.n))) {
     // The first section built (no opening given) starts its clip at 0 s so the intro is covered.
     const out = execFileSync('node', ['build_best.mjs', '--words', wordsFile, '--window', `${isFirst ? 0 : w.start_s},${w.song_end_of_hook},${clipEnd}`, '--N', String(N), '--out', dir, '--map', mapPath, '--palette', palettePath, '--title', song.title], { cwd: engine, encoding: 'utf8', maxBuffer: 1 << 26 });
     process.stdout.write(out.split('\n').filter(l => l.includes('survivors=')).join('\n') + '\n');
