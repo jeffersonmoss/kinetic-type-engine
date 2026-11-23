@@ -9,6 +9,7 @@ const median = a => {
   return b.length ? (b[(b.length - 1) >> 1] + b[b.length >> 1]) / 2 : 0;
 };
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+export const RIDER_FLOOR = 0.20;
 
 function adlibs(input) {
   const result = new Map();
@@ -340,14 +341,15 @@ export function planWords(input, map, clipEnd = input.song_end_of_hook ?? input.
         shot.clusters[i].tier = target.tier;
       }
     }
-    // Nominal caps on anchor and rider word objects (6.3).
+    // Nominal caps on anchor and rider word objects (6.3). Riders never fall under RIDER_FLOOR of the shot's biggest
+    // anchor (engine fix brief 4: at 0.13, riders read as specks and as lone small words before their anchor arrived).
     const maxAnchorCap = Math.max(...shot.clusters.map(c => c.cap));
     for (const c of shot.clusters) {
       c.anchor.cap = c.cap;
       c.anchor.tier = c.tier;
       for (const r of c.riders) {
         const ratio = (c.riders.length === 1 && r.ioi < 0.22) ? 0.32 : 0.42;
-        r.cap = Math.max(c.cap * ratio, 0.13 * maxAnchorCap);
+        r.cap = Math.max(c.cap * ratio, RIDER_FLOOR * maxAnchorCap);
       }
     }
     // Shot top tier (7.3).

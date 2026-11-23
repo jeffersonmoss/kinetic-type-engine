@@ -97,21 +97,35 @@ const focusWindow = (w, onsetOf, fps) => {
 // cut by the frame edge (CLIP_SHARE or less of its letters in frame, any at all) is hidden for the rest of that hold.
 // Rough cut 4 showed halved letters on words two thirds in frame, so the share is measured on the letters and the
 // threshold is near whole.
-export const CLIP_SHARE = 0.95;
+export const CLIP_SHARE = 0.95, MOVE_TAIL = 8;
 export function hideEdgeClutter(scene, onsetOf, { until = scene.meta.frames } = {}) {
   const I = globalThis.KT_INTERP, vfov = scene.meta.vfov ?? 40, log = [];
   const fps = scene.meta.fps ?? 30;
+  const cutAt = f => scene.cams.some(k => k.verb === 'cut' && k.f0 <= f && f <= k.f1 && k.f1 - k.f0 <= 1);
   for (const h of holds(scene, until)) {
     for (const w of scene.words) {
       if (w.reveal_copy_of || w.echo) continue;
-      const [, focusTo] = focusWindow(w, onsetOf, fps);
+      let [, focusTo] = focusWindow(w, onsetOf, fps);
+      // A camera cut after the word's onset ends its focus (brief 4: a sliver of STUCK stayed on the cut to INSIDE).
+      const onset = onsetOf(w) ?? Math.round((w.t ?? w.on / fps) * fps);
+      if (cutAt(h.start) && onset < h.start && w.on < h.start) focusTo = Math.min(focusTo, h.start);
       const a = Math.max(h.start, focusTo), b = h.end;
       if (b - a < 2 || !drawn(w, a) || !drawn(w, b - 1)) continue;
       if (I.wordMoving(w, a) || I.wordMoving(w, b - 1)) continue;
       const sa = inFrameShare(w, a, I.poseAt(scene.cams, a), vfov), sb = inFrameShare(w, b - 1, I.poseAt(scene.cams, b - 1), vfov);
       if (!(sa > 0 || sb > 0) || (sa > CLIP_SHARE && sb > CLIP_SHARE)) continue;
-      hide(w, a, b);
-      log.push(`${w.id} ${w.text}: hidden ${a}-${b} (${Math.round(100 * Math.max(sa, sb))}% of its letters in frame)`);
+      // Also the last frames of a short camera move into the hold on which the word is already cut by the edge.
+      let g = a;
+      const K = h.k >= 0 ? scene.cams[h.k] : null;
+      if (a === h.start && K && K.f1 === h.start && K.f1 - K.f0 <= MOVE_TAIL) {
+        // Only while another word is whole in frame, so the hide never leaves the frame empty.
+        const other = f => scene.words.some(x => x !== w && !x.reveal_copy_of && drawn(x, f) &&
+          inFrameShare(x, f, I.poseAt(scene.cams, f), vfov) > CLIP_SHARE);
+        while (g - 1 >= Math.max(K.f0, focusTo) && drawn(w, g - 1) && !I.wordMoving(w, g - 1) &&
+          inFrameShare(w, g - 1, I.poseAt(scene.cams, g - 1), vfov) <= CLIP_SHARE && other(g - 1)) g--;
+      }
+      hide(w, g, b);
+      log.push(`${w.id} ${w.text}: hidden ${g}-${b} (${Math.round(100 * Math.max(sa, sb))}% of its letters in frame)`);
     }
   }
   return { log };

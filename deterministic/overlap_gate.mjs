@@ -85,6 +85,13 @@ export function scanOverlap(scene, { from = 0, until = scene.meta.frames, repair
           !x.w.echo && visible(x.w,f) && x.onset + Math.ceil(fps*.3) < f && x.onset < next.onset));
         for (const x of group) x.w.off = f;
         retired.push(`${old.w.id} ${old.w.text} retired at frame ${f} for ${next.w.id} ${next.w.text}${group.length > 1 ? ` with its line group (${group.filter(x => x.w !== old.w).map(x => x.w.text).join(' ')})` : ''}`);
+      } else if (repair && next.w.echo && next.w.id.startsWith(`${old.w.id}e`) && next.w.off > f) {
+        // An echo may float over its own held word (sung_pulses addEcho): the held word steps back while the echo
+        // shows and returns after it.
+        const at = k => { let v = 1; for (const [g, x] of old.w.opacity ?? []) if (g <= k) v = x; return v; };
+        const back = at(next.w.off);
+        old.w.opacity = [...(old.w.opacity ?? []).filter(([k]) => k < f || k >= next.w.off), [f, 0], [next.w.off, back]].sort((x, y) => x[0] - y[0]);
+        retired.push(`${old.w.id} ${old.w.text} hidden over frames ${f}-${next.w.off - 1} under its echo ${next.w.id} ${next.w.text}`);
       } else if (repair && retireOccluded && next.w.echo && f === next.w.on &&
           f < Math.round(next.w.echo_of_events?.[0] * fps) + 3 && f + 1 < next.w.off) {
         next.w.on = f + 1;
@@ -95,13 +102,6 @@ export function scanOverlap(scene, { from = 0, until = scene.meta.frames, repair
           event.treatment = `echo, ${next.w.off - next.w.on} frames after overlap repair`;
         }
         retired.push(`${next.w.id} ${next.w.text} delayed to frame ${next.w.on} to clear ${old.w.id} ${old.w.text}`);
-      } else if (repair && next.w.echo && next.w.id.startsWith(`${old.w.id}e`) && next.w.off > f) {
-        // An echo may float over its own held word (sung_pulses addEcho): the held word steps back while the echo
-        // shows and returns after it.
-        const at = k => { let v = 1; for (const [g, x] of old.w.opacity ?? []) if (g <= k) v = x; return v; };
-        const back = at(next.w.off);
-        old.w.opacity = [...(old.w.opacity ?? []).filter(([k]) => k < f || k >= next.w.off), [f, 0], [next.w.off, back]].sort((x, y) => x[0] - y[0]);
-        retired.push(`${old.w.id} ${old.w.text} hidden over frames ${f}-${next.w.off - 1} under its echo ${next.w.id} ${next.w.text}`);
       } else if (repair && next.w.echo && !old.w.echo && old.onset < next.onset) {
         next.w.off = f;
         const event = scene.meta.sung_pulses?.added?.find(x => x.id === next.w.id);

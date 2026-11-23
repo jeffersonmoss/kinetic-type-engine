@@ -1,0 +1,70 @@
+# Engine fix brief 4: results (22 November 2026)
+
+Builder: Opus 5.5, for the T2 LeBron supervisor chat. Engine commits db9e8c7 (group 1 and the black-frame rule), 04352da (echoes, fill passes) and the final commit with this file (cut ends focus, clutter on move tails, rider floor, KIT). No browser or video render was run. Every finding below is measured on the final scene (`Whole song - final - scene.json`) from geometry: for each frame in Fable's window, every word that is switched on, above 5% opacity and has any part of its box in frame is listed with its letter-band share in frame, whether it reads the right way round (`readableOrientation`), and its letter height. A frame is black when no word is visible, facing the camera and in frame.
+
+Builds:
+
+1. Big Toothy Grins: `engine output/Rough cut 5 - 22 November` (full rebuild, N 200, every section re-picked; the keyword-mode build that was there is in safe-delete, restorable for 7 days).
+2. Room for One: `engine output/Engine fix test 5 - 22 November` (full rebuild, `--reveal-coverage 0.05`).
+
+Both pass 0 projected overlap, 0 partly shown focused words, 0 blank opening frames and a still ending. Both exit 1: Big Toothy Grins because of the new black-frame gate (8 single-frame or two-frame runs left, see item 9); Room for One for that gate (2 single frames) plus the two failures it already had (reveal under 20%, 76ers ring 10 of 15 readable frames).
+
+## Group 1, blocking: 126.3 to 127.2 s, "and we attack"
+
+1. FIXED. No mirrored or back-facing text is visible in the window. AND is whole at 11.4% letter height; WE is now shown (it was dropped as never wholly in frame in rough cut 4 and in the first brief 4 build), growing from 2.7% to 27.1%. BACK is not visible. Section 7 was re-picked (#187).
+   1.1. Why brief 3's check passed: the sparse-frame check only compares small words; WE was 13.8% letter height, over the 12% small limit, so it never looked for an anchor. Nothing checked orientation at all. BACK was upside down (the camera rolled 180 degrees in the pivot at frames 3778 to 3791), not mirrored as Fable guessed.
+   1.2. Check fixed: `hideUnreadable` hides, on every frame, any word outside its focus window that is in frame and seen from behind or mirrored, and any tilted more than 100 degrees while the camera is still. Sparse frames now use 15% (small) and 20% (anchor), and an anchor must be whole and read the right way round.
+
+## Group 2, polish brief 3 called cleared
+
+2. White chevron under INSIDE, 150.9 to 151.2 s: FIXED. Every word visible in frames 4527 to 4536 is 100% in frame.
+   2.1. Why brief 3's check passed: the chevron was a sliver of STUCK left in frame on the cut to INSIDE. STUCK's focus window (to its onset plus 15 frames) ran one frame into the new hold, so the clutter pass skipped the whole hold. My brief 3 spot check sampled frame 4527, before the cut.
+   2.2. Check fixed: a camera cut after a word's onset now ends its focus window.
+3. CUTS halved, 72.9 to 73.6 s: FIXED for CUTS (not visible in the window). AND, BOTH and MOVES each show cut letters on 1 frame of the window (shares 74 to 89%), inside a camera move.
+   3.1. Why brief 3's check passed: it measured the padded box, under which CUTS was 67% in frame, against an under-half threshold.
+   3.2. Check fixed: the share is now measured on the letter band, and anything 95% or less in frame counts as cut.
+4. "FF" beside WIDE, 148.9 to 149.6 s: FIXED for the hold (frames 4469 to 4488 show only whole words). PARTLY on the 2 camera-move frames before it (4467 and 4468): OF THE, DRIVES, BONES and TREY show cut letters (33 to 44% in frame).
+   4.1. Why brief 3's check passed: the padded-box share again (OFF and FF at 78%).
+   4.2. Check fixed as in 3.2. Clipped clutter is also hidden on the last frames of a camera move of 8 frames or fewer into the hold, but only while another word is whole in frame (otherwise it would black the frame). Here the earlier frames of that move have no other whole word, so they stay.
+
+## Group 3, backlog
+
+5. Specks:
+   5.1. SO YOU CAN, 42.2 s: FIXED. SO and YOU are 11.1% letter height (were 6.0% and 3.2%).
+   5.2. Sideways ONE, 93.7 s: NOT FIXED. ONE is 7.4 to 8.6%, unchanged.
+   5.3. IT'S, 158.0 s: PARTLY. 7.2 to 7.5% (was 5.3 to 5.5%).
+6. Lone small words: PARTLY, by a planner change as asked. The rider floor in `plan_words.mjs` rose from 13% to 20% of the shot's biggest anchor (RIDER_FLOOR). AND at 126.4 s went from 5.8% to 11.4%, and WE is now shown. The build reports 2 lone words it brought closer (tightenLone) and 1 speck left (was 0 with the old floor, because the size rule only flags words that grow or sit under 4%).
+7. Edge slivers:
+   7.1. 59.6 s: PARTLY. EVERYONE shows 7% of its letters on 1 frame; CAN 85% on 1 frame. Rough cut 4 showed the sliver through the hold.
+   7.2. 157.9 s: PARTLY. LYLES, RIGHT, BACK and TO show cut letters on 1 to 2 frames (camera move).
+   7.3. 164.9 s: FIXED. All words whole.
+   7.4. 175.0 s: PARTLY. CIRCLE shows 33% of its letters on 1 frame.
+8. Black frames (new engine rule, `fillEmptyFrames`, and a gate that fails the build): 9 of Fable's 11 runs are gone (53.27, 71.37, 73.60, 84.43, 89.10, 111.6, 144.5, 155.17 and 160.33 s show no black frame). Left from his list: 55.37 s and 156.33 s, 1 frame each.
+9. New black runs after the rebuild, all 1 frame except one of 2: 26.57, 48.93, 50.07, 68.30, 122.83 (2 frames) and 126.03 s. Cause, checked on three of them: mid-pivot frames where every word turns past the plaque plane (1468, 3781), or the outgoing word slides out one frame before the incoming one appears (797). The fill tries (keep outgoing words on, switch incoming words on early, land the move early) were rejected there because they added overlaps or did not fill. A real fix is in the camera planner (pivots that cross the plane, or a one-frame handover on sweeps); not done in this pass. The floor-13 build of the same pass had 3 runs left, so the rider floor bought specks and WE at the cost of 5 extra single black frames through different section picks.
+
+## Found on the way: Room for One's outro chant
+
+10. Room for One's outro (138.6 to 154.6 s) was black for about 16 s apart from flashes of the whispered echoes, in every engine build since Engine fix test 1. The final overlap repair retired RING!, which carries nine re-sung pulses, for its own first echo. Fixed as a rule: an echo never retires a sung word; when it floats over its own held word, that word steps back only while the echo shows. All 8 echoes now show, RING! returns between them, and the idle check passes. If the uploaded Room for One video came from an engine build, it has this black stretch; I could not tell which build was uploaded.
+
+## Numbers
+
+| | Big Toothy Grins rough cut 4 | Big Toothy Grins rough cut 5 | Room for One test 4 | Room for One test 5 |
+|---|---|---|---|---|
+| Overlap intervals | 0 | 0 | 0 | 0 |
+| Partly shown focused words | 0 | 0 | 0 | 0 |
+| Blank opening frames | 0 | 0 | 0 | 0 |
+| Still ending | yes | yes | yes | yes |
+| Dropped focused words | 3 | 2 | 2 | 4 |
+| Black runs mid-song (my detector) | 12 | 8 (7 of 1 frame) | 15, incl. the 16 s outro | 2 (1 frame each) |
+| Unreadable words hidden | none hidden | 116 | none hidden | 40 |
+| Focused words seen unreadably (left alone) | not measured | 5 | not measured | 1 |
+| Pop share | 17.7% | 18.1% | 27.1% | 28.5% |
+| Reveal coverage | off | off | 3.7% | 10.8% |
+| Exit status | 0 | 1 (black-frame gate) | 1 | 1 (black-frame gate, reveal, 76ers ring) |
+
+## Not done or open
+
+11. Black frames at pivots and sweep handovers (item 9) need a camera-planner change.
+12. ONE at 93.7 s is still under 10%.
+13. Slivers on 1 to 2 camera-move frames remain at several of Fable's times; the clutter rule acts in holds and on move tails only when another word is whole in frame.
+14. The new black-frame gate makes Big Toothy Grins exit 1 where rough cut 4 exited 0. Its outputs are complete; the failing runs are listed in the provenance report.
