@@ -28,6 +28,56 @@ function intersects(a, b) {
 
 const visible = (w,f) => w.on <= f && (w.off == null || f < w.off);
 
+// The viewer's draw-time scale about the word centre (brief 7 item 7: a block at the peak of its sung pulse overlapped
+// its neighbour): the stamp landing (1.1 to 1 over 3 frames) times the ripple throw (up to 1.18 at each sung pulse).
+// Mirrors viewer.html stampScale and throwScale (KT_RIPPLE on, the default).
+const RIP_T = .45, THROW_PEAK = 1.18, THROW_BACK = .16;
+export function drawnScale(w, f, fps = 30) {
+  let s = 1;
+  const sp = w.stamp_peak ?? 1.1;
+  if (w.reveal_on != null && f >= w.reveal_on) s = w.reveal_stamp && f - w.reveal_on < 3 ? 1.1 - .1 * Math.max(0, f - w.reveal_on) / 2 : 1;
+  else if (w.stamp && f >= w.on && f - w.on < 3) s = sp - (sp - 1) * Math.max(0, f - w.on) / 2;
+  let k = 1;
+  const peak = w.pulse_peak ?? THROW_PEAK;
+  for (const t of w.pulses ?? []) {
+    const d = (f - t * fps) / fps, tp = (peak - 1) * RIP_T;
+    if (d >= 0 && d < tp) k = Math.max(k, 1 + d / RIP_T);
+    else if (d >= tp && d < tp + THROW_BACK) k = Math.max(k, 1 + (peak - 1) * (.5 + .5 * Math.cos(Math.PI * (d - tp) / THROW_BACK)));
+  }
+  return s * k;
+}
+// A sung pulse whose throw would overlap a neighbour is lowered (w.pulse_peak 1.12, then 1.06), and if it still
+// overlaps, that pulse is dropped; a stamp landing likewise (w.stamp_peak 1.05, then no stamp). Returns a log. The
+// viewer reads w.pulse_peak and w.stamp_peak.
+export function tamePulses(scene, { until = scene.meta.frames } = {}) {
+  const fps = scene.meta.fps ?? 30, log = [], byId = new Map(scene.words.map(w => [w.id, w]));
+  const pulsing = (w, a, b) => (w.pulses ?? []).filter(t => t * fps <= b + 1 && (t + RIP_T) * fps >= a - 1);
+  for (let round = 0; round < 6; round++) {
+    const hits = scanOverlap(scene, { until }).overlaps;
+    let changed = false;
+    for (const h of hits) {
+      const m = h.match(/^([\d.]+)–([\d.]+) s: (w\S+) .* \/ (w\S+) /) ?? h.match(/^([\d.]+)–([\d.]+) s: (w\S+) /);
+      if (!m) continue;
+      const a = Math.round(+m[1] * fps), b = Math.round(+m[2] * fps);
+      for (const id of [m[3], m[4]].filter(Boolean)) {
+        const w = byId.get(id); const ts = w ? pulsing(w, a, b) : [];
+        // A stamp landing (scale 1.1 over its first 3 frames) is lowered to 1.05, then switched off.
+        if (w?.stamp && a >= w.on && a < w.on + 3 && (w.reveal_on == null || a < w.reveal_on)) {
+          if ((w.stamp_peak ?? 1.1) > 1.06) { w.stamp_peak = 1.05; log.push(`${id} ${w.text}: stamp landing lowered to 1.05 (${h})`); }
+          else { w.stamp = false; delete w.stamp_peak; log.push(`${id} ${w.text}: stamp landing switched off (${h})`); }
+          changed = true; continue;
+        }
+        if (!ts.length) continue;
+        const peak = w.pulse_peak ?? THROW_PEAK;
+        if (peak > 1.07) { w.pulse_peak = peak > 1.13 ? 1.12 : 1.06; log.push(`${id} ${w.text}: pulse peak lowered to ${w.pulse_peak} (${h})`); }
+        else { w.pulses = w.pulses.filter(t => !ts.includes(t)); log.push(`${id} ${w.text}: pulse at ${ts.map(t => t.toFixed(2)).join(', ')} s dropped (${h})`); }
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+  return log;
+}
 export function scanOverlap(scene, { from = 0, until = scene.meta.frames, repair = false, retireOccluded = false } = {}) {
   const fps = scene.meta.fps ?? 30, words = scene.words.filter(w => !w.replaced_by && !w.reveal_copy_of);
   const byId = new Map(scene.words.map(w => [w.id,w]));
@@ -61,6 +111,8 @@ export function scanOverlap(scene, { from = 0, until = scene.meta.frames, repair
       const normal = sub(X(w.C.map((c,i) => c+w.N[i])),X(w.C));
       if (dot(normal,sub(pose.position,X(w.C))) <= 0) continue;
       let shape = corners.map(X);
+      const k = drawnScale(w,f,scene.meta.fps ?? 30);
+      if (k !== 1) { const c = X(w.C); shape = shape.map(p => p.map((x,i) => c[i]+(x-c[i])*k)); }
       for (const plane of I.wordClips(w,f,byId)) shape = clip(shape,p => dot(plane.n,sub(p,plane.P)));
       const poly = project(shape);
       if (poly.length >= 3) drawn.push({w,onset,poly});

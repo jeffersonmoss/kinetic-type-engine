@@ -43,6 +43,7 @@ for (const x of sizeShortfalls(scene, onsetOf, { until, settings }))
 const names = [...teams, ...NUMBERS, ...players, ...Object.keys(JSON.parse(fs.readFileSync(path.join(inputDir, song.palette), 'utf8')).pins ?? {})];
 const ranks = wordRanks(map.words, song.fast_words ?? {}, { names });
 const lyric = scene.words.filter(w => !w.reveal_copy_of && !w.echo && w.t != null);
+const reported = [];
 map.words.forEach((m, i) => {
   if (ranks[i] < 2) return;
   const f = Math.round(m.start_s * FPS);
@@ -50,6 +51,8 @@ map.words.forEach((m, i) => {
   const w = lyric.find(x => Math.abs(x.t - m.start_s) < 0.05 && (N(x.text) === N(disp(m.text)) || N(x.text).replace(/[^A-Z0-9]/g, '') === N(disp(m.text)).replace(/[^A-Z0-9]/g, '')));
   let shown = false;
   if (w && !w.dropped) for (let g = f - 2; g <= f + 8 && !shown; g++) shown = opacityAt(w, g) > 0.05 && w.on <= g && (w.off == null || g < w.off) && fullyShown(w, g, I.poseAt(scene.cams, g), vfov);
+  // Rule 2 as amended (Jefferson, 22 November 2026): a word the engine dropped by necessity is reported, not failed.
+  if (!shown && w?.dropped) { reported.push(`${(m.start_s).toFixed(2)} s, ${w.id} ${m.text}: important word dropped (${w.dropped})${w.keyword_why ? `; keyword: ${w.keyword_why}` : ''}`); return; }
   if (!shown) fails.push({ rule: 2, f, to: f + 15, word: `${w?.id ?? '(not placed)'} ${m.text}`, what: `important word (${ranks[i] === 3 ? 'name or number' : 'line-end rhyme word'}) ${!w ? 'not placed' : w.dropped ? `dropped (${w.dropped})` : 'not wholly shown around its onset'}`,
     rebuild: 'keep it on screen at size (the engine no longer drops important words)' });
 });
@@ -76,6 +79,9 @@ for (const w of scene.words) {
 for (const w of scene.words) {
   if (w.reveal_copy_of || w.dropped || w.on >= until) continue;
   const t = N(w.text), isNum = /^\d+$/.test(t);
+  // Per-word overrides (song settings word_overrides, by song-map index): name false (a pun), score (bulb digits).
+  const ov = song.word_overrides?.[String(w.map_index)] ?? {};
+  if (w.score || ov.score || ov.name === false) continue;
   if ((players.has(t) || isNum) && !(isJerseyFont(w.font) || w.jersey))
     fails.push({ rule: 4, f: w.on, to: w.on + 30, word: `${w.id} ${w.text}`, what: `${isNum ? 'number' : 'player name'} in ${w.font}, not the jersey font`, rebuild: 'set it in the bold jersey font (needs the section re-planned: the box width changes)' });
   if (teams.has(t) && !(w.wordmark && (w.wordmark.image || w.wordmark.family)))
@@ -94,6 +100,10 @@ for (const s of sections) {
   for (const x of fs_) md.push(`${++n}. ${sec(x.f)} to ${sec(x.to)}, rule ${x.rule}, ${x.word}: ${x.what}. A rebuild would ${x.rebuild}.`);
   md.push('');
 }
+// Rule 2 (amended): every dropped keyword is reported with its reason; the build's provenance report has the detail.
+for (const w of scene.words) if (w.keyword && w.dropped && !w.reveal_copy_of && !reported.some(x => x.includes(` ${w.id} `)))
+  reported.push(`${(w.t ?? w.on / FPS).toFixed(2)} s, ${w.id} ${w.text}: keyword dropped (${w.dropped === 'size' ? 'too small and growing would overlap or leave it partly shown' : w.dropped === 'room' ? 'made room for a keyword' : w.dropped === 'static' ? 'static and partly on screen, and no slide makes it whole' : w.dropped}); keyword: ${w.keyword_why ?? 'yes'}`);
+md.push(`## Reported, not failed (rule 2: dropped by necessity): ${reported.length}`, '', ...reported.map(x => `- ${x}`), '');
 const out = opt('--out');
 if (out) fs.writeFileSync(out, md.join('\n'));
 console.log(JSON.stringify({ total: fails.length, byRule: [1, 2, 3, 4].map(r => fails.filter(x => x.rule === r).length), sections: sections.map(s => [s.label, fails.filter(x => sectionOf(x.f) === s.label).length]).filter(x => x[1]) }));

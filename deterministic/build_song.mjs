@@ -1,5 +1,5 @@
 import { songAppearance } from './song_appearance.mjs';
-import { scanOverlap, repairShownAndOverlap } from './overlap_gate.mjs';
+import { scanOverlap, repairShownAndOverlap, tamePulses } from './overlap_gate.mjs';
 // Build a whole song with the deterministic engine (song-agnostic driver, 22 November 2026; generalised from the Room for
 // One prototype's "videos/Room for One - whole song.mjs", W2 commit 4e2d2b0). See KIT.md.
 //   1. An optional approved opening scene is used as is (Room for One: build #144).
@@ -20,9 +20,10 @@ import { fileURLToPath } from 'node:url';
 import './interp.js';
 import { checkSync, checkHolds } from './whole_song_checks.mjs';
 import { assemble, hideWhenGone, buildReveal, checkReveal, endOnWord, checkStillEnding } from './assemble_sections.mjs';
-import { tightenLone, hideEdgeClutter, hideUnreadable, fillEmptyFrames, emptyFrames, enforceMinSize, noOutlines, undoSizeForEmpty, hideStaticPartials, staticPartials, STATIC_RATE, STATIC_FRAMES } from './composition.mjs';
+import { tightenLone, hideEdgeClutter, hideUnreadable, fillEmptyFrames, swellSmallWords, floorZoomEntrances, pairHoldHides, emptyFrames, enforceMinSize, noOutlines, undoSizeForEmpty, hideStaticPartials, staticPartials, STATIC_RATE, STATIC_FRAMES } from './composition.mjs';
 import { JERSEY_BOLD } from './style.mjs';
 import { keywordPlan, fastWordsOn, wordRanks } from './keywords.mjs';
+import { applyWordRoles } from './word_roles.mjs';
 import { severity, worstReadingLoss, SHOWN_GATE } from './build_best.mjs';
 import { repairShown, gateFailures } from './shown_gate.mjs';
 import { entranceCounts } from './entrance_counts.mjs';
@@ -198,9 +199,13 @@ const sungPath = path.join(OUT, 'Whole song - sung words.json');
 fs.writeFileSync(sungPath, JSON.stringify({ events: sung, beats: map.beats }, null, 1));
 execFileSync('node', ['apply_notes.mjs', raw, notes, sungPath, ...(song.song_notes ? ['--song-notes', inp(song.song_notes)] : [])], { cwd: engine, encoding: 'utf8' });
 let el = 'No picture elements (song settings has no "picture_elements").';
-if (song.picture_elements) el = execFileSync('node', ['run_elements.mjs', inp(song.picture_elements), notes, finalScene], { cwd: engine, encoding: 'utf8' });
-else fs.copyFileSync(notes, finalScene);
-const finalObj = JSON.parse(fs.readFileSync(finalScene, 'utf8'));
+// The join works on its own file; the final scene name is written only when every gate passes (brief 7 item 10).
+const workScene = path.join(OUT, 'Whole song - join in progress - scene.json');
+const failedScene = path.join(OUT, 'Whole song - FAILED GATES - not for render - scene.json');
+if (song.picture_elements) el = execFileSync('node', ['run_elements.mjs', inp(song.picture_elements), notes, workScene], { cwd: engine, encoding: 'utf8' });
+else fs.copyFileSync(notes, workScene);
+const finalObj = JSON.parse(fs.readFileSync(workScene, 'utf8'));
+fs.rmSync(workScene, { force: true });
 // The final joined scene is repaired for both rules together (shown whole and projected overlap), alternating until
 // neither repair changes anything; the checks below then judge the scene exactly as it is written.
 let joint = repairShownAndOverlap(finalObj, onsetOf, { until: revealF0, retireOccluded: true });
@@ -222,14 +227,18 @@ const unreadable = hideUnreadable(finalObj, onsetOf, { until: revealF0 });
 // Type rule 2: importance by keyword mode's ranking (names, numbers and player names 3, line-end rhyme word 2, rest 1).
 const keyNames = [...Object.keys(song.team_wordmarks ?? {}), ...Object.values(song.display_numbers ?? {}), ...palettePins, ...(song.player_names ?? [])];
 const ranks = wordRanks(map.words, song.fast_words ?? {}, { names: keyNames });
-const normT = t => String(t).toUpperCase().replace(/[^A-Z0-9']/g, '');
+// Brief 7: one keyword classifier (word_roles.mjs) for the grey rule and the drop rule. Names, numbers and scores are
+// `important` (never dropped; kept small when they cannot grow); other keywords are dropped only by necessity.
+const roles = applyWordRoles(finalObj, { mapWords: map.words, display, song, names: keyNames, metricsPath: process.env.KTE_METRICS ?? path.join(engine, '../fonts/room-for-one-variety.metrics.json') });
 for (const w of finalObj.words) {
-  if (w.t == null || w.reveal_copy_of) continue;
-  const i = map.words.findIndex(m => Math.abs(m.start_s - w.t) < 0.05 && (normT(display(m.text)) === normT(w.text) || normT(m.text) === normT(w.text)));
-  if (i >= 0 && ranks[i] >= 2) w.important = true;
+  if (w.t == null || w.reveal_copy_of || w.map_index == null) continue;
+  if (ranks[w.map_index] >= 3 || w.score) w.important = true;
 }
 // Repeated until it settles (at most 4 passes): a drop thins the frame, which can make its neighbours' frames uncrowded and
 // raise their minimum to room_factor x min_word_h.
+// The empty-screen rule counts a frame whose words are all under the size minimum as empty (brief 7 item 3).
+finalObj.meta.size_rule = { ...(song.min_word_h != null ? { minH: song.min_word_h } : {}), ...(song.room_factor != null ? { roomFactor: song.room_factor } : {}),
+  ...(song.crowded_words != null ? { crowdedWords: song.crowded_words } : {}), ...(song.crowded_area != null ? { crowdedArea: song.crowded_area } : {}) };
 const size = { log: [], counts: { grown: 0, dropped: 0, hidden: 0, keptSmall: 0, importantSmall: 0 }, passes: 0 };
 for (let pass = 0; pass < 4; pass++) {
   const r = enforceMinSize(finalObj, onsetOf, { until: revealF0, settings: {
@@ -254,6 +263,8 @@ const overlapRepair = { retired: joint.overlapLog };
 const appearance = songAppearance(finalObj, song, inp, Math.min(...map.words.map(w => w.start_s)));
 if (!appearance.pass) process.exitCode = 1;
 outlines.log.push(...noOutlines(finalObj, { flatOf }).log);
+// Brief 7 item 4: zoom entrances start at no less than half the size minimum.
+const zoomFloor = floorZoomEntrances(finalObj, { until: frames, settings: finalObj.meta.size_rule ?? {} });
 // After the song appearance pass, which adds the intro overlays (badge, title card) that count as on screen.
 // Something on screen (Jefferson, 22 November 2026): no empty stretch longer than song setting empty_gap_max_s (default
 // 0.25 s: 7 frames at 30 fps, so 8 or more empty frames in a row fail), and the first and last frames are never empty.
@@ -273,6 +284,12 @@ for (let round = 0; round < 12; round++) {
   if (!undone.length) break;
 }
 const fill = fillEmptyFrames(finalObj, { from: 0, until: frames, onsetOf, maxFrames: emptyMaxF });
+if (fill.remaining.length) { // brief 7 item 3: stretches holding only undersized words are swelled to the minimum
+  const sw = swellSmallWords(finalObj, { from: 0, until: frames, onsetOf, maxFrames: emptyMaxF });
+  fill.log.push(...sw.log.map(x => `swell: ${x}`)); fill.remaining = sw.remaining; fill.short = sw.short;
+}
+const partnerHides = pairHoldHides(finalObj, onsetOf, { until: frames, maxFrames: emptyMaxF });
+if (partnerHides.length) { const all = emptyFrames(finalObj, { from: 0, until: frames }); fill.remaining = all.filter(r => r.end - r.start + 1 > emptyMaxF); fill.short = all.filter(r => r.end - r.start + 1 <= emptyMaxF); }
 for (const w of finalObj.words) { delete w.size_restore; delete w.size_hides; delete w.size_kept_holds; }
 { const again = hideStaticPartials(finalObj, onsetOf, { until: frames });
   staticHide.log.push(...again.log.map(x => `(after the fills) ${x}`)); staticHide.focused = [...new Set([...staticHide.focused, ...again.focused])];
@@ -284,9 +301,10 @@ if (emptyEnds.length) { process.exitCode = 1; console.error(`EMPTY ${emptyEnds.m
 // No section pick, fallback or song setting waives this (Jefferson, 22 November 2026: dead screen is the kiss of death).
 if (fill.remaining.length) { process.exitCode = 1; console.error(`EMPTY STRETCH OVER ${EMPTY_MAX_S} s FAIL (not waivable): ${fill.remaining.map(r => `${r.start}-${r.end}`).join(', ')}`); }
 // The overlap gate judges the scene as written, after the size, outline and fill passes (brief 5).
+// Sung pulses are checked at their peak (brief 7 item 7); one that would overlap is lowered or dropped.
+const pulseLog = tamePulses(finalObj, { until: revealF0 });
 const overlapFinal = { overlaps: scanOverlap(finalObj, { until: revealF0 }).overlaps };
 if (overlapFinal.overlaps.length) process.exitCode = 1;
-fs.writeFileSync(finalScene, JSON.stringify(finalObj, null, 1));
 const syncCheck = checkSync(finalObj, sung), holdCheck = checkHolds(finalObj, sung, { until: revealF0 });
 const shownFinal = gateFailures(finalObj, onsetOf, { until: revealF0 });
 const partialFinal = shownFinal.filter(x => x.kind === 'partial'), droppedFinal = shownFinal.filter(x => x.kind === 'unshown');
@@ -310,6 +328,16 @@ if (REVEAL_ON) {
   }
 }
 if (teleports.length) process.exitCode = 1;
+// A failing gate stops the join: the scene goes to a name no render step uses, and an earlier final scene in this
+// folder is renamed so it cannot be taken for this join's output.
+const gatesFailed = !!process.exitCode;
+if (gatesFailed) {
+  if (fs.existsSync(finalScene)) fs.renameSync(finalScene, path.join(OUT, 'Whole song - earlier final, before a failed join - scene.json'));
+  fs.writeFileSync(failedScene, JSON.stringify(finalObj, null, 1));
+} else {
+  fs.writeFileSync(finalScene, JSON.stringify(finalObj, null, 1));
+  fs.rmSync(failedScene, { force: true });
+}
 
 // ---- Provenance and the flagged list ----
 const md = [];
@@ -324,7 +352,13 @@ md.push('', '## Opening and team wordmarks', '', appearance.intro,
   `Opening blank: ${appearance.blank} frames (limit ${FPS} frames / 1 s): ${appearance.pass ? 'PASS' : 'FAIL'}.`,
   ...appearance.wordmarks.map(x => `- ${x}`), '',
   `Wordmark use: ${['image', 'font', 'neither'].map(k => `${k}: ${appearance.wordmarkUse.filter(x => x.used === k).map(x => x.name).join(', ') || 'none'}`).join('; ')}.`);
-md.push('', '## Projected overlap', '', `${overlapFinal.overlaps.length} remaining intervals (${overlapFinal.overlaps.length ? 'FAIL' : 'PASS'}).`, '',
+{ const L = roles.log, kw = finalObj.words.filter(w => w.keyword && !w.reveal_copy_of), kwDropped = kw.filter(w => w.dropped);
+  md.push('', '## Word roles (keywords, names, scores)', '', `Keywords (one classifier for the grey rule, the size pass and keyword mode): ${kw.length} of ${finalObj.words.filter(w => w.map_index != null && !w.reveal_copy_of).length} matched words. Keywords dropped: ${kwDropped.length}${kwDropped.length ? ` (${kwDropped.map(w => `${w.id} ${w.text}, ${w.dropped}`).join('; ')})` : ''}.`,
+    `Grey keywords made cream: ${L.greyKeywords.length}. Grey player names made cream: ${L.greyNames.length}. Font changes: ${L.fontChanges.length}. Scores: ${L.scores.length}. Scene words not matched to the song map: ${L.unmatched.length}.`, '',
+    ...[...L.greyKeywords, ...L.greyNames, ...L.fontChanges, ...L.scores].map(x => `- ${x}`), ...(L.unmatched.length ? [`- Unmatched: ${L.unmatched.join(', ')}`] : [])); }
+md.push('', '## Hold-hide partners', '', `${partnerHides.length} changes.`, '', ...partnerHides.map(x => `- ${x}`));
+md.push('', '## Zoom entrances (size floor)', '', `${zoomFloor.length} zoom entrances start larger, at no less than half the size minimum with room.`, '', ...zoomFloor.map(x => `- ${x}`));
+md.push('', '## Projected overlap', '', `${overlapFinal.overlaps.length} remaining intervals (${overlapFinal.overlaps.length ? 'FAIL' : 'PASS'}), scanned with each sung pulse at its peak. Pulses lowered or dropped: ${pulseLog.length}.`, '', ...pulseLog.map(x => `- Pulse: ${x}`),
   ...overlapRepair.retired.map(x => `- Repair: ${x}`), ...overlapFinal.overlaps.map(x => `- ${x}`));
 md.push('', '## Ending', '', `Still ending (camera still for the last ${MIN_END_HOLD} frames, no word moving on the last frame): ${stillEnding.pass ? 'PASS' : `FAIL: ${stillEnding.problems.join('; ')}`}.`, '');
 if (!REVEAL_ON) md.push(`Reveal off (song settings ending). The song ends on ${reveal.word}, at rest from frame ${reveal.restFrame} (${(reveal.restFrame / FPS).toFixed(2)} s) and held still to the last frame.${reveal.sungAfter.length ? ` Words sung after it (${reveal.sungAfter.join(', ')}) play first; the camera cuts back at frame ${reveal.cutBack}.` : ''}`, '');
@@ -353,7 +387,8 @@ md.push('## Sung repeats and ad-libs', '', ...sp.added.map((a, i) => `${i + 1}. 
 md.push('## Map audit', '', ...(mapAudit.length ? mapAudit.map(m => `- ${m}`) : ['- none']), '');
 md.push('## Click track', '', clicks.length ? `"${path.basename(clickPath)}": the song with a click on each of the ${clicks.length} repeat and ad-lib events. ${clicks.filter(c => c.status.startsWith('snapped')).length} snapped to a vocal-stem onset; ${clicks.filter(c => !c.status.startsWith('snapped')).length} unconfirmed.` : 'No repeat or ad-lib events, so no click track.', '', ...clicks.map((c, i) => `${i + 1}. ${c.text} at ${c.t} s: ${c.status}`), '');
 md.push('## Picture elements', '', '```', el.trim(), '```', '');
-md.push('## Render (outside any agent sandbox: it runs headless Chrome)', '', '```', `node "${path.join(engine, 'capture.mjs')}" "${finalScene}" "${path.join(OUT, `${song.title} - whole song.mp4`)}" ${FPS} 0 ${SONG_END} --blur on`, '```', '');
+if (gatesFailed) md.push('## GATES FAILED: not for render', '', `The join exited 1; no final scene was written. Inspection copy: ${path.basename(failedScene)}.`, '');
+else md.push('## Render (outside any agent sandbox: it runs headless Chrome)', '', '```', `node "${path.join(engine, 'capture.mjs')}" "${finalScene}" "${path.join(OUT, `${song.title} - whole song.mp4`)}" ${FPS} 0 ${SONG_END} --blur on`, '```', '');
 fs.writeFileSync(path.join(OUT, 'Whole song - provenance and flags.md'), md.join('\n'));
 console.log(rows.map(r => `${r.label}: ${r.survivors}/${r.built} chosen ${r.chosen} severity ${r.severity}`).join('\n'));
 console.log('seams', JSON.stringify(seams));
@@ -362,9 +397,12 @@ console.log('sync', JSON.stringify({ late: syncCheck.late.length, dropped: syncC
 console.log('shown whole', JSON.stringify({ sweepBefore: shownSweep.before, sweepAfter: shownSweep.after, finalPartial: partialFinal.length, finalDropped: droppedFinal.length }), 'echoes', finalObj.words.filter(w => w.echo).length);
 console.log('entrances', JSON.stringify(counts['Whole song']), 'pop reasons', JSON.stringify(popWhy));
 console.log('reveal check', JSON.stringify(revealCheck), 'still ending', JSON.stringify(stillEnding));
+if (overlapFinal.overlaps.length) console.error(`OVERLAP FAIL: ${overlapFinal.overlaps.length} intervals: ${overlapFinal.overlaps.slice(0, 8).join('; ')}`);
+console.log('roles', JSON.stringify({ greyKeywords: roles.log.greyKeywords.length, greyNames: roles.log.greyNames.length, fontChanges: roles.log.fontChanges.length, scores: roles.log.scores.length, keywordsDropped: finalObj.words.filter(w => w.keyword && w.dropped && !w.reveal_copy_of).length }));
+console.log('pulses tamed', pulseLog.length, 'zoom floors', zoomFloor.length, 'hold partners', partnerHides.length);
 console.log('size', JSON.stringify({ staticHidden: staticHide.log.length, staticFinal: staticFinal.length, grown: size.counts.grown, dropped: size.counts.dropped, hiddenSmall: size.counts.hidden, keptSmall: size.counts.keptSmall, importantSmall: size.counts.importantSmall, sizeUndone: sizeUndone.length, outlinesFlat: outlines.log.length, small: smallFinal.length, sparse: sparseFinal.length, lone: lone.log.length, clutter: clutter.log.length, unreadable: unreadable.log.length, unreadableFocus: unreadable.focused.length, emptyEnds, filled: fill.log.length, shortGaps: fill.short.length, longestShortGap: Math.max(0, ...fill.short.map(r => r.end - r.start + 1)), emptyRuns: fill.remaining.map(r => `${r.start}-${r.end}`) }));
 console.log('reveal', JSON.stringify(reveal), 'revealF0', revealF0, 'hidden', hideLog.filter(l => l.includes('hidden')).length);
 console.log(el.split('\n').filter(l => /CHECKS|FAIL|^  /.test(l)).join('\n'));
 console.log('wordmarks', JSON.stringify(appearance.wordmarkUse.map(({ name, used, words }) => ({ name, used, words }))), 'opening blank', appearance.blank);
 console.log('keywords', JSON.stringify({ on: fastWordsOn(song.fast_words), stretches: keywords.stretches.map(st => `${st.start.toFixed(2)}-${st.end.toFixed(2)}@${st.peak.toFixed(1)}`), dropped: keywords.dropped.size }));
-console.log('scene to render:', finalScene);
+if (gatesFailed) console.error(`GATES FAILED: no final scene written. Inspection copy: ${failedScene}`); else console.log('scene to render:', finalScene);

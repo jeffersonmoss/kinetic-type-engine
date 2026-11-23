@@ -48,10 +48,44 @@ const add=(a,b)=>a.map((x,i)=>x+b[i]);
 const sub=(a,b)=>a.map((x,i)=>x-b[i]);
 const mul=(a,k)=>a.map(x=>x*k);
 function orient(mesh,R,U,N) {mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(V(R),V(U),V(N)));}
+// Scoreboard digits (brief 7 item 13, Jefferson: "render scores like an old scoreboard"): each digit is a seven-segment
+// figure of light bulbs on a 4 x 8 grid, the bulbs that would complete an 8 drawn dim dark grey, lit bulbs orange-red
+// with a slightly wider reflector glow. The digits fill the word's cap height, so the size rule treats them as letters.
+const SEG={a:[[1,0],[2,0],[3,0]],b:[[4,1],[4,2],[4,3]],c:[[4,5],[4,6],[4,7]],d:[[1,8],[2,8],[3,8]],e:[[0,5],[0,6],[0,7]],f:[[0,1],[0,2],[0,3]],g:[[1,4],[2,4],[3,4]]};
+const CORNER=[[[0,0],'af'],[[4,0],'ab'],[[0,4],'efg'],[[4,4],'bcg'],[[0,8],'de'],[[4,8],'cd']];
+const DIGIT={0:'abcdef',1:'bc',2:'abged',3:'abgcd',4:'fgbc',5:'afgcd',6:'afgedc',7:'abc',8:'abcdefg',9:'abcdfg'};
+function scoreTexture(w,c,g,px){
+  const digits=[...String(w.text)].filter(ch=>/\d/.test(ch));
+  let u=w.cap*px/8; const span=n=>n*4*u+(n-1)*2.4*u+1.6*u;
+  if(span(digits.length)>c.width*.96)u*=c.width*.96/span(digits.length);
+  const x0=(c.width-span(digits.length))/2+.8*u, y0=(c.height-8*u)/2, r=.36*u;
+  const bulb=(x,y,lit)=>{
+    if(lit){
+      const glow=g.createRadialGradient(x,y,0,x,y,r*2.1);glow.addColorStop(0,'rgba(255,110,40,.55)');glow.addColorStop(1,'rgba(255,80,20,0)');
+      g.fillStyle=glow;g.beginPath();g.arc(x,y,r*2.1,0,7);g.fill();
+      const core=g.createRadialGradient(x-.25*r,y-.25*r,0,x,y,r);core.addColorStop(0,'#FFE3B8');core.addColorStop(.45,'#FF8A3D');core.addColorStop(1,'#F2471C');
+      g.fillStyle=core;
+    } else g.fillStyle='#2E2E30';
+    g.beginPath();g.arc(x,y,r,0,7);g.fill();
+  };
+  digits.forEach((d,i)=>{
+    const on=DIGIT[d], ox=x0+i*6.4*u, pts=[];
+    for(const [s,list] of Object.entries(SEG))for(const p of list)pts.push([p,on.includes(s)]);
+    for(const [p,segs] of CORNER)pts.push([p,[...segs].some(s=>on.includes(s))]);
+    for(const [[gx,gy],lit] of pts)if(!lit)bulb(ox+gx*u,y0+gy*u,false);
+    for(const [[gx,gy],lit] of pts)if(lit)bulb(ox+gx*u,y0+gy*u,true);
+  });
+}
 function wordTexture(w) {
   const style=ST[w.style] ?? ST.cream, px=220/w.cap;
   const c=document.createElement('canvas');c.width=Math.max(1,Math.ceil(w.w*px));c.height=Math.max(1,Math.ceil(w.h*px));
   const g=c.getContext('2d'), override=w.colours ?? {};
+  if(w.score && /\d/.test(w.text)){
+    const bg=override.background;if(bg){g.fillStyle=bg;g.fillRect(0,0,c.width,c.height);}
+    scoreTexture(w,c,g,px);
+    const texture=new THREE.CanvasTexture(c);texture.colorSpace=THREE.SRGBColorSpace;texture.anisotropy=8;
+    return {texture,block:!!bg,canvas:c};
+  }
   if(w.wordmark){
     const {family, colours: brand}=w.wordmark;
     const bg=brand.background ?? override.background ?? style.bg;
@@ -88,21 +122,31 @@ function wordTexture(w) {
   }
   const bg=override.background ?? style.bg;if(bg){g.fillStyle=bg;g.fillRect(0,0,c.width,c.height);}
   g.font=`${WEIGHT[w.font]||400} ${w.fontPx*px}px ${FAM[w.font]||'Anton'}`;g.textAlign='center';g.textBaseline='alphabetic';
-  const base=c.height/2+w.cap*px/2,stroke=override.stroke ?? style.stroke;
+  let base=c.height/2+w.cap*px/2,stroke=override.stroke ?? style.stroke;
   // Jersey fonts drawn bold (engine fix brief 5): an outward stroke in the letter's own colour, meta.jersey_bold x cap wide,
   // mitred so the corners stay square; layout (compose_plaques wordBox) adds the same width.
   const JB=JERSEY.includes(w.font) && !w.stripes && !w.wordmark ? (S.meta.jersey_bold ?? .10)*w.cap*px : 0;
-  const bolden=()=>{if(JB){g.lineJoin='miter';g.miterLimit=2;g.lineWidth=JB;g.strokeStyle=g.fillStyle;g.strokeText(w.text,c.width/2,base);}};
+  // Round letters (brief 7 item 20): the box is the font's advance width, but an O, C, G, S or Q can draw past its
+  // advance (overshoot, side bearings) and was cut flat by the canvas edge. Centre the actual ink in the box, and if
+  // the ink (with the jersey bold stroke) is wider than the box allows, shrink the letters to fit.
+  let CX=c.width/2;
+  if(!w.stripes && !style.flames){
+    const inkOf=()=>{const m=g.measureText(w.text);return {l:m.actualBoundingBoxLeft,r:m.actualBoundingBoxRight};};
+    let {l,r}=inkOf();const room=c.width-JB-2*.03*w.cap*px;
+    if(l+r>room && l+r>0){const k=room/(l+r);g.font=`${WEIGHT[w.font]||400} ${w.fontPx*px*k}px ${FAM[w.font]||'Anton'}`;base=c.height/2+w.cap*px*k/2;({l,r}=inkOf());}
+    CX=c.width/2+(l-r)/2;
+  }
+  const bolden=()=>{if(JB){g.lineJoin='miter';g.miterLimit=2;g.lineWidth=JB;g.strokeStyle=g.fillStyle;g.strokeText(w.text,CX,base);}};
   if(stroke && JB){ // hollow jersey outline: a ring around the bolded letter
-    g.lineJoin='miter';g.miterLimit=2;g.lineWidth=JB+.12*w.cap*px;g.strokeStyle=stroke;g.strokeText(w.text,c.width/2,base);
-    g.globalCompositeOperation='destination-out';g.lineWidth=JB;g.strokeText(w.text,c.width/2,base);g.fillText(w.text,c.width/2,base);g.globalCompositeOperation='source-over';
-  } else if(stroke){g.lineWidth=.06*w.cap*px;g.strokeStyle=stroke;g.strokeText(w.text,c.width/2,base);}
+    g.lineJoin='miter';g.miterLimit=2;g.lineWidth=JB+.12*w.cap*px;g.strokeStyle=stroke;g.strokeText(w.text,CX,base);
+    g.globalCompositeOperation='destination-out';g.lineWidth=JB;g.strokeText(w.text,CX,base);g.fillText(w.text,CX,base);g.globalCompositeOperation='source-over';
+  } else if(stroke){g.lineWidth=.06*w.cap*px;g.strokeStyle=stroke;g.strokeText(w.text,CX,base);}
   else {
     const fill=w.style==='heat-flame' ? 'flame' : (override.text ?? style.fill);
     if(fill==='flame'){const gr=g.createLinearGradient(0,base,0,base-w.cap*px);gr.addColorStop(0,'#F9A01B');gr.addColorStop(.55,'#FFD23F');gr.addColorStop(1,'#ffffff');g.fillStyle=gr;}
     else g.fillStyle=fill ?? '#F3EBDD';
     const edge=override.outline; // white edge only where the engine keeps it (brief 5: the largest words only)
-    if(edge && !w.stripes){g.lineJoin='round';g.lineWidth=JB+.07*w.cap*px;g.strokeStyle=edge;g.strokeText(w.text,c.width/2,base);g.fillStyle=fill ?? '#F3EBDD';} // grey: white outline so it reads on black
+    if(edge && !w.stripes){g.lineJoin='round';g.lineWidth=JB+.07*w.cap*px;g.strokeStyle=edge;g.strokeText(w.text,CX,base);g.fillStyle=fill ?? '#F3EBDD';} // grey: white outline so it reads on black
     if(w.stripes){ // one colour per character, never bands (Jefferson: KING!, RING! = red, blue, white, blue, red)
       let fpx=w.fontPx*px, heavy=0;
       if(w.jersey){ // 76ers jersey look: collegiate Graduate, thickened in each letter's own colour, fitted to the box
@@ -117,9 +161,9 @@ function wordTexture(w) {
         if(heavy){g.lineWidth=heavy;g.strokeStyle=col;g.strokeText(ch,x,b2);}
         g.fillText(ch,x,b2);x+=widths[i]+heavy*.5;});
     } else if(style.flames){ // Heat: black edge, white letters, Heat-yellow flame tongues with Heat-red cores inside the letters only
-      g.lineJoin='round';g.lineWidth=.08*w.cap*px;g.strokeStyle=style.edge;g.strokeText(w.text,c.width/2,base);
+      g.lineJoin='round';g.lineWidth=.08*w.cap*px;g.strokeStyle=style.edge;g.strokeText(w.text,CX,base);
       const L=document.createElement('canvas');L.width=c.width;L.height=c.height;const h=L.getContext('2d');
-      h.font=g.font;h.textAlign='center';h.textBaseline='alphabetic';h.fillStyle=style.fill;h.fillText(w.text,c.width/2,base);
+      h.font=g.font;h.textAlign='center';h.textBaseline='alphabetic';h.fillStyle=style.fill;h.fillText(w.text,CX,base);
       const tw=h.measureText(w.text).width, x0=c.width/2-tw/2, cp=w.cap*px, step=.26*cp, n=Math.ceil(tw/step)+1;
       h.globalCompositeOperation='source-atop';
       const tongue=(x,width,height,lean)=>{h.beginPath();h.moveTo(x-width/2,base+2);
@@ -131,7 +175,7 @@ function wordTexture(w) {
         h.fillStyle=style.flames[1];tongue(x,step*.6,ht*.58,lean*.6);
       }
       g.drawImage(L,0,0);
-    } else {bolden();g.fillText(w.text,c.width/2,base);}
+    } else {bolden();g.fillText(w.text,CX,base);}
     if(style.border){const b=.07*w.cap*px;g.lineWidth=b;g.strokeStyle=style.border;g.strokeRect(b/2,b/2,c.width-b,c.height-b);} // ring boxes: border in the letter colour (Jefferson 22 Nov: Heat plain white on red, no flames, no edge)
 
   }
@@ -213,14 +257,14 @@ function stampScale(v,f){
   if(v.reveal_on!=null && f>=v.reveal_on){
     return v.reveal_stamp && f-v.reveal_on<3 ? 1.1-.1*Math.max(0,f-v.reveal_on)/2 : 1;
   }
-  return v.stamp && f>=v.on && f-v.on<3 ? 1.1-.1*Math.max(0,f-v.on)/2 : 1;
+  const P=v.stamp_peak??1.1;return v.stamp && f>=v.on && f-v.on<3 ? P-(P-1)*Math.max(0,f-v.on)/2 : 1;
 }
 // Jefferson 22 Nov: echoed chant words pulse (fast swell, then settle) instead of reappearing.
 // Jefferson 22 Nov: the word throws off the ripple. It grows with the outline at the outline's own speed
 // (1x to 2x over RIP_T) up to THROW_PEAK, then eases back to size while the outline keeps going out and fading.
 const RIP_T=.45, THROW_PEAK=1.18, THROW_BACK=.16;
-function throwScale(w,f){const fps=S.meta.fps??30;let k=1;for(const t of (w.pulses||[])){const d=(f-t*fps)/fps, tp=(THROW_PEAK-1)*RIP_T;
-  if(d>=0&&d<tp)k=Math.max(k,1+d/RIP_T);else if(d>=tp&&d<tp+THROW_BACK){const x=(d-tp)/THROW_BACK;k=Math.max(k,1+(THROW_PEAK-1)*(.5+.5*Math.cos(Math.PI*x)));}}
+function throwScale(w,f){const fps=S.meta.fps??30,P=w.pulse_peak??THROW_PEAK;let k=1;for(const t of (w.pulses||[])){const d=(f-t*fps)/fps, tp=(P-1)*RIP_T;
+  if(d>=0&&d<tp)k=Math.max(k,1+d/RIP_T);else if(d>=tp&&d<tp+THROW_BACK){const x=(d-tp)/THROW_BACK;k=Math.max(k,1+(P-1)*(.5+.5*Math.cos(Math.PI*x)));}}
   return k;}
 function pulseScale(w,f){let k=1;for(const t of (w.pulses||[])){const d=(f-t*(S.meta.fps??30))/(S.meta.fps??30);
   if(d>=0&&d<.08)k*=1+.2*Math.sin(d/.08*Math.PI/2);else if(d>=.08&&d<.3)k*=1+.2*Math.cos((d-.08)/.22*Math.PI/2)**2;}return k;}

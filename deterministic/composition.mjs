@@ -8,6 +8,7 @@ import './interp.js';
 import * as G from './shown_gate.mjs';
 import { appearanceFrame, sungWords, letterHeight, fullyShown, cornersAt, fitPose, samePose, gateFailures, SIZE_DELAY } from './shown_gate.mjs';
 import { scanOverlap } from './overlap_gate.mjs';
+import { JERSEY_FONTS } from './style.mjs';
 
 export const LONE_MIN = 0.22, LONE_WIDTH = 0.8, FOCUS_READ = 15;
 const add = (a, b) => a.map((x, i) => x + b[i]);
@@ -74,7 +75,11 @@ export function tightenLone(scene, onsetOf, { until = scene.meta.frames } = {}) 
 export const hasBlock = w => !!w.colours?.background || (w.pad ?? 0) > 0.2 * (w.cap ?? Infinity);
 function inFrameShare(w, f, pose, vfov) {
   const I = globalThis.KT_INTERP;
-  const X = I.wordXform(w, f), band = hasBlock(w) ? 1 : Math.min(1, (w.cap ?? w.h) / w.h);
+  // The letters' band is the cap height plus the drawn ink outside it: round-letter overshoot (3% of the cap) and, on
+  // jersey letters, half the bold stroke on each side (brief 7 item 11: a jersey word whose cap band was just past the
+  // top edge still showed its stroke there).
+  const jb = JERSEY_FONTS.includes(w.font) && !w.stripes && !w.wordmark ? 0.10 : 0;
+  const X = I.wordXform(w, f), band = hasBlock(w) ? 1 : Math.min(1, (w.cap ?? w.h) * (1.03 + jb) / w.h);
   let inside = 0, total = 0;
   for (let i = 0; i <= 10; i++) for (let j = 0; j <= 4; j++) {
     const u = -1 + i / 5, v = (-1 + j / 2) * band;
@@ -139,6 +144,15 @@ export function hideEdgeClutter(scene, onsetOf, { until = scene.meta.frames } = 
 
 // Unreadable text (brief 4): a word outside its focus window that is mirrored or seen from behind is hidden on every
 // frame it would be in frame that way; one upside down (tilted past MAX_TILT) is hidden while the camera is still. Focus words are reported, never hidden.
+// Edge-on (brief 7 item 5): a word turned so far from the camera that its letters are foreshortened past reading (the
+// angle between its face and the line to the camera under EDGE_ON_DEG) counts as unreadable while the camera is still.
+export const EDGE_ON_DEG = 20;
+function edgeOn(w, f, pose) {
+  const X = globalThis.KT_INTERP.wordXform(w, f), c = X(w.C), n = X(add(w.C, w.N)).map((x, i) => x - c[i]);
+  const d = pose.position.map((x, i) => x - c[i]), nl = Math.hypot(...n), dl = Math.hypot(...d);
+  if (!(nl > 0) || !(dl > 0)) return false;
+  return n.reduce((s, x, i) => s + x * d[i], 0) / (nl * dl) < Math.sin(EDGE_ON_DEG * Math.PI / 180);
+}
 export function hideUnreadable(scene, onsetOf, { until = scene.meta.frames } = {}) {
   const I = globalThis.KT_INTERP, vfov = scene.meta.vfov ?? 40, fps = scene.meta.fps ?? 30, log = [], focused = [];
   const poses = new Map(), poseAt = f => poses.get(f) ?? poses.set(f, I.poseAt(scene.cams, f)).get(f);
@@ -147,11 +161,11 @@ export function hideUnreadable(scene, onsetOf, { until = scene.meta.frames } = {
     const [focusFrom, focusTo] = focusWindow(w, onsetOf, fps);
     const end = Math.min(until, w.off ?? until);
     let run = null;
-    const close = f => { if (run) { hide(w, run, f); log.push(`${w.id} ${w.text}: hidden ${run}-${f} (upside down, mirrored or from behind)`); run = null; } };
+    const close = f => { if (run) { hide(w, run, f); log.push(`${w.id} ${w.text}: hidden ${run}-${f} (upside down, mirrored, from behind or edge-on)`); run = null; } };
     for (let f = Math.max(0, w.on); f < end; f++) {
       // Upside down counts while the camera is still; during a camera move a turning word may pass the vertical.
       const still = !scene.cams.some(k => k.f0 < f && f < k.f1);
-      const bad = drawn(w, f) && inFrameShare(w, f, poseAt(f), vfov) > 0 && !G.readableOrientation(w, f, poseAt(f), vfov, { tilt: still });
+      const bad = drawn(w, f) && inFrameShare(w, f, poseAt(f), vfov) > 0 && (!G.readableOrientation(w, f, poseAt(f), vfov, { tilt: still }) || (still && edgeOn(w, f, poseAt(f))));
       if (bad && f >= focusFrom && f < focusTo) { focused.push(`${w.id} ${w.text} at frame ${f}`); close(f); continue; }
       if (bad && run == null) run = f;
       if (!bad) close(f);
@@ -167,7 +181,7 @@ function anyVisible(scene, f, pose, vfov) {
   const I = globalThis.KT_INTERP;
   // Something on screen: an intro overlay (badge, title card), a picture element or a word.
   if ((scene.intro ?? []).some(x => f >= x.start && f < x.end)) return true;
-  return [...scene.words, ...(scene.elements ?? [])].some(w => {
+  const filling = [...scene.words, ...(scene.elements ?? [])].filter(w => {
     const on = (w.on <= f && (w.off == null || f < w.off)) || (w.reveal_on != null && f >= w.reveal_on);
     if (!on || opacityAt(w, f) <= 0.05) return false;
     const X = I.wordXform(w, f), c = X(w.C), n = X(add(w.C, w.N)).map((x, i) => x - c[i]);
@@ -175,7 +189,16 @@ function anyVisible(scene, f, pose, vfov) {
     // Filled means a word at least FILLED_SHARE in frame and readable; an edge sliver does not count.
     return inFrameShare(w, f, pose, vfov) >= FILLED_SHARE && G.readableOrientation(w, f, pose, vfov, { tilt: false });
   });
+  if (!filling.length) return false;
+  // Brief 7 item 3: a frame whose only words are under the size minimum (Type rule 1, the minimum for that frame) is
+  // empty too. Picture elements, wordmarks and words with no measurable letters always count.
+  const S = { ...SIZE_DEFAULTS, ...(scene.meta.size_rule ?? {}) };
+  const crowded = filling.length >= S.crowdedWords || filling.reduce((a, w) => a + boxCoverage(w, f, pose, vfov), 0) >= S.crowdedArea;
+  const min = (crowded ? S.minH : S.roomFactor * S.minH) * EMPTY_SIZE_SLACK;
+  return filling.some(w => { if (w.kind === 'element' || w.wordmark) return true; const h = letterHeight(w, f, pose, vfov); return h == null || h >= min; });
 }
+// A word within 3% of its minimum still fills the frame (rounding, and the 13.4% HOWLS class of near misses).
+export const EMPTY_SIZE_SLACK = 0.97;
 export const FILLED_SHARE = 0.5;
 export function emptyFrames(scene, { from = 0, until = scene.meta.frames } = {}) {
   const I = globalThis.KT_INTERP, vfov = scene.meta.vfov ?? 40, runs = [];
@@ -202,13 +225,13 @@ export function fillEmptyFrames(scene, { from = 0, until = scene.meta.frames, on
   for (const run of emptyFrames(scene, { from, until })) {
     if (run.start === 0 || !long(run)) continue;
     const lo = Math.max(0, run.start - 2), hi = Math.min(scene.meta.frames, run.end + 12);
-    const overlapBefore = scanOverlap(scene, { from: lo, until: hi }).overlaps.length;
+    const overlapBefore = overlapFrames(scanOverlap(scene, { from: lo, until: hi }).overlaps, scene.meta.fps ?? 30);
     const wLo = Math.max(from, run.start - 20), wHi = Math.min(until, run.end + 21);
     const emptyCount = () => emptyFrames(scene, { from: wLo, until: wHi }).reduce((n, r) => n + r.end - r.start + 1, 0);
     const emptyBefore = emptyCount();
     // Kept when fewer frames nearby are empty (a part-filled run gets the other tries on the next pass).
     const accept = () => emptyCount() < emptyBefore &&
-      scanOverlap(scene, { from: lo, until: hi }).overlaps.length <= overlapBefore && partials() <= basePartial;
+      overlapFrames(scanOverlap(scene, { from: lo, until: hi }).overlaps, scene.meta.fps ?? 30) <= overlapBefore && partials() <= basePartial;
     const pose = I.poseAt(scene.cams, run.start - 1);
     const leaving = scene.words.filter(w => !w.reveal_copy_of && w.off != null && w.off >= run.start - 1 && w.off <= run.end + 1 &&
       opacityAt(w, run.start - 1) > 0.05 && inFrameShare(w, run.start - 1, pose, vfov) > 0);
@@ -301,6 +324,113 @@ export function fillEmptyFrames(scene, { from = 0, until = scene.meta.frames, on
   return { log, remaining: all.filter(long), short: all.filter(r => !long(r)) };
 }
 
+// Swell (brief 7 item 3, fill 6): an empty stretch left after the other fills, in which the only words on screen are
+// under the size minimum, is filled by swelling those words to the minimum: a scale segment up over SWELL_RAMP frames
+// from the stretch start (or the word's appearance, if later), and back down over SWELL_RAMP frames ending by the
+// stretch end, or earlier when the next word's entrance would collide. The pivot is tried on a 3 by 3 grid over the
+// group's box, then over each word's own box. A swell is kept only if no stretch over the limit is left, and it adds no
+// projected overlap, no partly shown focused word and no static partly-on-screen word. Scale factor at most SWELL_MAX.
+export const SWELL_RAMP = 3, SWELL_MAX = 3.5;
+export function swellSmallWords(scene, { from = 0, until = scene.meta.frames, onsetOf, maxFrames = 7 } = {}) {
+  const I = globalThis.KT_INTERP, vfov = scene.meta.vfov ?? 40, log = [], dbg = process.env.KTE_SWELL_DEBUG;
+  const S = { ...SIZE_DEFAULTS, ...(scene.meta.size_rule ?? {}) };
+  const long = r => r.end - r.start + 1 > maxFrames;
+  const ease = { a: 2, b: 4, x0: 0.34 };
+  for (const run of emptyFrames(scene, { from, until }).filter(long)) {
+    if (run.start === 0) continue;
+    // The words readable (over half in frame) on some frame of the stretch, with the first such frame.
+    const seen = new Map();
+    for (let f = run.start; f <= run.end; f++) {
+      const pose = I.poseAt(scene.cams, f);
+      for (const w of scene.words) {
+        if (seen.has(w) || w.reveal_copy_of || w.wordmark || w.on > f || (w.off != null && w.off <= f) || opacityAt(w, f) <= 0.05) continue;
+        if ((w.motion ?? []).some(m => m.kind === 'hinge')) continue;
+        if ((visibleFraction(w, f, pose, vfov, scene) ?? 0) > 0.5) seen.set(w, f);
+      }
+    }
+    const small = [...seen.keys()].filter(w => (w.off == null || w.off > run.end));
+    if (!small.length) { if (dbg) console.log('swell nosmall', run.start, run.end); continue; }
+    // Each word's scale brings it to the minimum on every frame of the stretch on which it is readable (past the ramp).
+    let together = 0;
+    for (let f = run.start; f <= run.end; f++) { const pose = I.poseAt(scene.cams, f); together = Math.max(together, small.filter(w => seen.get(w) <= f && (visibleFraction(w, f, pose, vfov, scene) ?? 0) > 0.5).length); }
+    const target = together >= S.crowdedWords ? S.minH : S.roomFactor * S.minH;
+    const ks = new Map();
+    for (const w of small) {
+      let h = Infinity;
+      for (let f = Math.min(run.end, seen.get(w) + SWELL_RAMP); f <= run.end; f++) {
+        const pose = I.poseAt(scene.cams, f);
+        if ((visibleFraction(w, f, pose, vfov, scene) ?? 0) > 0.5) h = Math.min(h, letterHeight(w, f, pose, vfov) ?? Infinity);
+      }
+      if (Number.isFinite(h) && h > 0 && h < target) ks.set(w, Math.min(SWELL_MAX, target / h * 1.04));
+    }
+    small.splice(0, small.length, ...small.filter(w => ks.has(w)));
+    if (!small.length) { if (dbg) console.log('swell skip', run.start, run.end); continue; }
+    const big = Math.min(...small.map(w => target / ks.get(w) * 1.04)), k = Math.max(...ks.values());
+    const why = {};
+    const lo = Math.max(0, run.start - 2), hi = Math.min(until, run.end + 12);
+    const ovScore = () => overlapFrames(scanOverlap(scene, { from: lo, until: hi }).overlaps, scene.meta.fps ?? 30);
+    const ovBefore = ovScore();
+    const partBefore = onsetOf ? gateFailures(scene, onsetOf, { until }).filter(x => x.kind === 'partial').length : 0;
+    const statBefore = staticPartials(scene, { from: lo, until: hi }).length;
+    // Any one word at size fills a frame, so subsets of the small words are tried, fewest words first (largest first).
+    const all = small.slice(), subsets = [];
+    for (let m = 1; m < 1 << all.length; m++) subsets.push(all.filter((_, i) => m & (1 << i)));
+    const fillers = ws => ws.filter(w => !w.keyword).length;
+    subsets.sort((p, q) => p.length - q.length || fillers(p) - fillers(q) || ks.get(p[0]) - ks.get(q[0]));
+    const dot = (p, q) => p.reduce((s2, x, i) => s2 + x * q[i], 0);
+    const pivotsOf = ws => {
+      const R0 = ws[0].R, U0 = ws[0].U;
+      const ext = ws.flatMap(w => [-1, 1].flatMap(sx => [-1, 1].map(sy => add(w.C, add(mul(w.R, sx * w.w / 2), mul(w.U, sy * w.h / 2))))));
+      const rs = ext.map(p => dot(p, R0)), us = ext.map(p => dot(p, U0));
+      const gc = mul(ext.reduce((s2, p) => add(s2, p), [0, 0, 0]), 1 / ext.length);
+      const gr = (Math.max(...rs) - Math.min(...rs)) / 2, gu = (Math.max(...us) - Math.min(...us)) / 2;
+      const out = [];
+      for (const [px, py] of [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+        const tag = `${py < 0 ? 'bottom' : py > 0 ? 'top' : ''}${px && py ? ' ' : ''}${px < 0 ? 'left' : px > 0 ? 'right' : ''}` || 'centre';
+        out.push([ws.length > 1 ? `the group's ${tag}` : `its ${tag}`, ws.map(() => add(gc, add(mul(R0, px * gr), mul(U0, py * gu))))]);
+        if (ws.length > 1) out.push([`each word's ${tag}`, ws.map(w => add(w.C, add(mul(w.R, px * w.w / 2), mul(w.U, py * w.h / 2))))]);
+      }
+      return out;
+    };
+    // End choices: all back to size by the stretch end (or a few frames earlier), or a hand-off, each word back to size
+    // as the next word of the subset reaches it.
+    const ends = [run.end + 1]; for (let e = run.end; e > run.start + SWELL_RAMP * 2 && run.end + 1 - e <= maxFrames - 1; e--) ends.push(e);
+    ends.push('hand-off', 'early hand-off');
+    const snap = new Map(all.map(w => [w, JSON.stringify(w.motion ?? null)]));
+    const restore = ws => ws.forEach(w => { const v = JSON.parse(snap.get(w)); if (v) w.motion = v; else delete w.motion; });
+    const near = { from: Math.max(0, run.start - maxFrames), until: Math.min(until, run.end + maxFrames + 1) };
+    let done = null, used = null;
+    search: for (const ws of subsets) {
+      // A subset that cannot clear the stretch even with no other check is skipped before the pivot search.
+      for (const dn1 of ends) for (const [name, P] of pivotsOf(ws)) {
+        const hand = typeof dn1 === 'string';
+        if (hand && ws.length < 2) continue;
+        const order = ws.slice().sort((p, q) => seen.get(p) - seen.get(q));
+        ws.forEach((w, i) => {
+          // The swell starts as the word comes on (it may still be entering), so it is at size when it is readable.
+          const up0 = Math.max(run.start, w.on), nx = order[order.indexOf(w) + 1];
+          const end = hand ? (nx ? Math.max(up0 + 2, seen.get(nx) + (dn1 === 'hand-off' ? SWELL_RAMP : 0)) : run.end + 1) : dn1;
+          const up1 = Math.min(up0 + SWELL_RAMP, end - 1), dn0 = Math.max(up1, end - SWELL_RAMP);
+          if (hand && nx && seen.get(nx) <= up0) return;
+          w.motion = [...(w.motion ?? []), { f0: up0, f1: up1, ease, kind: 'scale', P: P[i], from: 1, to: ks.get(w), swell: true }, { f0: dn0, f1: end, ease, kind: 'scale', P: P[i], from: ks.get(w), to: 1, swell: true }];
+        });
+        const tests = [['empty', () => !emptyFrames(scene, near).filter(long).length],
+          ['overlap', () => ovScore() <= ovBefore],
+          ['static', () => staticPartials(scene, { from: lo, until: hi }).length <= statBefore],
+          ['partial', () => !onsetOf || gateFailures(scene, onsetOf, { until }).filter(x => x.kind === 'partial').length <= partBefore]];
+        const bad = tests.find(([, t]) => !t());
+        if (!bad) { done = hand ? `${name}, each handing off to the next` : `${name}, back to size by frame ${dn1}`; used = ws; break search; }
+        why[bad[0]] = (why[bad[0]] ?? 0) + 1;
+        restore(ws);
+      }
+    }
+    if (dbg && !done) console.log('swell none', run.start, run.end, small.map(w => w.text).join(' '), k.toFixed(2), JSON.stringify(why));
+    if (done) log.push(`frames ${run.start}-${run.end} (${(run.start / (scene.meta.fps ?? 30)).toFixed(2)} s): ${used.map(w => `${w.id} ${w.text} x${ks.get(w).toFixed(2)}`).join(', ')} swelled to ${(100 * target).toFixed(1)}% about ${done}`);
+  }
+  const all = emptyFrames(scene, { from, until });
+  return { log, remaining: all.filter(long), short: all.filter(r => !long(r)) };
+}
+
 // Size (engine fix brief 5, Jefferson 22 November 2026: "We should either show a word big enough to be seen or not
 // show it at all"). Per camera hold, each word whole in frame and at rest is measured at its largest (cap height as a
 // share of the frame height, letterHeight). Its minimum is minH when the frame is crowded and roomFactor x minH when it
@@ -380,10 +510,15 @@ export function enforceMinSize(scene, onsetOf, { until = scene.meta.frames, sett
   const PIVOTS = [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]];
   // Overlap for a growth is counted with every size drop shown, so a drop undone later for the empty-screen rule never
   // brings back an overlap.
-  const overlapsWithDrops = (from, to) => {
+  // The score weighs overlaps involving the grown word above all others, so a growth cannot trade an overlap elsewhere
+  // in the window for a new one of its own (brief 7: WE grown into CIRCLE).
+  const overlapsWithDrops = (from, to, id = null) => {
     const ghosts = scene.words.filter(x => x.dropped === 'size' && x.size_restore != null).map(x => [x, x.opacity]);
     for (const [x] of ghosts) { const v = JSON.parse(x.size_restore); if (v) x.opacity = v; else delete x.opacity; }
-    const n = scanOverlap(scene, { from, until: to }).overlaps.length;
+    const all = scanOverlap(scene, { from, until: to }).overlaps;
+    // Overlap frames, not intervals: a growth that lengthens an existing overlap is worse (CIRCLE's stamp frames).
+    const frames = o => { const m = o.match(/^([\d.]+)–([\d.]+) s/); return m ? Math.round((+m[2] - +m[1]) * (scene.meta.fps ?? 30)) + 1 : 1; };
+    const n = all.reduce((t, o) => t + frames(o), 0) + (id ? 1000 * all.filter(o => o.includes(`${id} `)).reduce((t, o) => t + frames(o), 0) : 0);
     for (const [x, op] of ghosts) x.opacity = op;
     return n;
   };
@@ -401,14 +536,14 @@ export function enforceMinSize(scene, onsetOf, { until = scene.meta.frames, sett
     const k = Math.max(...short.map(x => x.min / x.size)) * 1.03, was = Math.max(...short.map(x => x.size));
     if (k <= MAX_GROW && growable(w)) {
       const lo = Math.max(0, w.on), hi = Math.min(until, w.off ?? until);
-      const ovBefore = overlapsWithDrops(lo, hi), failBefore = ownFailures(w);
+      const ovBefore = overlapsWithDrops(lo, hi, w.id), failBefore = ownFailures(w);
       const keep = JSON.stringify({ C: w.C, w: w.w, h: w.h, cap: w.cap, fontPx: w.fontPx, pad: w.pad, motion: w.motion });
       const clipped = (w.clip ?? []).length > 0;
       let done = false;
       for (const pv of PIVOTS) {
         grow(w, k, pv);
         if (clipped) w.motion = (w.motion ?? []).map(m => m.kind === 'shift' ? { ...m, from: mul(m.from, k), to: mul(m.to, k) } : m);
-        if ((!clipped || clipEntranceOk(scene, w)) && overlapsWithDrops(lo, hi) <= ovBefore && ownFailures(w) <= failBefore) {
+        if ((!clipped || clipEntranceOk(scene, w)) && overlapsWithDrops(lo, hi, w.id) <= ovBefore && ownFailures(w) <= failBefore) {
           counts.grown++; done = true;
           log.push(`${w.id} ${w.text}: grown x${k.toFixed(2)}${pv[0] || pv[1] ? ` from its ${['', 'left', 'right'][pv[0] === -1 ? 1 : pv[0] === 1 ? 2 : 0]}${pv[0] && pv[1] ? ' ' : ''}${['', 'bottom', 'top'][pv[1] === -1 ? 1 : pv[1] === 1 ? 2 : 0]} ${pv[0] && pv[1] ? 'corner' : 'edge'}` : ''} (letters ${(100 * was).toFixed(1)}% under the ${(100 * Math.max(...short.map(x => x.min))).toFixed(1)}% minimum)`);
           break;
@@ -426,12 +561,47 @@ export function enforceMinSize(scene, onsetOf, { until = scene.meta.frames, sett
       log.push(`${w.id} ${w.text}: kept under size, important word (letters ${(100 * x.size).toFixed(1)}% at frame ${x.f}, minimum ${(100 * x.min).toFixed(1)}%; Type rule 1 failure)`);
       continue;
     }
+    // Type rule 2 (brief 7): a keyword is dropped only by necessity. First make room: grow it and drop the filler words
+    // its grown box would overlap (they are dropped for good, `dropped: "room"`, never brought back by the empty-screen
+    // undo). Only when a keyword or a name is in the way, or growing fails for another reason, is it dropped.
+    if (short.some(x => x.focused) && w.keyword && k <= MAX_GROW && growable(w)) {
+      const lo = Math.max(0, w.on), hi = Math.min(until, w.off ?? until), failBefore = ownFailures(w);
+      const keep = JSON.stringify({ C: w.C, w: w.w, h: w.h, cap: w.cap, fontPx: w.fontPx, pad: w.pad, motion: w.motion });
+      const byId = new Map(scene.words.map(x => [x.id, x])), clipped = (w.clip ?? []).length > 0;
+      let made = null;
+      for (const pv of PIVOTS) {
+        grow(w, k, pv);
+        if (clipped) w.motion = (w.motion ?? []).map(m => m.kind === 'shift' ? { ...m, from: mul(m.from, k), to: mul(m.to, k) } : m);
+        if ((!clipped || clipEntranceOk(scene, w)) && ownFailures(w) <= failBefore) {
+          const mine = scanOverlap(scene, { from: lo, until: hi }).overlaps.filter(o => o.includes(` ${w.id} `) || o.includes(`: ${w.id} `));
+          const ids = [...new Set(mine.flatMap(o => [...o.matchAll(/\b(w\d+[a-z0-9]*) /g)].map(m => m[1])))].filter(id => id !== w.id);
+          const partners = ids.map(id => byId.get(id));
+          if (!mine.some(o => o.includes('panel:') || o.includes('plaque p')) && partners.length && partners.every(x => x && !x.keyword && !x.important && resizable(x))) {
+            const ops = partners.map(x => [x, x.opacity]);
+            for (const x of partners) x.opacity = [[0, 0]];
+            const grownState = JSON.stringify({ C: w.C, w: w.w, h: w.h, cap: w.cap, fontPx: w.fontPx, pad: w.pad, motion: w.motion });
+            Object.assign(w, JSON.parse(keep)); const base = overlapsWithDrops(lo, hi, w.id);
+            Object.assign(w, JSON.parse(grownState));
+            if (overlapsWithDrops(lo, hi, w.id) <= base) { made = partners; break; }
+            for (const [x, op] of ops) x.opacity = op;
+          }
+        }
+        Object.assign(w, JSON.parse(keep));
+      }
+      if (made) {
+        for (const x of made) { x.dropped = 'room'; x.opacity = [[0, 0]]; counts.dropped++; log.push(`${x.id} ${x.text}: dropped (filler) to make room for the keyword ${w.id} ${w.text}`); }
+        counts.grown++;
+        log.push(`${w.id} ${w.text}: grown x${k.toFixed(2)} after dropping ${made.map(x => x.text).join(', ')} (keyword; letters ${(100 * was).toFixed(1)}%)`);
+        sh = shownHolds(w); short = sh.filter(x => x.size < x.min - 1e-9); if (!short.length) continue;
+      }
+    }
     if (short.some(x => x.focused)) {
       // Applied after every word is sized, so each growth was checked against all words shown (a drop undone for the
       // empty-screen rule then brings back no overlap).
       drops.push(w); counts.dropped++;
+      if (w.keyword) counts.keywordsDropped = (counts.keywordsDropped ?? 0) + 1;
       const x = short.find(s => s.focused);
-      log.push(`${w.id} ${w.text}: dropped (letters ${(100 * x.size).toFixed(1)}% at frame ${x.f}, minimum ${(100 * x.min).toFixed(1)}% ${x.crowded ? 'crowded' : 'with room'}; ${growable(w) ? 'growing would overlap or leave it partly shown' : (w.clip ?? []).length ? 'growing would overlap, leave it partly shown, or break its entrance past its host' : 'it enters on a hinge, so it cannot grow'})`);
+      log.push(`${w.id} ${w.text}: dropped${w.keyword ? ' by necessity (keyword: no filler to drop frees room)' : ''} (letters ${(100 * x.size).toFixed(1)}% at frame ${x.f}, minimum ${(100 * x.min).toFixed(1)}% ${x.crowded ? 'crowded' : 'with room'}; ${growable(w) ? 'growing would overlap or leave it partly shown' : (w.clip ?? []).length ? 'growing would overlap, leave it partly shown, or break its entrance past its host' : 'it enters on a hinge, so it cannot grow'})`);
       continue;
     }
     for (const x of short) {
@@ -539,9 +709,9 @@ export function sizeShortfalls(scene, onsetOf, { until = scene.meta.frames, sett
 // A word's boundary has only three allowed states: moving onto the screen, moving off it, or wholly on screen.").
 // Visible fraction r(f): the word's ink (letter band, or the whole box for a word on a block) projected and clipped to
 // the frame, as a share of its projected area. Partly on screen: PARTIAL_LO < r < PARTIAL_HI. Static: r changes by less
-// than STATIC_RATE per frame (centred difference). A run of STATIC_FRAMES or more partly-on-screen static frames fails.
-// Best guesses: STATIC_RATE 0.01 (crossing the edge in under about 3 s counts as moving), STATIC_FRAMES 4 (0.13 s).
-export const PARTIAL_LO = 0.005, PARTIAL_HI = 0.995, STATIC_RATE = 0.01, STATIC_FRAMES = 4;
+// than STATIC_RATE since the frame before. A run of STATIC_FRAMES or more partly-on-screen static frames fails.
+// Best guesses: STATIC_RATE 0.01 (crossing the edge in under about 3 s counts as moving), STATIC_FRAMES 3 (0.1 s; brief 7).
+export const PARTIAL_LO = 0.005, PARTIAL_HI = 0.995, STATIC_RATE = 0.01, STATIC_FRAMES = 3;
 function clipPoly(poly, inside, cut) {
   const out = [];
   for (let i = 0; i < poly.length; i++) {
@@ -552,27 +722,90 @@ function clipPoly(poly, inside, cut) {
   return out;
 }
 const polyArea = p => { let a = 0; for (let i = 0; i < p.length; i++) { const [x0, y0] = p[i], [x1, y1] = p[(i + 1) % p.length]; a += x0 * y1 - x1 * y0; } return Math.abs(a) / 2; };
-export function visibleFraction(w, f, pose, vfov) {
+// Occluders (brief 7 item 1): viewer.html draws every panel plaque with a flat ground-coloured occluder grown
+// OCCLUDER_GROW past its edges (at least 150 units or 0.3 of its smaller side) while the plaque is on. A word behind
+// another panel's occluder is cut inside the frame (DOES at 84.6 s in rough cut 6b), which the frame-edge measure
+// cannot see. The trims the viewer makes where two non-parallel panels meet are ignored (slightly conservative).
+const occluderCache = new WeakMap(), byIdCache = new WeakMap();
+const byIdOf = scene => byIdCache.get(scene) ?? byIdCache.set(scene, new Map(scene.words.map(x => [x.id, x]))).get(scene);
+export function occludersOf(scene) {
+  if (occluderCache.has(scene)) return occluderCache.get(scene);
+  const reveal = scene.meta?.whole_song?.revealF0 ?? Infinity;
+  const out = (scene.plaques ?? []).filter(p => p.surface === 'panel').map(p => {
+    const m = Math.max(150, 0.3 * Math.min(p.w, p.h));
+    return { id: p.id, C: p.C, R: p.R, U: p.U, N: p.N, hw: p.w / 2 + m, hh: p.h / 2 + m, on: p.on, off: p.off, reveal_on: p.reveal_on, until: reveal };
+  });
+  occluderCache.set(scene, out);
+  return out;
+}
+const occluderOn = (o, f) => f < o.until && ((f >= o.on && (o.off == null || f < o.off)) || (o.reveal_on != null && f >= o.reveal_on));
+// Share of sample points on the word's letter band that are in frame, past its active clip planes and in front of
+// every other panel's occluder, over the samples in frame and past the clip planes (so it multiplies the exact
+// frame-and-clip fraction). 1 when nothing occludes.
+function unoccludedShare(w, f, pose, vfov, scene, X, band) {
+  const occ = occludersOf(scene).filter(o => o.id !== w.plaque && occluderOn(o, f));
+  if (!occ.length) return 1;
+  const I = globalThis.KT_INTERP, cam = pose.position;
+  let seen = 0, hidden = 0;
+  for (let i = 0; i < 16; i++) for (let j = 0; j < 4; j++) {
+    const u = -1 + (2 * i + 1) / 16, v = -1 + (2 * j + 1) / 4;
+    const p = X(add(w.C, add(mul(w.R, u * w.w / 2), mul(w.U, v * band * w.h / 2))));
+    const q = I.project(p, pose, vfov);
+    if (!q || Math.abs(q.x) > 1 || Math.abs(q.y) > 1) continue;
+    const d = p.map((x, k) => x - cam[k]), dist = Math.hypot(...d);
+    let blocked = false;
+    for (const o of occ) {
+      const dn = d[0] * o.N[0] + d[1] * o.N[1] + d[2] * o.N[2];
+      if (Math.abs(dn) < 1e-9) continue;
+      const t = ((o.C[0] - cam[0]) * o.N[0] + (o.C[1] - cam[1]) * o.N[1] + (o.C[2] - cam[2]) * o.N[2]) / dn;
+      if (!(t > 0) || t * dist > dist - 2) continue; // behind the camera, or not in front of the point
+      const h = [cam[0] + d[0] * t - o.C[0], cam[1] + d[1] * t - o.C[1], cam[2] + d[2] * t - o.C[2]];
+      if (Math.abs(h[0] * o.R[0] + h[1] * o.R[1] + h[2] * o.R[2]) <= o.hw && Math.abs(h[0] * o.U[0] + h[1] * o.U[1] + h[2] * o.U[2]) <= o.hh) { blocked = true; break; }
+    }
+    blocked ? hidden++ : seen++;
+  }
+  return seen + hidden ? seen / (seen + hidden) : 1;
+}
+// Clip planes (brief 7 item 1): the visible fraction also cuts the word by its active clip half-spaces, as the viewer
+// does, so a word stuck part-way past its host's edge counts as partly shown.
+export function visibleFraction(w, f, pose, vfov, scene = null) {
   const I = globalThis.KT_INTERP;
-  const X = I.wordXform(w, f), band = hasBlock(w) ? 1 : Math.min(1, (w.cap ?? w.h) / w.h);
+  // The letters' band is the cap height plus the drawn ink outside it: round-letter overshoot (3% of the cap) and, on
+  // jersey letters, half the bold stroke on each side (brief 7 item 11: a jersey word whose cap band was just past the
+  // top edge still showed its stroke there).
+  const jb = JERSEY_FONTS.includes(w.font) && !w.stripes && !w.wordmark ? (scene?.meta?.jersey_bold ?? 0.10) : 0;
+  const X = I.wordXform(w, f), band = hasBlock(w) ? 1 : Math.min(1, (w.cap ?? w.h) * (1.03 + jb) / w.h);
   const c = X(w.C), n = X(add(w.C, w.N)).map((x, i) => x - c[i]);
   if (n.reduce((s, x, i) => s + x * (pose.position[i] - c[i]), 0) <= 0) return null; // seen from behind: not drawn
-  // Corners in camera space, clipped to the near plane, then projected.
+  // Corners in world space (clipped by the word's active clip planes), then camera space clipped to the near plane,
+  // then projected; the unclipped outline gives the total.
   const tv = Math.tan((vfov * Math.PI) / 360), aspect = 16 / 9;
-  let cam = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => {
-    const p = X(add(w.C, add(mul(w.R, u * w.w / 2), mul(w.U, v * band * w.h / 2))));
-    const d = p.map((x, i) => x - pose.position[i]);
-    return [d.reduce((s, x, i) => s + x * pose.R[i], 0), d.reduce((s, x, i) => s + x * pose.U[i], 0), -d.reduce((s, x, i) => s + x * pose.N[i], 0)];
-  });
-  const near = 1;
-  cam = clipPoly(cam, p => p[2] >= near, (a, b) => { const t = (near - a[2]) / (b[2] - a[2]); return a.map((x, i) => x + (b[i] - x) * t); });
-  if (cam.length < 3) return 0;
-  let p = cam.map(q => [q[0] / (q[2] * tv * aspect), q[1] / (q[2] * tv)]);
-  const total = polyArea(p);
+  const byId = scene ? byIdOf(scene) : null;
+  const world = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => X(add(w.C, add(mul(w.R, u * w.w / 2), mul(w.U, v * band * w.h / 2)))));
+  let cut = world;
+  for (const { P, n: cn } of (w.clip?.length ? I.wordClips(w, f, byId) : [])) {
+    const sd = q => (q[0] - P[0]) * cn[0] + (q[1] - P[1]) * cn[1] + (q[2] - P[2]) * cn[2];
+    cut = clipPoly(cut, q => sd(q) >= 0, (a, b) => { const t = sd(a) / (sd(a) - sd(b)); return a.map((x, i) => x + (b[i] - x) * t); });
+  }
+  const proj = poly => {
+    let cam = poly.map(p => {
+      const d = p.map((x, i) => x - pose.position[i]);
+      return [d.reduce((s, x, i) => s + x * pose.R[i], 0), d.reduce((s, x, i) => s + x * pose.U[i], 0), -d.reduce((s, x, i) => s + x * pose.N[i], 0)];
+    });
+    const near = 1;
+    cam = clipPoly(cam, p => p[2] >= near, (a, b) => { const t = (near - a[2]) / (b[2] - a[2]); return a.map((x, i) => x + (b[i] - x) * t); });
+    return cam.length < 3 ? null : cam.map(q => [q[0] / (q[2] * tv * aspect), q[1] / (q[2] * tv)]);
+  };
+  const whole = proj(world);
+  if (!whole) return 0;
+  const total = polyArea(whole);
   if (!(total > 0)) return 0;
+  let p = cut === world ? whole : cut.length >= 3 ? proj(cut) : null;
+  if (!p) return 0;
   for (const [axis, sign] of [[0, 1], [0, -1], [1, 1], [1, -1]])
     p = clipPoly(p, q => sign * q[axis] <= 1, (a, b) => { const t = (sign - a[axis]) / (b[axis] - a[axis]); return a.map((x, i) => x + (b[i] - x) * t); });
-  return p.length < 3 ? 0 : polyArea(p) / total;
+  const share = p.length < 3 ? 0 : polyArea(p) / total;
+  return share > 0 && scene ? share * unoccludedShare(w, f, pose, vfov, scene, X, band) : share;
 }
 // Runs of a word partly on screen and static, each inside its partly-on-screen span [spanStart, spanEnd).
 export function staticPartials(scene, { from = 0, until = scene.meta.frames, words = scene.words } = {}) {
@@ -583,7 +816,7 @@ export function staticPartials(scene, { from = 0, until = scene.meta.frames, wor
     const a = Math.max(from, w.on, 0), b = Math.min(until, w.off ?? until);
     if (b - a < STATIC_FRAMES) continue;
     const r = [];
-    for (let f = a - 1; f <= b; f++) r.push(f >= a && f < b && drawn(w, f) ? visibleFraction(w, f, poseAt(f), vfov) : null);
+    for (let f = a - 1; f <= b; f++) r.push(f >= a && f < b && drawn(w, f) ? visibleFraction(w, f, poseAt(f), vfov, scene) : null);
     const at = f => r[f - a + 1];
     const partial = f => { const v = at(f); return v != null && v > PARTIAL_LO && v < PARTIAL_HI; };
     let f = a;
@@ -593,8 +826,10 @@ export function staticPartials(scene, { from = 0, until = scene.meta.frames, wor
       // Static frames inside the span [f, e).
       let s = null;
       for (let g = f; g <= e; g++) {
-        const prev = at(g - 1) ?? at(g), next = at(g + 1) ?? at(g);
-        const still = g < e && Math.abs((next ?? 0) - (prev ?? 0)) / 2 < STATIC_RATE;
+        // Still: the share moved under STATIC_RATE since the frame before (brief 7 item 6: a camera pausing for 3 or 4
+        // frames mid-sweep left TAPE 58% on screen, which a centred difference across the pause's ends missed).
+        const prev = at(g - 1) ?? at(g);
+        const still = g < e && Math.abs((at(g) ?? 0) - (prev ?? 0)) < STATIC_RATE;
         if (still && s == null) s = g;
         if (!still && s != null) { if (g - s >= STATIC_FRAMES) out.push({ w, start: s, end: g, spanStart: f, spanEnd: e, share: at(s) }); s = null; }
       }
@@ -605,6 +840,100 @@ export function staticPartials(scene, { from = 0, until = scene.meta.frames, wor
 }
 // Resolve: the whole partly-on-screen span of such a word is hidden ("That fragment should not appear at all"), outside
 // its focus window. A focused word is reported, never hidden (the shown-whole gate keeps it whole there).
+// Zoom entrances (brief 7 item 4): a word that zooms in from a speck starts at no less than ZOOM_FLOOR of the size
+// minimum with room (its entrance scale's starting factor is raised), so its first frames are not specks. Kept only if
+// the entrance frames gain no overlap.
+export const ZOOM_FLOOR = 0.5;
+export function floorZoomEntrances(scene, { until = scene.meta.frames, settings = {} } = {}) {
+  const S = { ...SIZE_DEFAULTS, ...settings }, I = globalThis.KT_INTERP, vfov = scene.meta.vfov ?? 40, fps = scene.meta.fps ?? 30, log = [];
+  const floor = ZOOM_FLOOR * S.roomFactor * S.minH;
+  for (const w of scene.words) {
+    if (w.on >= until || w.reveal_copy_of) continue;
+    const seg = (w.motion ?? []).find(m => m.kind === 'scale' && !m.swell && m.f0 <= w.on + 1 && m.from < 1 && m.to === 1);
+    if (!seg) continue;
+    const settled = letterHeight(w, seg.f1, I.poseAt(scene.cams, seg.f1), vfov);
+    if (!(settled > 0)) continue;
+    const from = Math.min(1, floor / settled);
+    if (seg.from >= from - 1e-9) continue;
+    const lo = Math.max(0, seg.f0 - 1), hi = Math.min(until, seg.f1 + 2);
+    const before = overlapFrames(scanOverlap(scene, { from: lo, until: hi }).overlaps, fps, w.id), was = seg.from;
+    seg.from = from;
+    if (overlapFrames(scanOverlap(scene, { from: lo, until: hi }).overlaps, fps, w.id) <= before)
+      log.push(`${w.id} ${w.text}: zoom starts at x${from.toFixed(2)} (was x${was}), first frame ${(100 * settled * from).toFixed(1)}% of the frame height`);
+    else seg.from = was;
+  }
+  return log;
+}
+// Partners of a hold hide (brief 7 item 8: GIVE hidden for a hold left HIM alone): when the size pass hides a word for
+// a hold, its sung neighbour that leans on it (a pronoun object or filler right after it, or a filler right before it)
+// is hidden over the same frames, unless the neighbour is in its focus window there; then the hide is undone, so the
+// two show together. Uses w.size_hides and w.map_index (word roles).
+export function pairHoldHides(scene, onsetOf, { until = scene.meta.frames, maxFrames = 7 } = {}) {
+  const fps = scene.meta.fps ?? 30, log = [];
+  const byMap = new Map(scene.words.filter(w => w.map_index != null && !w.reveal_copy_of).map(w => [w.map_index, w]));
+  for (const h of scene.words) {
+    for (const rec of [...(h.size_hides ?? [])]) {
+      const [a, b] = rec;
+      const after = byMap.get(h.map_index + 1), before = byMap.get(h.map_index - 1);
+      const leaners = [after && (after.keyword === false || /^pronoun/.test(after.keyword_why ?? '')) ? after : null,
+        before && before.keyword === false ? before : null].filter(Boolean);
+      for (const n of leaners) {
+        let lo = null, hi = null;
+        for (let f = Math.max(a, n.on); f < Math.min(b, n.off ?? until, until); f++) if (drawn(n, f)) { lo ??= f; hi = f + 1; }
+        if (lo == null) continue;
+        const [fa, fb] = focusWindow(n, onsetOf, fps);
+        const near = { from: Math.max(0, lo - maxFrames - 1), until: Math.min(until, hi + maxFrames + 1) };
+        const longRuns = () => emptyFrames(scene, near).filter(r => r.end - r.start + 1 > maxFrames).length;
+        const runsBefore = longRuns(), nOp = JSON.stringify(n.opacity ?? null);
+        let undo = fa < hi && fb > lo;
+        if (!undo) { hide(n, lo, hi); if (longRuns() > runsBefore) { const v = JSON.parse(nOp); if (v) n.opacity = v; else delete n.opacity; undo = true; } }
+        if (undo) {
+          const ovB = overlapFrames(scanOverlap(scene, { from: a, until: b }).overlaps, fps, h.id), hOp = JSON.stringify(h.opacity ?? null);
+          const v = JSON.parse(rec[2]); if (v) h.opacity = v; else delete h.opacity;
+          if (overlapFrames(scanOverlap(scene, { from: a, until: b }).overlaps, fps, h.id) > ovB || longRuns() > runsBefore) {
+            const o = JSON.parse(hOp); if (o) h.opacity = o; else delete h.opacity;
+            log.push(`${h.id} ${h.text}: hidden ${a}-${b} for a hold while ${n.id} ${n.text} shows (${fa < hi && fb > lo ? 'it is in its focus window' : 'hiding it would empty the screen'}, and showing ${h.text} would overlap); left as is`);
+            break;
+          }
+          h.size_hides = h.size_hides.filter(x => x !== rec);
+          log.push(`${h.id} ${h.text}: hold hide ${a}-${b} undone, so it shows with ${n.id} ${n.text} (${fa < hi && fb > lo ? 'in its focus window' : 'hiding it too would empty the screen'})`);
+          break;
+        }
+        log.push(`${n.id} ${n.text}: hidden ${lo}-${hi} with ${h.id} ${h.text} (hidden there for a hold)`);
+      }
+    }
+  }
+  return log;
+}
+// Overlap measured in frames (the sum of the scan's interval lengths), optionally only intervals involving one word.
+export function overlapFrames(list, fps = 30, id = null) {
+  return list.filter(o => !id || o.includes(`${id} `)).reduce((t, o) => { const m = o.match(/^([\d.]+)–([\d.]+) s/); return t + (m ? Math.round((+m[2] - +m[1]) * fps) + 1 : 1); }, 0);
+}
+// Slide a word along its plaque (its R or U direction, up to 1.5 of its width or height) until it is no longer static
+// and partly visible through its shown-whole requirement, with no new overlap and no new shown-whole failure. Returns a
+// description, or null (the word is left where it was).
+function slideWhole(scene, w, onsetOf, until, mustEnd) {
+  if ((w.clip ?? []).length) return null;
+  const lo = Math.max(0, w.on), hi = Math.min(until, w.off ?? until);
+  // Overlaps that involve this word (a plain count could trade one overlap for another; brief 7).
+  // Counted with every size drop shown, since the empty-screen rule may bring one back (TREY slid onto FOR and A).
+  const ov = () => {
+    const ghosts = scene.words.filter(x => x.dropped === 'size' && x.size_restore != null).map(x => [x, x.opacity]);
+    for (const [x] of ghosts) { const v = JSON.parse(x.size_restore); if (v) x.opacity = v; else delete x.opacity; }
+    const l = scanOverlap(scene, { from: lo, until: hi }).overlaps;
+    for (const [x, op] of ghosts) x.opacity = op;
+    return overlapFrames(l, scene.meta.fps ?? 30) + 1000 * overlapFrames(l, scene.meta.fps ?? 30, w.id);
+  };
+  const own = () => gateFailures({ ...scene, words: [w] }, onsetOf, { until }).filter(x => x.kind === 'partial' || x.kind === 'unshown').length;
+  const stuck = () => staticPartials(scene, { words: [w], until }).some(r => r.start <= mustEnd);
+  const ovBefore = ov(), ownBefore = own(), C0 = w.C;
+  for (const k of [0.25, 0.5, 0.75, 1, 1.5]) for (const [dir, size, name] of [[w.R, w.w, 'along its line'], [mul(w.R, -1), w.w, 'back along its line'], [w.U, w.h, 'up its plaque'], [mul(w.U, -1), w.h, 'down its plaque']]) {
+    w.C = add(C0, mul(dir, k * size));
+    if (!stuck() && ov() <= ovBefore && own() <= ownBefore) return `${name} by ${k} of its ${size === w.w ? 'width' : 'height'}`;
+  }
+  w.C = C0;
+  return null;
+}
 export function hideStaticPartials(scene, onsetOf, { until = scene.meta.frames } = {}) {
   const fps = scene.meta.fps ?? 30, log = [], focused = [];
   for (let pass = 0; pass < 3; pass++) {
@@ -623,7 +952,19 @@ export function hideStaticPartials(scene, onsetOf, { until = scene.meta.frames }
         // that it may be hidden. If the static frames fall inside that requirement, report it instead.
         const o = onsetOf(x.w), A = appearanceFrame(x.w);
         const mustEnd = Math.max(A + G.SHOWN_FRAMES - 1, o);
-        if (x.start <= mustEnd) { focused.push(`${x.w.id} ${x.w.text} ${x.start}-${x.end}`); continue; }
+        if (x.start <= mustEnd) {
+          // Brief 7 item 1: a sung word that cannot be shown whole at its onset (cut by a panel it straddles, or stuck
+          // past a clip plane) is slid along its plaque until it is whole; failing that a filler is dropped, a keyword
+          // other than a name is dropped by necessity, and a name or number is left for the gate to report.
+          const slid = slideWhole(scene, x.w, onsetOf, until, mustEnd);
+          if (slid) { log.push(`${x.w.id} ${x.w.text}: moved ${slid} so it is whole at its onset (it was ${Math.round(100 * x.share)}% visible, static, frames ${x.start}-${x.end})`); changed = true; continue; }
+          if (!x.w.important) {
+            x.w.size_restore = null; x.w.opacity = [[0, 0]]; x.w.dropped = 'static'; changed = true;
+            log.push(`${x.w.id} ${x.w.text}: dropped (${x.w.keyword ? `keyword, dropped by necessity: no slide along its plaque makes it whole` : 'filler'}; ${Math.round(100 * x.share)}% visible and static at its onset, frames ${x.start}-${x.end})`);
+            continue;
+          }
+          focused.push(`${x.w.id} ${x.w.text} ${x.start}-${x.end}`); continue;
+        }
         from = Math.max(a, mustEnd + 1);
       }
       hide(x.w, from, b); changed = true;
