@@ -89,7 +89,8 @@ function scoreTexture(w,c,g,px){
   });
 }
 function wordTexture(w) {
-  const style=ST[w.style] ?? ST.cream, px=220/w.cap;
+  const style=ST[w.style] ?? ST.cream;
+  const px=w.wordmark?.image ? Math.min(4096/Math.max(w.w,w.h),Math.max(220/w.cap,Math.min(2048/Math.max(w.w,w.h),720/w.h))) : 220/w.cap;
   const c=document.createElement('canvas');c.width=Math.max(1,Math.ceil(w.w*px));c.height=Math.max(1,Math.ceil(w.h*px));
   const g=c.getContext('2d'), override=w.colours ?? {};
   if(w.score && /\d/.test(w.text)){
@@ -108,10 +109,12 @@ function wordTexture(w) {
     if(bg){g.fillStyle=bg;g.fillRect(0,0,c.width,c.height);}
     const img=w.wordmark.image && wordmarkImages[w.wordmark.image];
     if(img){ // the team's own wordmark image: aspect kept, fitted where the lettering would be, tinted through its alpha
-      // Brief 12: on a block (wordmark.margin set), the ink fills the box inside an even margin on all four sides.
+      // Brief 12 & 16: with wordmark.ink + wordmark.margin (0.25 on a block, 0 for transparent no-block), the ink fills
+      // the box symmetrically inside that margin. wordmark.size preserves SVG viewBox dimensions even without width/height.
       const ink=w.wordmark.ink, mg=w.wordmark.margin;
-      const k=mg!=null&&ink ? c.height/(1+2*mg)/(img.naturalHeight*(ink.y1-ink.y0)) : Math.min(c.width*.94/img.naturalWidth,c.height*.9/img.naturalHeight);
-      const dw=Math.max(1,Math.round(img.naturalWidth*k)), dh=Math.max(1,Math.round(img.naturalHeight*k));
+      const nw=w.wordmark.size?.w || img.naturalWidth || c.width, nh=w.wordmark.size?.h || img.naturalHeight || c.height;
+      const k=mg!=null&&ink ? c.height/(1+2*mg)/(nh*(ink.y1-ink.y0)) : Math.min(c.width*.94/nw,c.height*.9/nh);
+      const dw=Math.max(1,Math.round(nw*k)), dh=Math.max(1,Math.round(nh*k));
       const x=mg!=null&&ink ? Math.round((c.width-dw*(ink.x1-ink.x0))/2-ink.x0*dw) : Math.round((c.width-dw)/2), y=mg!=null&&ink ? Math.round((c.height-dh*(ink.y1-ink.y0))/2-ink.y0*dh) : Math.round((c.height-dh)/2);
       const tinted=colour=>{const L=document.createElement('canvas');L.width=dw;L.height=dh;const h=L.getContext('2d');h.imageSmoothingQuality='high';
         h.drawImage(img,0,0,dw,dh);if(colour){h.globalCompositeOperation='source-in';h.fillStyle=colour;h.fillRect(0,0,dw,dh);}return L;};
@@ -263,12 +266,14 @@ for(const w of [...S.words.filter(x=>!x.replaced_by),...(S.elements??[])]){
   if(w.pulses && w.pulses.length && window.KT_RIPPLE){ // Jefferson 22 Nov: outline shockwave (default) or brief 13 ghost ripple (23 Nov)
     const rip=w.ripple && typeof w.ripple==='object' ? w.ripple : null;
     const isGhost=rip?.kind==='ghost';
-    const o=document.createElement('canvas');o.width=wc.width;o.height=wc.height;const q=o.getContext('2d');
     const r=Math.max(2,Math.round(wc.height*.025));
+    // Brief 16 item 1: pad the ripple canvas by r on every side so a transparent wordmark with margin 0 never clips its
+    // dilated outline at the canvas edge; scale the ripple plane to match the padded texture 1:1 in world units.
+    const o=document.createElement('canvas');o.width=wc.width+2*r;o.height=wc.height+2*r;const q=o.getContext('2d');
     const outline=colour=>{
-      const ec=document.createElement('canvas');ec.width=wc.width;ec.height=wc.height;const eg=ec.getContext('2d');
-      for(let a=0;a<16;a++)eg.drawImage(wc,Math.cos(a*Math.PI/8)*r,Math.sin(a*Math.PI/8)*r);
-      eg.globalCompositeOperation='destination-out';eg.drawImage(wc,0,0);
+      const ec=document.createElement('canvas');ec.width=o.width;ec.height=o.height;const eg=ec.getContext('2d');
+      for(let a=0;a<16;a++)eg.drawImage(wc,r+Math.cos(a*Math.PI/8)*r,r+Math.sin(a*Math.PI/8)*r);
+      eg.globalCompositeOperation='destination-out';eg.drawImage(wc,r,r);
       if(colour){eg.globalCompositeOperation='source-in';eg.fillStyle=colour;eg.fillRect(0,0,ec.width,ec.height);}
       return ec;
     };
@@ -277,8 +282,8 @@ for(const w of [...S.words.filter(x=>!x.replaced_by),...(S.elements??[])]){
       // plus the outline in the border colour, drawn behind the real wordmark so it never covers it.
       const fillOp=rip.fill_opacity ?? .6, edgeOp=rip.edge_opacity ?? .9;
       if(fillOp>0){
-        const fc=document.createElement('canvas');fc.width=wc.width;fc.height=wc.height;const fg=fc.getContext('2d');
-        fg.drawImage(wc,0,0);
+        const fc=document.createElement('canvas');fc.width=o.width;fc.height=o.height;const fg=fc.getContext('2d');
+        fg.drawImage(wc,r,r);
         if(rip.fill){fg.globalCompositeOperation='source-in';fg.fillStyle=rip.fill;fg.fillRect(0,0,fc.width,fc.height);}
         q.globalAlpha=fillOp;q.drawImage(fc,0,0);
       }
@@ -289,7 +294,8 @@ for(const w of [...S.words.filter(x=>!x.replaced_by),...(S.elements??[])]){
       q.globalAlpha=edgeOp;q.drawImage(outline(rip?.edge ?? null),0,0);q.globalAlpha=1;
     }
     const ot=new THREE.CanvasTexture(o);ot.colorSpace=THREE.SRGBColorSpace;ot.anisotropy=8;
-    ripple=new THREE.Mesh(geom,new THREE.MeshBasicMaterial({map:ot,transparent:true,depthWrite:false,side:THREE.FrontSide,clippingPlanes:clipPlanes}));
+    const rGeom=new THREE.PlaneGeometry(w.w*o.width/wc.width,w.h*o.height/wc.height);
+    ripple=new THREE.Mesh(rGeom,new THREE.MeshBasicMaterial({map:ot,transparent:true,depthWrite:false,side:THREE.FrontSide,clippingPlanes:clipPlanes}));
     const behind=rip?.behind ?? isGhost;
     // Behind-word offset -0.25 along w.N stays in front of the plaque panel (at -0.5 from w.C) while sitting behind the
     // word; renderOrder -1 ensures the transparent ghost always draws before the real wordmark even at oblique angles.

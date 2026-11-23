@@ -9,7 +9,7 @@ const asset = (file, resolve, types) => {
   return `data:${type};base64,${fs.readFileSync(filename).toString('base64')}`;
 };
 
-// Natural size of a PNG (its IHDR, plus its alpha box when it has transparency) or an SVG (width and height attributes).
+// Natural size of a PNG (its IHDR, plus its alpha box when it has transparency) or an SVG (viewBox, else width/height).
 function imageSize(file) {
   const ext = path.extname(file).toLowerCase();
   if (ext === '.png') {
@@ -18,8 +18,11 @@ function imageSize(file) {
     return { width, height, alpha: a && (a.y1 - a.y0 < 0.999 || a.x1 - a.x0 < 0.999) ? a : null };
   }
   if (ext === '.svg') {
-    const t = fs.readFileSync(file, 'utf8'), wm = t.match(/<svg[^>]*\swidth="([\d.]+)/), hm = t.match(/<svg[^>]*\sheight="([\d.]+)/);
-    return wm && hm ? { width: +wm[1], height: +hm[1], alpha: null } : null;
+    const t = fs.readFileSync(file, 'utf8'), tag = t.match(/<svg\b[^>]*>/i)?.[0] ?? '';
+    const vb = tag.match(/\bviewBox\s*=\s*["']\s*[-\d.]+\s*[,\s]\s*[-\d.]+\s*[,\s]\s*([\d.]+)\s*[,\s]\s*([\d.]+)\s*["']/i);
+    if (vb && +vb[1] > 0 && +vb[2] > 0) return { width: +vb[1], height: +vb[2], alpha: null };
+    const wm = tag.match(/\bwidth\s*=\s*["']\s*([\d.]+)(?:px)?\s*["']/i), hm = tag.match(/\bheight\s*=\s*["']\s*([\d.]+)(?:px)?\s*["']/i);
+    return wm && hm && +wm[1] > 0 && +hm[1] > 0 ? { width: +wm[1], height: +hm[1], alpha: null } : null;
   }
   return null;
 }
@@ -81,21 +84,21 @@ export function songAppearance(scene, song, resolve, firstOnset) {
         const k = Math.min(w.w * 0.94 / dims.width, w.h * 0.9 / dims.height);
         w.cap = dims.height * k * share;
         w.wordmark.pre_cap = w.cap; // letter height before any block cut, for the wordmark growth pass (brief 12/14)
-        // Brief 12 item 1.1: a wordmark image on a block sits centred with an even margin on all four sides, measured
-        // from the artwork's ink (its alpha box, else the whole image), not its file box. The box is cut to the ink's
-        // shape plus WORDMARK_MARGIN x the ink height on every side, about its centre, and never grows (so it adds no
-        // overlap); the viewer draws the ink into that inner rectangle.
+        w.wordmark.size = { w: dims.width, h: dims.height }; // natural dimensions (including SVG viewBox) for viewer.html
+        // Brief 12 item 1.1 & brief 16 item 1: cut every image wordmark's box cleanly to its ink shape (alpha box for a
+        // transparent PNG, else the full image/SVG viewBox) about its centre, never growing here so it adds no overlap.
+        // With a background block (`bg`), add WORDMARK_MARGIN x ink height on all four sides; without one (`!bg`), trim
+        // tightly to the ink (margin 0) so transparent wordmarks have no invisible side wings and size cleanly by ink box.
         const bg = style.colours?.background ?? w.colours?.background;
-        if (bg) {
-          const ink = dims.alpha ?? { x0: 0, y0: 0, x1: 1, y1: 1 };
-          const aspect = (dims.width * (ink.x1 - ink.x0)) / (dims.height * (ink.y1 - ink.y0));
-          let inkH = dims.height * k * (ink.y1 - ink.y0);
-          const fit = Math.min(1, w.w / (inkH * aspect + 2 * WORDMARK_MARGIN * inkH), w.h / (inkH * (1 + 2 * WORDMARK_MARGIN)));
-          inkH *= fit;
-          w.w = inkH * aspect + 2 * WORDMARK_MARGIN * inkH; w.h = inkH * (1 + 2 * WORDMARK_MARGIN); w.pad = WORDMARK_MARGIN * inkH;
-          w.cap = inkH * (style.letter_share ?? 1);
-          w.wordmark.ink = ink; w.wordmark.margin = WORDMARK_MARGIN;
-        }
+        const ink = dims.alpha ?? { x0: 0, y0: 0, x1: 1, y1: 1 };
+        const aspect = (dims.width * (ink.x1 - ink.x0)) / (dims.height * (ink.y1 - ink.y0));
+        const margin = bg ? WORDMARK_MARGIN : 0;
+        let inkH = dims.height * k * (ink.y1 - ink.y0);
+        const fit = Math.min(1, w.w / (inkH * (aspect + 2 * margin)), w.h / (inkH * (1 + 2 * margin)));
+        inkH *= fit;
+        w.w = inkH * (aspect + 2 * margin); w.h = inkH * (1 + 2 * margin); w.pad = margin * inkH;
+        w.cap = inkH * (style.letter_share ?? 1);
+        w.wordmark.ink = ink; w.wordmark.margin = margin;
       }
     }
     const kinds = [...new Set(matched.map(w => (w.echo ? 'sung echo' : w.reveal_copy_of ? 'reveal copy' : 'lyric')))].join(', ');

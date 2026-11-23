@@ -101,7 +101,9 @@ function sectionWords(sec) {
   return { section: sec.n, name: sec.name, start_s: lines[0].start_s, song_end_of_hook: lines.at(-1).end_s, lines: outLines, words };
 }
 
-const SONG_END = map.duration_s; // the reveal runs to the end of the track
+// Brief 16 item 4: optional song setting `end_s` trims the timeline cleanly in the scene (meta.frames, ending, reveal,
+// sung events, beats and every gate all operate inside it).
+const SONG_END = song.end_s != null ? Math.min(song.end_s, map.duration_s) : map.duration_s;
 fs.mkdirSync(path.join(OUT, 'sections'), { recursive: true });
 // Map audit: words held over 3 s in the map are listed loudly before planning (a long held word can hide a gap).
 const mapAudit = map.words.filter(w => w.end_s - w.start_s > 3).map(w => `map word "${w.text}" at ${w.start_s.toFixed(2)} s lasts ${(w.end_s - w.start_s).toFixed(1)} s (over 3 s)`);
@@ -209,14 +211,14 @@ const finalScene = path.join(OUT, 'Whole song - final - scene.json');
 const NUMBER_WORDS = Object.fromEntries(Object.entries(NUMBERS).map(([k, v]) => [k.toUpperCase().replace(/[^A-Z0-9']/g, ''), v]));
 const repeatsFile = song.sung_repeats ? JSON.parse(fs.readFileSync(inp(song.sung_repeats), 'utf8')) : { events: [] };
 const sung = [
-  ...map.words.filter((w, i) => !keywords.dropped.has(i)).map(w => ({ text: (t => NUMBER_WORDS[t] ?? t)(String(w.text).toUpperCase().replace(/[^A-Z0-9']/g, '')), t: w.start_s, line: w.line, source: 'lyric map' })),
-  ...repeatsFile.events,
+  ...map.words.filter((w, i) => !keywords.dropped.has(i) && w.start_s <= SONG_END).map(w => ({ text: (t => NUMBER_WORDS[t] ?? t)(String(w.text).toUpperCase().replace(/[^A-Z0-9']/g, '')), t: w.start_s, line: w.line, source: 'lyric map' })),
+  ...repeatsFile.events.filter(e => e.t <= SONG_END),
 ];
 const repeatEvents = sung.filter(e => e.source !== 'lyric map');
 const clickPath = path.join(OUT, 'Whole song - repeats and ad-libs click track.m4a');
 const clicks = repeatEvents.length ? writeClickTrack({ events: repeatEvents, songPath: audio, outPath: clickPath, stemPath: inp(song.vocal_stem) ?? undefined }) : [];
 const sungPath = path.join(OUT, 'Whole song - sung words.json');
-fs.writeFileSync(sungPath, JSON.stringify({ events: sung, beats: map.beats }, null, 1));
+fs.writeFileSync(sungPath, JSON.stringify({ events: sung, beats: (map.beats ?? []).filter(b => b <= SONG_END) }, null, 1));
 execFileSync('node', ['apply_notes.mjs', raw, notes, sungPath, ...(song.song_notes ? ['--song-notes', inp(song.song_notes)] : [])], { cwd: engine, encoding: 'utf8' });
 let el = 'No picture elements (song settings has no "picture_elements").';
 // The join works on its own file; the final scene name is written only when every gate passes (brief 7 item 10).
@@ -315,10 +317,11 @@ const EMPTY_MAX_S = song.empty_gap_max_s ?? 0.25, emptyMaxF = Math.floor(EMPTY_M
 // No word static and partly on screen (brief 6 item 5): such fragments are hidden for their whole partly-on-screen span
 // before the fills, and again after them (a fill may keep one on).
 const staticHide = hideStaticPartials(finalObj, onsetOf, { until: frames });
-// Brief 10 item 37: a keyword dropped by necessity goes back where there is room. It runs after the static-partial
-// hides, so a word put back never takes the spot a static partial's slide needed.
+// Brief 10 item 37 & brief 16 item 3: any dropped word (keyword or non-keyword) goes back where there is room. It runs
+// after the static-partial hides, so a word put back never takes the spot a static partial's slide needed.
 const roomLog = placeInRoom(finalObj, onsetOf, { until: revealF0, settings: finalObj.meta.size_rule ?? {} });
-{ const u3 = hideUnreadable(finalObj, onsetOf, { until: revealF0 }); unreadable.log.push(...u3.log.map(x => `(after room) ${x}`)); }
+{ const c3 = hideEdgeClutter(finalObj, onsetOf, { until: revealF0 }), u3 = hideUnreadable(finalObj, onsetOf, { until: revealF0 });
+  clutter.log.push(...c3.log.map(x => `(after room) ${x}`)); unreadable.log.push(...u3.log.map(x => `(after room) ${x}`)); }
 const sizeUndone = [];
 for (let round = 0; round < 12; round++) {
   const trial = JSON.parse(JSON.stringify(finalObj));
@@ -351,9 +354,10 @@ const greyLargest = largestGreyToCream(finalObj, { until: revealF0 });
 const lone1 = loneHolds(finalObj, { until: revealF0, onsetOf });
 // Brief 9 item 27: stretches over the empty limit whose only word is a sideways one under 1.5 x the minimum (reported).
 const nearEmpty = emptyFrames(finalObj, { from: 0, until: revealF0, sideFill: SIDE_FILL }).filter(r => r.end - r.start + 1 > Math.floor((song.empty_gap_max_s ?? 0.25) * FPS + 1e-9));
-// Room gate (brief 10 item 37): no keyword may stay dropped by necessity while there is room for it (checked on a copy).
+// Room gate (brief 10 item 37 & brief 16 item 3): no dropped word (keyword or non-keyword) may stay dropped while
+// there is room for it (checked on a copy).
 const roomLeft = (() => { const copy = JSON.parse(JSON.stringify(finalObj)); return placeInRoom(copy, onsetOf, { until: revealF0, settings: finalObj.meta.size_rule ?? {} }).filter(r => r.room); })();
-if (roomLeft.length) { process.exitCode = 1; console.error(`ROOM FOR A DROPPED KEYWORD FAIL: ${roomLeft.map(r => `${r.w.id} ${r.w.text}`).join(', ')}`); }
+if (roomLeft.length) { process.exitCode = 1; console.error(`ROOM FOR A DROPPED WORD FAIL: ${roomLeft.map(r => `${r.w.id} ${r.w.text}`).join(', ')}`); }
 // Drop review gate (brief 10 item 44): every keyword still dropped after the room gate is listed beside the final scene
 // with its recorded reason and a frame to still. A reviewer (an Opus agent, run by the supervisor) approves or rejects
 // each in "Keyword drop review.json" ({ reviews: { "<map index>": { verdict: "approve" | "reject", reviewer, note } } });
@@ -437,9 +441,9 @@ md.push('', '## Hold-hide partners', '', `${partnerHides.length} changes.`, '', 
     if (undone === +m[3] - +m[2] && !/no visible change/.test(x)) flythrough.visible--;
     return undone ? `${x}; UNDONE later on ${undone} of its frames (a fill kept the word on)` : x; }); }
 { const latest = new Map(); for (const r of roomLog) latest.set(r.w.id, r);
-  md.push('', '## Keywords dropped by necessity: room check (brief 10 item 37)', '',
+  md.push('', '## Dropped words: room check (brief 10 item 37, brief 16 item 3)', '',
     'Room: a placement on the word\'s own plaque plane, same orientation, at least its minimum letter size in the hold where it is sung, centre within 3 of its widths or heights of its planned spot, whole in frame from its appearance through its onset, clear of every other word over its life, and not static and partly on screen.', '',
-    ...[...latest.values()].map(r => `- ${r.w.id} ${r.w.text} at ${(r.w.t ?? 0).toFixed(2)} s: ${r.room ? `had room, put back (${r.how})${r.w.dropped ? `; LATER DROPPED again (${r.w.dropped})` : ''}` : `no room (${r.how}); ${r.w.dropped ? 'still dropped' : 'shown small after all: dropping it left an empty stretch (see the size undo list)'}`}`),
+    ...[...latest.values()].map(r => `- ${r.w.id} ${r.w.text} at ${(r.w.t ?? 0).toFixed(2)} s (${r.w.keyword ? 'keyword' : 'filler'}): ${r.room ? `had room, put back (${r.how})${r.w.dropped ? `; LATER DROPPED again (${r.w.dropped})` : ''}` : `no room (${r.how}); ${r.w.dropped ? 'still dropped' : 'shown small after all: dropping it left an empty stretch (see the size undo list)'}`}`),
     ...(roomLeft.length ? ['', `GATE FAIL: room left for ${roomLeft.map(r => `${r.w.id} ${r.w.text}`).join(', ')}`] : [])); }
 md.push('', '## Fly-through, swell release, largest word, lone holds (brief 8)', '',
   `Fly-through hides: ${flythrough.log.length}, of which ${flythrough.visible} change visible pixels${flythrough.focused.length ? `; words the camera flies through while they must be shown whole (not hidden): ${flythrough.focused.join(', ')}` : ''}.`, '', ...flythrough.log.map(x => `- ${x}`),

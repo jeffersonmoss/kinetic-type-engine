@@ -81,7 +81,7 @@ function inFrameShare(w, f, pose, vfov) {
   // jersey letters, half the bold stroke on each side (brief 7 item 11: a jersey word whose cap band was just past the
   // top edge still showed its stroke there).
   const jb = JERSEY_FONTS.includes(w.font) && !w.stripes && !w.wordmark ? 0.10 : 0;
-  const X = I.wordXform(w, f), band = hasBlock(w) ? 1 : Math.min(1, (w.cap ?? w.h) * (1.03 + jb) / w.h);
+  const X = I.wordXform(w, f), band = (hasBlock(w) || !!w.wordmark?.image) ? 1 : Math.min(1, (w.cap ?? w.h) * (1.03 + jb) / w.h);
   let inside = 0, total = 0;
   for (let i = 0; i <= 10; i++) for (let j = 0; j <= 4; j++) {
     const u = -1 + i / 5, v = (-1 + j / 2) * band;
@@ -711,16 +711,20 @@ const clipEntranceOk = (scene, w) => {
   }
   return true;
 };
-// Room for a dropped keyword (brief 10 item 37, Jefferson: SETS was missing with empty space beside THREE). A keyword
-// dropped by necessity is put back when there is room: a placement on its own plaque plane, same orientation, at least
-// its minimum letter size in the hold where it is sung, its centre within 3 of its widths or heights of its planned
-// spot, whole in frame from its appearance through its onset, overlapping no other word over its life (size drops shown
-// as ghosts) and not static and partly on screen. Its entrance becomes a pop (motion and clip planes removed). Returns
-// one record per necessity drop: { w, room, how }.
+// Room for a dropped word (brief 10 item 37, brief 16 item 3: applies to every dropped word, keyword or non-keyword).
+// Any word dropped for size, static partial or room is put back when there is room: a placement on its own plaque
+// plane, same orientation, at least its minimum letter size in the hold where it is sung (matching sizeShortfalls),
+// centre within 3 of its widths or heights of its planned spot, whole and readable in frame from its appearance through
+// its onset, overlapping no other word over its life (size drops shown as ghosts) and not static and partly on screen.
+// Its entrance becomes a pop (motion and clip planes removed); if pre-onset frames fail before the camera lands, it
+// tries starting at its sung onset (0 frames late). Any later hold where it falls under size is hidden when another
+// word of size stays on screen. Returns one record per checked drop: { w, room, how }.
 export function placeInRoom(scene, onsetOf, { until = scene.meta.frames, settings = {} } = {}) {
   const S = { ...SIZE_DEFAULTS, ...settings }, I = globalThis.KT_INTERP, vfov = scene.meta.vfov ?? 40, fps = scene.meta.fps ?? 30, out = [];
+  const poses = new Map(), poseAt = f => poses.get(f) ?? poses.set(f, I.poseAt(scene.cams, f)).get(f);
+  const hs = holds(scene, until);
   const crowdedAt = f => {
-    const p = I.poseAt(scene.cams, f);
+    const p = poseAt(f);
     const on = scene.words.filter(x => !x.reveal_copy_of && drawn(x, f) && inFrameShare(x, f, p, vfov) >= FILLED_SHARE);
     return on.length >= S.crowdedWords || on.reduce((t, x) => t + boxCoverage(x, f, p, vfov), 0) >= S.crowdedArea;
   };
@@ -731,36 +735,84 @@ export function placeInRoom(scene, onsetOf, { until = scene.meta.frames, setting
     for (const [x, op] of ghosts) x.opacity = op;
     return l.length;
   };
-  const steps = [0, 0.5, -0.5, 1, -1, 1.5, -1.5, 2, -2, 3, -3];
+  const holdStats = w => {
+    const res = [];
+    const [fa, fb] = focusWindow(w, onsetOf, fps);
+    for (const h of hs) {
+      const a = Math.max(h.start, w.on), b = Math.min(h.end, w.off ?? until, until);
+      let best = null;
+      for (let f = a; f < b; f += 2) {
+        if (!drawn(w, f) || I.wordMoving(w, f)) continue;
+        const p = poseAt(f);
+        if (inFrameShare(w, f, p, vfov) <= CLIP_SHARE || !G.readableOrientation(w, f, p, vfov)) continue;
+        const size = letterHeight(w, f, p, vfov);
+        if (size != null && (!best || size > best.size)) best = { size, f };
+      }
+      if (!best) continue;
+      const crowded = crowdedAt(best.f), min = crowded ? S.minH : S.roomFactor * S.minH;
+      res.push({ h, ...best, crowded, min, focused: fa < h.end && fb > h.start });
+    }
+    return res;
+  };
+  const steps = [0, 0.25, -0.25, 0.5, -0.5, 0.75, -0.75, 1, -1, 1.5, -1.5, 2, -2, 3, -3];
   const offsets = steps.flatMap(du => steps.map(dv => [du, dv])).sort((p, q) => Math.hypot(...p) - Math.hypot(...q));
   for (const w of scene.words) {
-    if (!w.keyword || w.reveal_copy_of || w.echo || !['size', 'static'].includes(w.dropped)) continue;
+    if (w.reveal_copy_of || w.echo || !['size', 'static', 'room'].includes(w.dropped)) continue;
     const o = onsetOf(w);
     if (o == null || o >= until) continue;
-    const keep = JSON.stringify({ C: w.C, w: w.w, h: w.h, cap: w.cap, fontPx: w.fontPx, pad: w.pad, motion: w.motion ?? null, clip: w.clip ?? null, opacity: w.opacity ?? null, dropped: w.dropped, size_restore: w.size_restore });
+    const wasDrop = w.dropped;
+    const keep = JSON.stringify({ C: w.C, w: w.w, h: w.h, cap: w.cap, fontPx: w.fontPx, pad: w.pad, on: w.on, motion: w.motion ?? null, clip: w.clip ?? null, opacity: w.opacity ?? null, dropped: w.dropped, size_restore: w.size_restore });
     const restore = () => { const k = JSON.parse(keep); for (const [key, v] of Object.entries(k)) { if (v == null) delete w[key]; else w[key] = v; } };
     delete w.opacity; delete w.dropped; delete w.size_restore; w.motion = []; w.clip = [];
-    const A = Math.max(w.on, appearanceFrame(w)), lo = Math.max(0, w.on), hi = Math.min(until, w.off ?? until);
-    const min = (crowdedAt(o) ? S.minH : S.roomFactor * S.minH) * 1.03;
-    const h0 = letterHeight(w, o, I.poseAt(scene.cams, o), vfov);
-    if (!(h0 > 0)) { restore(); out.push({ w, room: false, how: 'not in front of the camera at its onset' }); continue; }
-    const k = Math.max(1, min / h0);
-    const C0 = w.C;
-    for (const key of ['w', 'h', 'cap', 'fontPx', 'pad']) if (typeof w[key] === 'number') w[key] *= k;
+    const h0 = letterHeight(w, o, poseAt(o), vfov);
+    if (!(h0 > 0)) { restore(); out.push({ w, room: false, wasDrop, how: 'not in front of the camera at its onset' }); continue; }
+    // Determine the required scale across both the onset frame and any focus hold containing it (so restored words meet
+    // Type rule 1 under sizeShortfalls). Try onset-crowded min first, then the uncrowded room min if a focus hold needs it.
+    const minCrowded = S.minH * 1.03, minRoom = S.roomFactor * S.minH * 1.03;
+    const min0 = (crowdedAt(o) ? S.minH : S.roomFactor * S.minH) * 1.03;
+    const ks = [...new Set([Math.max(1, min0 / h0), Math.max(1, minRoom / h0)])].sort((a, b) => a - b);
+    const C0 = w.C, on0 = w.on, baseDims = { w: w.w, h: w.h, cap: w.cap, fontPx: w.fontPx, pad: w.pad };
+    const onCandidates = o > on0 ? [on0, o] : [on0];
     let how = null;
-    for (const [du, dv] of offsets) {
-      w.C = add(C0, add(mul(w.R, du * w.w), mul(w.U, dv * w.h)));
-      let whole = true;
-      for (let f = A, e = Math.max(A + G.SHOWN_FRAMES - 1, o); f <= e && whole; f++) whole = G.fullyShown(w, f, I.poseAt(scene.cams, f), vfov);
-      if (!whole) continue;
-      if (ghostOverlap(w, lo, hi)) continue;
-      if (staticPartials(scene, { words: [w], until }).some(r => r.start <= o + G.SHOWN_FRAMES)) continue;
-      how = `${du || dv ? `moved ${du ? `${du} of its width along its line` : ''}${du && dv ? ' and ' : ''}${dv ? `${dv} of its height up its plaque` : ''}` : 'in its planned spot'}${k > 1.0001 ? `, grown x${k.toFixed(2)}` : ''}, letters ${(100 * h0 * k).toFixed(1)}% (minimum ${(100 * min / 1.03).toFixed(1)}%), entering as a pop`;
-      break;
+    for (const k of ks) {
+      for (const key of Object.keys(baseDims)) if (typeof baseDims[key] === 'number') w[key] = baseDims[key] * k;
+      for (const candOn of onCandidates) {
+        w.on = candOn;
+        const A = Math.max(w.on, appearanceFrame(w)), lo = Math.max(0, w.on), hi = Math.min(until, w.off ?? until);
+        for (const [du, dv] of offsets) {
+          w.C = add(C0, add(mul(w.R, du * w.w), mul(w.U, dv * w.h)));
+          let whole = true;
+          for (let f = A, e = Math.max(A + G.SHOWN_FRAMES - 1, o); f <= e && whole; f++) {
+            const p = poseAt(f);
+            whole = G.fullyShown(w, f, p, vfov) && G.readableOrientation(w, f, p, vfov, { tilt: false });
+          }
+          if (!whole) continue;
+          // Focus-hold size check matching sizeShortfalls (ignoring later holds, which we hide below if small).
+          const sh = holdStats(w);
+          const oHoldOk = sh.some(x => x.size >= x.min - 1e-9 && x.h.start <= o && o < x.h.end);
+          if (sh.some(x => x.focused && !(oHoldOk && x.h.start > o) && x.size < x.min - 1e-9)) continue;
+          if (ghostOverlap(w, lo, hi)) continue;
+          if (staticPartials(scene, { words: [w], until }).some(r => r.start <= o + G.SHOWN_FRAMES)) continue;
+          // Hide any later hold where this restored word would be under size (when another word of size stays on screen).
+          for (const x of sh) {
+            if (x.size >= x.min - 1e-9 || (x.focused && !(oHoldOk && x.h.start > o))) continue;
+            const a = Math.max(x.h.start, w.on), b = Math.min(x.h.end, w.off ?? until, until);
+            const big = f => scene.words.some(y => y !== w && !y.reveal_copy_of && drawn(y, f) && inFrameShare(y, f, poseAt(f), vfov) > CLIP_SHARE && (letterHeight(y, f, poseAt(f), vfov) ?? 0) >= S.minH);
+            let ok = true;
+            for (let f = a; f < b && ok; f += 2) if (drawn(w, f)) ok = big(f);
+            if (ok) hide(w, a, b);
+          }
+          const appliedMin = sh.find(x => x.h.start <= o && o < x.h.end)?.min ?? (min0 / 1.03);
+          how = `${du || dv ? `moved ${du ? `${du} of its width along its line` : ''}${du && dv ? ' and ' : ''}${dv ? `${dv} of its height up its plaque` : ''}` : 'in its planned spot'}${k > 1.0001 ? `, grown x${k.toFixed(2)}` : ''}${candOn !== on0 ? `, on moved ${on0}->${candOn} (onset)` : ''}, letters ${(100 * h0 * k).toFixed(1)}% (minimum ${(100 * appliedMin).toFixed(1)}%), entering as a pop`;
+          break;
+        }
+        if (how) break;
+      }
+      if (how) break;
     }
-    if (!how) { restore(); out.push({ w, room: false, how: `no placement within 3 of its widths of its spot is whole in frame through its onset, clear of other words and not cut by an edge (letters would need x${k.toFixed(2)})` }); continue; }
+    if (!how) { restore(); out.push({ w, room: false, wasDrop, how: `no placement within 3 of its widths of its spot is whole and readable in frame through its onset, at size (${(100 * min0 / 1.03).toFixed(1)}% min, needs x${ks[0].toFixed(2)}), clear of other words and not static-partial` }); continue; }
     w.put_back = true;
-    out.push({ w, room: true, how });
+    out.push({ w, room: true, wasDrop, how });
   }
   return out;
 }
@@ -918,7 +970,7 @@ export function enforceMinSize(scene, onsetOf, { until = scene.meta.frames, sett
       else if (!(w.size_kept_holds ??= []).includes(a)) { w.size_kept_holds.push(a); counts.keptSmall++; log.push(`${w.id} ${w.text}: kept at ${(100 * x.size).toFixed(1)}% in ${a}-${b} (hiding it would leave no word of size on screen)`); }
     }
   }
-  for (const w of drops) { w.size_restore = JSON.stringify(w.opacity ?? null); w.opacity = [[0, 0]]; w.dropped = 'size'; }
+  for (const w of drops) { if (w.dropped) continue; w.size_restore = JSON.stringify(w.opacity ?? null); w.opacity = [[0, 0]]; w.dropped = 'size'; }
   return { log, counts, settings: S };
 }
 
@@ -1079,7 +1131,7 @@ export function visibleFraction(w, f, pose, vfov, scene = null, { absolute = fal
   // jersey letters, half the bold stroke on each side (brief 7 item 11: a jersey word whose cap band was just past the
   // top edge still showed its stroke there).
   const jb = JERSEY_FONTS.includes(w.font) && !w.stripes && !w.wordmark ? (scene?.meta?.jersey_bold ?? 0.10) : 0;
-  const X = I.wordXform(w, f), band = hasBlock(w) ? 1 : Math.min(1, (w.cap ?? w.h) * (1.03 + jb) / w.h);
+  const X = I.wordXform(w, f), band = (hasBlock(w) || !!w.wordmark?.image) ? 1 : Math.min(1, (w.cap ?? w.h) * (1.03 + jb) / w.h);
   const c = X(w.C), n = X(add(w.C, w.N)).map((x, i) => x - c[i]);
   if (n.reduce((s, x, i) => s + x * (pose.position[i] - c[i]), 0) <= 0) return null; // seen from behind: not drawn
   // Corners in world space (clipped by the word's active clip planes), then camera space clipped to the near plane,
@@ -1302,43 +1354,94 @@ export function hideStaticPartials(scene, onsetOf, { until = scene.meta.frames }
   return { log, focused: [...new Set(focused)] };
 }
 
-// Wordmark size (brief 12 item 1): the even-margin cut can only shrink a wordmark's box, so each image wordmark is then
-// grown back toward a target letter height: its own size before the cut, or the median of the song's image wordmarks
-// before the cut if that is larger (so PORTLAND is sized like the WOLVES moments). Tried at the full step, then 3/4,
-// 1/2 and 1/4 of it (in log scale), about the centre, then each edge midpoint and corner; kept only with no new overlap
-// for the word, no new partly-shown or unshown frame at its onset and no static partial. Reported.
+// Wordmark size (brief 12 item 1, brief 16 item 2): every image wordmark is sized by its ink box (not the old typed-
+// text box or file canvas, so the rule works identically for a 1.7:1 panel PNG and a 4:1–5:1 transparent SVG). When
+// alone in its hold, it grows toward WORDMARK_ALONE_WIDTH (80% of the frame width), bounded by the reading safe margins
+// (WORDMARK_SAFE_X x WORDMARK_SAFE_Y = 0.94 x 0.90), the overlap gate, the shown-whole gate and static-partial check;
+// with neighbours, it grows as large as room allows under those same gates. Reported with before/after ink width share.
+export const WORDMARK_ALONE_WIDTH = 0.80, WORDMARK_SAFE_X = 0.94, WORDMARK_SAFE_Y = 0.90;
 export function growWordmarks(scene, onsetOf, { until = scene.meta.frames } = {}) {
   const I = globalThis.KT_INTERP, vfov = scene.meta.vfov ?? 40, log = [];
-  const marks = scene.words.filter(w => w.wordmark?.image && w.wordmark.pre_cap && !w.reveal_copy_of && !w.echo && !w.dropped && w.on < until);
-  const at = w => { const o = onsetOf(w) ?? w.on; return Math.min(until - 1, o + G.SHOWN_FRAMES); };
+  const marks = scene.words.filter(w => w.wordmark?.image && !w.reveal_copy_of && !w.echo && !w.dropped && w.on < until);
+  if (!marks.length) return log;
+  const hs = holds(scene, until);
+  const at = w => { const o = onsetOf(w) ?? w.on; return Math.min(until - 1, Math.max(appearanceFrame(w), o) + G.SHOWN_FRAMES); };
   const size = w => G.letterHeight(w, at(w), I.poseAt(scene.cams, at(w)), vfov);
-  const pre = new Map(marks.map(w => { const h = size(w); return [w, h == null ? null : h * w.wordmark.pre_cap / w.cap]; }));
+  const inkBoxAt = (w, fr) => {
+    const pose = I.poseAt(scene.cams, fr), mg = w.wordmark?.margin ?? 0;
+    const inkH = w.h / (1 + 2 * mg), inkW = Math.max(1e-6, w.w - 2 * mg * inkH);
+    const X = I.wordXform(w, fr);
+    const qs = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => I.project(X(add(w.C, add(mul(w.R, a * inkW / 2), mul(w.U, b * inkH / 2)))), pose, vfov));
+    if (qs.some(q => !q)) return null;
+    const xs = qs.map(q => q.x), ys = qs.map(q => q.y);
+    return { w: (Math.max(...xs) - Math.min(...xs)) / 2, h: (Math.max(...ys) - Math.min(...ys)) / 2 };
+  };
+  const isAlone = (w, fr) => {
+    const h = hs.find(x => x.start <= fr && fr < x.end);
+    const checkF = h ? [fr, Math.max(h.start, w.on), Math.min(h.end - 1, (w.off ?? until) - 1)] : [fr];
+    return checkF.every(f => {
+      const p = I.poseAt(scene.cams, f);
+      return !scene.words.some(x => x !== w && !x.reveal_copy_of && !x.dropped && drawn(x, f) && inFrameShare(x, f, p, vfov) >= FILLED_SHARE);
+    });
+  };
+  // Check safe reading margins (0.94 x 0.90) at the wordmark's settled hold frame `fr` (not during an incoming camera
+  // move before the hold starts; ownFail already enforces fullyShown across A..onset).
+  const inSafeMargins = (w, fr) => {
+    const cs = cornersAt(w, fr); if (!cs) return false;
+    const pose = I.poseAt(scene.cams, fr);
+    return cs.every(c => { const q = I.project(c, pose, vfov); return q && Math.abs(q.x) <= WORDMARK_SAFE_X && Math.abs(q.y) <= WORDMARK_SAFE_Y; });
+  };
+  const pre = new Map(marks.map(w => { const h = size(w); return [w, h == null || !w.wordmark.pre_cap ? null : h * w.wordmark.pre_cap / w.cap]; }));
   const known = [...pre.values()].filter(x => x != null).sort((a, b) => a - b);
-  if (!known.length) return log;
-  const median = known[Math.floor(known.length / 2)];
+  const median = known.length ? known[Math.floor(known.length / 2)] : 0;
   const ownFail = w => gateFailures({ ...scene, words: [w] }, onsetOf, { until }).filter(x => x.kind === 'partial' || x.kind === 'unshown').length;
   const ov = (w, a, b) => scanOverlap(scene, { from: a, until: b }).overlaps.filter(o => o.includes(`${w.id} `)).length;
-  const pivots = [[0, 0], [0, -1], [0, 1], [-1, 0], [1, 0], [-1, -1], [1, -1], [-1, 1], [1, 1]];
+  const pivots = [[0, 0], [0, -0.5], [0, 0.5], [-0.5, 0], [0.5, 0], [0, -1], [0, 1], [-1, 0], [1, 0], [-1, -1], [1, -1], [-1, 1], [1, 1]];
+  const steps = [1, 0.95, 0.9, 0.85, 0.8, 0.75, 0.7, 0.65, 0.6, 0.55, 0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15, 0.1];
   for (const w of marks) {
-    const now = size(w); if (now == null) continue;
-    const target = Math.max(pre.get(w) ?? 0, median), full = target / now;
-    if (full <= 1.01) continue;
-    const a = Math.max(0, w.on), b = Math.min(until, w.off ?? until), ov0 = ov(w, a, b), f0 = ownFail(w);
-    const keep = JSON.stringify({ C: w.C, w: w.w, h: w.h, cap: w.cap, fontPx: w.fontPx, pad: w.pad });
+    const fr = at(w), now = size(w), ib0 = inkBoxAt(w, fr);
+    if (now == null || !ib0 || !(ib0.w > 0)) continue;
+    const alone = isAlone(w, fr);
+    const fullW = WORDMARK_ALONE_WIDTH / ib0.w;
+    const fullCap = Math.max(pre.get(w) ?? 0, median) / now;
+    const full = Math.max(fullW, fullCap);
+    if (full <= 1.01) {
+      log.push(`${w.id} ${w.text} at ${(w.t ?? 0).toFixed(2)} s (${alone ? 'alone' : 'with neighbours'}): ink width ${(100 * ib0.w).toFixed(1)}% of frame (already at/above ${(100 * WORDMARK_ALONE_WIDTH).toFixed(0)}% target)`);
+      continue;
+    }
+    const o = onsetOf(w) ?? w.on, h = hs.find(x => x.start <= fr && fr < x.end);
+    const on0 = w.on, b = Math.min(until, w.off ?? until), ov0 = ov(w, Math.max(0, on0), b), f0 = ownFail(w);
+    // For a lone static-entrance wordmark that switches on before its hold lands, also allow starting cleanly at the
+    // hold start (still <= sung onset, 0 frames late) if pre-hold frames would overlap the outgoing plaque.
+    const onCands = alone && !(w.motion ?? []).length && h && h.start > on0 && h.start <= o ? [on0, h.start] : [on0];
+    const keep = JSON.stringify({ C: w.C, w: w.w, h: w.h, cap: w.cap, fontPx: w.fontPx, pad: w.pad, on: w.on, motion: w.motion });
     const back = () => Object.assign(w, JSON.parse(keep));
     let done = null;
-    for (const t of [1, 0.75, 0.5, 0.25]) {
-      const k = Math.exp(Math.log(full) * t);
+    for (const t of steps) {
+      const k = 1 + (full - 1) * t;
       for (const [pu, pv] of pivots) {
-        const P = add(w.C, add(mul(w.R, pu * w.w / 2), mul(w.U, pv * w.h / 2)));
-        w.C = add(P, mul(w.C.map((x, i) => x - P[i]), k));
-        for (const key of ['w', 'h', 'cap', 'fontPx', 'pad']) if (typeof w[key] === 'number') w[key] *= k;
-        if (ov(w, a, b) <= ov0 && ownFail(w) <= f0 && !staticPartials(scene, { words: [w], until }).length) { done = { k, pu, pv }; break; }
-        back();
+        for (const candOn of onCands) {
+          w.on = candOn;
+          const C0 = w.C;
+          const P = add(C0, add(mul(w.R, pu * w.w / 2), mul(w.U, pv * w.h / 2)));
+          w.C = add(P, mul(C0.map((x, i) => x - P[i]), k));
+          const dC = w.C.map((x, i) => x - C0[i]);
+          if (w.motion?.length && Math.hypot(...dC) > 1e-6) {
+            w.motion = w.motion.map(m => m.kind === 'scale' && m.P ? { ...m, P: add(m.P, dC) } : m);
+          }
+          for (const key of ['w', 'h', 'cap', 'fontPx', 'pad']) if (typeof w[key] === 'number') w[key] *= k;
+          const a = Math.max(0, w.on);
+          if (inSafeMargins(w, fr) && ov(w, a, b) <= ov0 && ownFail(w) <= f0 && !staticPartials(scene, { words: [w], until }).length) {
+            done = { k, pu, pv, candOn, ib: inkBoxAt(w, fr) };
+            break;
+          }
+          back();
+        }
+        if (done) break;
       }
       if (done) break;
     }
-    log.push(`${w.id} ${w.text} at ${(w.t ?? 0).toFixed(2)} s: letters ${(100 * now).toFixed(1)}%, target ${(100 * target).toFixed(1)}% (${target === median && (pre.get(w) ?? 0) < median ? 'the song\'s median wordmark' : 'its size before the even-margin cut'}): ${done ? `grown x${done.k.toFixed(2)} to ${(100 * now * done.k).toFixed(1)}%` : 'kept: every growth would overlap a word, cut it at an edge or leave it static and partly on screen'}`);
+    log.push(`${w.id} ${w.text} at ${(w.t ?? 0).toFixed(2)} s (${alone ? 'alone' : 'with neighbours'}): ink width ${(100 * ib0.w).toFixed(1)}% -> ${done ? `${(100 * done.ib.w).toFixed(1)}% of frame (grown x${done.k.toFixed(2)}, height ${(100 * done.ib.h).toFixed(1)}%, letters ${(100 * now * done.k).toFixed(1)}%${done.candOn !== on0 ? `, on ${on0}->${done.candOn}` : ''})` : `${(100 * ib0.w).toFixed(1)}% (kept: every growth exceeded safe margins, overlapped a word, cut at an edge or left a static partial)`}`);
   }
   return log;
 }
