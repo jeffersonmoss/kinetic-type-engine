@@ -29,7 +29,7 @@ Each song keeps its input in its own workspace, in `<song workspace>/engine inpu
    9.3. `map`: the song map (`Song map.json`, from the kinetic-type-video skill's `scripts/build_song_map.py`): `duration_s`, `lines` [{id, text, start_s, end_s, words}], `words` [{text, start_s, end_s, line}], `beats` [{t, index, bar, beat_in_bar, energy}], and the rest of the skill's map.
    9.4. `palette`: palette file (section 2, item 13).
    9.5. `sections` [{n, name, lines: [first, last], seam?}]: the sections built one by one, cut at the song's own phrase boundaries. `seam: "cut"` makes the join into that section a hard cut.
-   9.6. Optional: `timing_corrections`, `sung_repeats`, `song_notes`, `picture_elements`, `vocal_stem` (snaps the click track to vocal onsets), `opening` ({label, scene, words, chosen}: an approved scene used as is instead of building the first lines), `display_numbers` ({"twenty-four": "24"}: number words shown as digits), `fps` (30), `seam_gap` (gap at the joins, as a share of the previous plaque's height; default 0.3), `read_tail_s` (0.5), `reveal_pull_s` (4), `reveal_hold_s` (3).
+   9.6. Optional: `ending` ({reveal: true|false, hold: "<word>" | "last", min_hold_s: 0.5}; section "Endings" below), `timing_corrections`, `sung_repeats`, `song_notes`, `picture_elements`, `vocal_stem` (snaps the click track to vocal onsets), `opening` ({label, scene, words, chosen}: an approved scene used as is instead of building the first lines), `display_numbers` ({"twenty-four": "24"}: number words shown as digits), `fps` (30), `seam_gap` (gap at the joins, as a share of the previous plaque's height; default 0.3), `read_tail_s` (0.5), `reveal_pull_s` (4), `reveal_hold_s` (3).
 10. `timing corrections.json`: `words` [{index, text, start_s, end_s}] (index into the map's words; text must match or the build stops) and `lines` [{id, start_s?, end_s?}].
 11. `sung repeats.json`: `events` [{text, t, line, source, display?}]: chants, echoes and ad-libs the lyric map lacks. They become pulses on words already on screen, or echo words, and the click track.
 12. `song notes.mjs` (optional): `export function applySongNotes(scene, log)`, run on the joined scene before the generic post-pass. Room for One's holds its colour rules (team colours only on the rings won with each team, 76ers stripes on KING!, the last RING! and 24) and its hook 1 chant pulses.
@@ -128,6 +128,17 @@ ffmpeg -i "<Title> - FULL VIDEO 16x9.mp4" -vf transpose=1 -c:a copy "<Title> - F
 ```
 
 44. Cleanup: delete renders, temp folders and test outputs only through `~/.claude/scripts/safe_rm.py --by "<who>" --reason "<why>" PATH...` (7-day undo). Keep the final master, the input folder and the provenance file.
+
+## Endings, readable size and composition (engine fix brief 3, 22 November 2026)
+
+- `ending.reveal: false` switches the final pull-back off: the song ends on `ending.hold` (a word's text, its last sung occurrence, or `"last"`), held still from the moment it comes to rest to the last frame. Big Toothy Grins ends on its last WOLVES wordmark. With the reveal on (the default; Room for One), the reveal starts early enough to land and hold still for `ending.min_hold_s` (0.5 s) before the end, and the pull-back stops at the `--reveal-coverage` floor, centred on the layout, instead of shrinking the whole layout to a strand.
+- Never end mid-move: the build fails (exit 1) when the camera moves in the last `min_hold_s` or a shown word is moving on the last frame.
+- Readable size (reported and ranked, not a hard gate): a sung word's letters should reach 10% of the frame height by onset + 3 frames. A word under that, which only grows once the camera arrives (1.5 times its onset size within a second) or is under 4% outright, is a speck. The repair lands the arriving move earlier or makes it shorter, else reframes the hold; each change is kept only when it lowers the cost (partly shown 1000, dropped 10, speck or sparse 5). Riders that are small by design in their own framing are not specks.
+- Sparse frame: two consecutive words both under 12% letter height, more than a third of the frame apart, with no anchor word (15% or more) whole in view. Specks and sparse frames rank section candidates right after the shown-whole gate (`13.1.20_readable_size_and_sparse_frames`); they do not by themselves fail a candidate.
+- Line groups retire together: when the overlap repair retires a word, the other words of its plaque that are past their reading moment go at the same frame, so a punchline never leaves before its neighbours.
+- Lone focus words (`composition.mjs` tightenLone): a sung word alone in its hold, with no other word whole in frame, is centred and brought in until its letters are 22% of the frame height (within 80% of the frame width), when the gates and the local overlap count stay as good.
+- Edge clutter (`hideEdgeClutter`): during a camera hold, a word outside its focus window (its appearance through onset + 15 frames) that is less than half in frame is hidden for that hold and restored after it.
+- Wordmark images are resampled once, at high quality. A 710 px wide source is drawn at about 1.7 times its size in the word texture, so its edges soften at 720p; a sharper wordmark needs a source at least about 1,300 px wide, or an SVG.
 
 ## Moving openings and team wordmarks
 
