@@ -76,8 +76,13 @@ export function scanOverlap(scene, { from = 0, until = scene.meta.frames, repair
       if (!visible(a.w,f) || !visible(b.w,f) || !intersects(a.poly,b.poly)) continue;
       const [old,next] = a.onset <= b.onset ? [a,b] : [b,a];
       if (repair && old.onset + Math.ceil(fps*.3) < f && old.onset < next.onset && !old.w.echo) {
-        old.w.off = f;
-        retired.push(`${old.w.id} ${old.w.text} retired at frame ${f} for ${next.w.id} ${next.w.text}`);
+        // Retire the old word's line group (its plaque's words) together (engine fix brief 3, Fable rough cut 3 items
+        // 13 and 14): a punchline never leaves before its lesser neighbours, and a phrase never loses a middle word.
+        // Group words still inside their own reading moment, and the incoming word's own plaque, stay.
+        const group = entries.filter(x => x.w === old.w || (x.w.plaque === old.w.plaque && x.w.plaque !== next.w.plaque &&
+          !x.w.echo && visible(x.w,f) && x.onset + Math.ceil(fps*.3) < f && x.onset < next.onset));
+        for (const x of group) x.w.off = f;
+        retired.push(`${old.w.id} ${old.w.text} retired at frame ${f} for ${next.w.id} ${next.w.text}${group.length > 1 ? ` with its line group (${group.filter(x => x.w !== old.w).map(x => x.w.text).join(' ')})` : ''}`);
       } else if (repair && retireOccluded && next.w.echo && f === next.w.on &&
           f < Math.round(next.w.echo_of_events?.[0] * fps) + 3 && f + 1 < next.w.off) {
         next.w.on = f + 1;
