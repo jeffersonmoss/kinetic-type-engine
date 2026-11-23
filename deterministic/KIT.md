@@ -29,7 +29,7 @@ Each song keeps its input in its own workspace, in `<song workspace>/engine inpu
    9.3. `map`: the song map (`Song map.json`, from the kinetic-type-video skill's `scripts/build_song_map.py`): `duration_s`, `lines` [{id, text, start_s, end_s, words}], `words` [{text, start_s, end_s, line}], `beats` [{t, index, bar, beat_in_bar, energy}], and the rest of the skill's map.
    9.4. `palette`: palette file (section 2, item 13).
    9.5. `sections` [{n, name, lines: [first, last], seam?}]: the sections built one by one, cut at the song's own phrase boundaries. `seam: "cut"` makes the join into that section a hard cut.
-   9.6. Optional: `ending` ({reveal: true|false, hold: "<word>" | "last", min_hold_s: 0.5}; section "Endings" below), `timing_corrections`, `sung_repeats`, `song_notes`, `picture_elements`, `vocal_stem` (snaps the click track to vocal onsets), `opening` ({label, scene, words, chosen}: an approved scene used as is instead of building the first lines), `display_numbers` ({"twenty-four": "24"}: number words shown as digits), `fps` (30), `seam_gap` (gap at the joins, as a share of the previous plaque's height; default 0.3), `read_tail_s` (0.5), `reveal_pull_s` (4), `reveal_hold_s` (3).
+   9.6. Optional: `fast_words` (keyword mode, ON by default; section "Keyword mode" below), `ending` ({reveal: true|false, hold: "<word>" | "last", min_hold_s: 0.5}; section "Endings" below), `timing_corrections`, `sung_repeats`, `song_notes`, `picture_elements`, `vocal_stem` (snaps the click track to vocal onsets), `opening` ({label, scene, words, chosen}: an approved scene used as is instead of building the first lines), `display_numbers` ({"twenty-four": "24"}: number words shown as digits), `fps` (30), `seam_gap` (gap at the joins, as a share of the previous plaque's height; default 0.3), `read_tail_s` (0.5), `reveal_pull_s` (4), `reveal_hold_s` (3).
 10. `timing corrections.json`: `words` [{index, text, start_s, end_s}] (index into the map's words; text must match or the build stops) and `lines` [{id, start_s?, end_s?}].
 11. `sung repeats.json`: `events` [{text, t, line, source, display?}]: chants, echoes and ad-libs the lyric map lacks. They become pulses on words already on screen, or echo words, and the click track.
 12. `song notes.mjs` (optional): `export function applySongNotes(scene, log)`, run on the joined scene before the generic post-pass. Room for One's holds its colour rules (team colours only on the rings won with each team, 76ers stripes on KING!, the last RING! and 24) and its hook 1 chant pulses.
@@ -128,6 +128,15 @@ ffmpeg -i "<Title> - FULL VIDEO 16x9.mp4" -vf transpose=1 -c:a copy "<Title> - F
 ```
 
 44. Cleanup: delete renders, temp folders and test outputs only through `~/.claude/scripts/safe_rm.py --by "<who>" --reason "<why>" PATH...` (7-day undo). Keep the final master, the input folder and the provenance file.
+
+## Keyword mode for fast words (22 November 2026)
+
+- On by default for every song (Jefferson: "If it's a problem, it's a problem"). Where the lyric is sung too fast to read, only the important words are placed; the rest are left out of the scene, the sync check and the sung pulses, and listed in the provenance file ("Keyword mode") with every stretch's start, end and peak rate.
+- Turn it off per song with `"fast_words": {"mode": "all_words"}` (or `"enabled": false`), or for one build with `build_song.mjs --all-words`. Off, the build is identical to a build without the feature.
+- Detection (`keywords.mjs`): a word's rate is the number of words starting within `window_s` (2.0 s) centred on it, divided by `window_s`. A stretch starts at the first word over `rate_on` (4.5 words per second) and runs while the rate stays at or above `rate_off` (3.5). Stretches shorter than `min_stretch_s` (1.5 s) are ignored.
+- Kept: names and nicknames (written in capitals, or capitalised mid-sentence somewhere in the song, plus team wordmark names, display numbers and palette pins), numbers, the rhyme word at each line end, other content words, and `keep`. Dropped: function words (articles, pronouns, auxiliaries, prepositions, conjunctions and their contractions; `keywords.mjs` FUNCTION_WORDS) plus `drop`. Kept words start at least `min_gap_s` (0.40 s) apart; in a clash the higher rank stays (name or number, then rhyme word, then the rest; ties keep the earlier). Every line keeps at least one word. An approved opening scene is never thinned.
+- Overrides: `rate_on`, `rate_off`, `window_s`, `min_stretch_s`, `min_gap_s`, `keep` [words], `drop` [words].
+- Unit check: `node --test test_keywords.mjs`.
 
 ## Endings, readable size and composition (engine fix brief 3, 22 November 2026)
 

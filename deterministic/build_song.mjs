@@ -20,6 +20,7 @@ import './interp.js';
 import { checkSync, checkHolds } from './whole_song_checks.mjs';
 import { assemble, hideWhenGone, buildReveal, checkReveal, endOnWord, checkStillEnding } from './assemble_sections.mjs';
 import { tightenLone, hideEdgeClutter } from './composition.mjs';
+import { keywordPlan, fastWordsOn } from './keywords.mjs';
 import { severity, worstReadingLoss, SHOWN_GATE } from './build_best.mjs';
 import { repairShown, gateFailures } from './shown_gate.mjs';
 import { entranceCounts } from './entrance_counts.mjs';
@@ -32,6 +33,8 @@ const inputDir = path.resolve(args.find((a, i) => !a.startsWith('--') && !(i > 0
 if (!fs.existsSync(path.join(inputDir, 'song settings.json'))) { console.error(`usage: node build_song.mjs "<song workspace>/engine input" [--out <folder>]\nno "song settings.json" in ${inputDir}`); process.exit(2); }
 const inp = f => (f == null ? null : path.resolve(inputDir, f));
 const song = JSON.parse(fs.readFileSync(path.join(inputDir, 'song settings.json'), 'utf8'));
+// --all-words: build with keyword mode off whatever the song settings say (for comparisons).
+if (args.includes('--all-words')) song.fast_words = { ...(song.fast_words ?? {}), mode: 'all_words' };
 const OUT = path.resolve(opt('--out', path.join(inputDir, '../engine output/Whole song')));
 const N = Number(opt('--N', 200));
 const skipBuild = args.includes('--skip-build');
@@ -64,12 +67,21 @@ const map = correctedMap(rawMap, CORR);
 // Numbers sung as words are shown as digits (song settings "display_numbers", e.g. { "twenty-four": "24" }).
 const NUMBERS = Object.fromEntries(Object.entries(song.display_numbers ?? {}).map(([k, v]) => [k.toLowerCase(), v]));
 const display = t => t.replace(/^(\(?)([a-z]+-[a-z]+)/i, (m, p, w) => p + (NUMBERS[w.toLowerCase()] ?? w));
+// Keyword mode for fast words (keywords.mjs; on by default, "fast_words": {"mode": "all_words"} turns it off): in
+// stretches sung too fast to read, only the important words are shown. Only words of built sections are dropped (an
+// approved opening scene is used as is). Dropped words are left out of the scene, the sync check and the pulses.
+const palettePins = Object.keys(JSON.parse(fs.readFileSync(palettePath, 'utf8')).pins ?? {});
+const builtLines = new Set(song.sections.flatMap(sec => map.lines.filter(l => l.id >= sec.lines[0] && l.id <= sec.lines[1]).map(l => l.id)));
+const keywords = keywordPlan(map.words, song.fast_words ?? {}, { names: [...Object.keys(song.team_wordmarks ?? {}), ...Object.values(song.display_numbers ?? {}), ...palettePins] });
+for (const i of [...keywords.dropped]) if (!builtLines.has(map.words[i].line)) keywords.dropped.delete(i);
+keywords.log = keywords.log.filter(x => keywords.dropped.has(x.i));
 function sectionWords(sec) {
   const lines = map.lines.filter(l => l.id >= sec.lines[0] && l.id <= sec.lines[1]);
   if (!lines.length) throw Error(`section ${sec.n} "${sec.name}": no map lines ${sec.lines[0]} to ${sec.lines[1]}`);
   const words = [];
   const outLines = lines.map(l => ({ id: l.id, text: l.text, words: [] }));
   for (const l of lines) for (const gi of l.words) {
+    if (keywords.dropped.has(gi)) continue;
     const w = map.words[gi];
     outLines.find(x => x.id === l.id).words.push(words.length);
     words.push({ t: w.start_s, end: w.end_s, text: display(w.text), line: l.id, id: `w${String(words.length + 1).padStart(2, '0')}` });
@@ -144,7 +156,7 @@ const finalScene = path.join(OUT, 'Whole song - final - scene.json');
 const NUMBER_WORDS = Object.fromEntries(Object.entries(NUMBERS).map(([k, v]) => [k.toUpperCase().replace(/[^A-Z0-9']/g, ''), v]));
 const repeatsFile = song.sung_repeats ? JSON.parse(fs.readFileSync(inp(song.sung_repeats), 'utf8')) : { events: [] };
 const sung = [
-  ...map.words.map(w => ({ text: (t => NUMBER_WORDS[t] ?? t)(String(w.text).toUpperCase().replace(/[^A-Z0-9']/g, '')), t: w.start_s, line: w.line, source: 'lyric map' })),
+  ...map.words.filter((w, i) => !keywords.dropped.has(i)).map(w => ({ text: (t => NUMBER_WORDS[t] ?? t)(String(w.text).toUpperCase().replace(/[^A-Z0-9']/g, '')), t: w.start_s, line: w.line, source: 'lyric map' })),
   ...repeatsFile.events,
 ];
 const repeatEvents = sung.filter(e => e.source !== 'lyric map');
@@ -219,6 +231,8 @@ md.push('', '## Ending', '', `Still ending (camera still for the last ${MIN_END_
 if (!REVEAL_ON) md.push(`Reveal off (song settings ending). The song ends on ${reveal.word}, at rest from frame ${reveal.restFrame} (${(reveal.restFrame / FPS).toFixed(2)} s) and held still to the last frame.${reveal.sungAfter.length ? ` Words sung after it (${reveal.sungAfter.join(', ')}) play first; the camera cuts back at frame ${reveal.cutBack}.` : ''}`, '');
 else md.push('## Reveal', '', `${revealF0 < plannedRevealF0 ? `Moved earlier from frame ${plannedRevealF0} so the pull-back lands and holds still before the end. ` : ''}${reveal.stoppedAt ? `The pull-back stops at the ${(REVEAL_MIN_COVERAGE * 100).toFixed(0)}% coverage floor, centred (distance ${reveal.stoppedAt.from.toFixed(0)} -> ${reveal.stoppedAt.to.toFixed(0)}; the whole layout would cover ${(reveal.stoppedAt.coverageWhole * 100).toFixed(1)}%). ` : ''}Starts at frame ${revealF0} (${(revealF0 / FPS).toFixed(2)} s), pulls back until frame ${reveal.f1} (${(reveal.f1 / FPS).toFixed(2)} s), then holds still for ${((frames - reveal.f1) / FPS).toFixed(2)} s to the end. Compacted layout (assemble_sections.mjs compactLayout): ${reveal.compaction?.chains} chains; gaps between chains in the true layout ${JSON.stringify(reveal.compaction?.gapsBefore)} units; largest gap between consecutive plaques after compaction ${reveal.compaction?.largestGapAfter} units; dropped ${reveal.compaction?.dropped.length ?? 0}. The reveal shows ${reveal.tail} of ${reveal.of} plaques. Reveal check on frame ${revealCheck.frame} (needs 20%; the reveal was laid out for ${(REVEAL_MIN_COVERAGE * 100).toFixed(0)}%): ${(revealCheck.coverage * 100).toFixed(1)}% of the frame covered, ${revealCheck.plaquesInFrame} of ${revealCheck.plaquesShown} shown plaques in frame, ${revealCheck.pass ? 'PASS' : 'FAIL'}.`, '', ...(reveal.compaction?.log ?? []).map(l => `- ${l}`), '');
 if (REVEAL_ON) md.push(`Reveal safety: ${droppedChains.length} dropped plaques (${droppedChains.length ? 'FAIL' : 'PASS'}); ${teleports.length} moved plaques in frame on the frame before the switch (${teleports.length ? `FAIL: ${teleports.join(', ')}` : 'PASS'}).`, '');
+md.push('## Keyword mode (fast words)', '', fastWordsOn(song.fast_words) ? `On (song settings "fast_words": ${JSON.stringify(song.fast_words ?? {})}). ${keywords.stretches.length} stretches; ${keywords.dropped.size} words dropped.` : 'Off (song settings "fast_words" mode "all_words" or enabled false): every word is shown.', '',
+  ...keywords.stretches.map((st, k) => `${k + 1}. ${st.start.toFixed(2)}-${st.end.toFixed(2)} s, peak ${st.peak.toFixed(1)} words per second: dropped ${keywords.log.filter(x => x.i >= st.from && x.i <= st.to).map(x => `${x.text} (${x.t.toFixed(2)} s, ${x.why})`).join(', ') || 'none'}.`), '');
 md.push('## Readable size and composition', '',
   `Words sung while still small (letters under 10% of the frame height at onset + 3 frames; reported, not gated): ${smallFinal.length}.`, ...smallFinal.map(x => `- ${x.id} ${x.text} at ${(x.onsetF / FPS).toFixed(2)} s: ${x.why}`), '',
   `Sparse frames (two small consecutive words far apart, no anchor word in view): ${sparseFinal.length}.`, ...sparseFinal.map(x => `- ${x.id} ${x.text} at ${(x.onsetF / FPS).toFixed(2)} s: ${x.why}`), '',
@@ -248,4 +262,5 @@ console.log('size', JSON.stringify({ small: smallFinal.length, sparse: sparseFin
 console.log('reveal', JSON.stringify(reveal), 'revealF0', revealF0, 'hidden', hideLog.filter(l => l.includes('hidden')).length);
 console.log(el.split('\n').filter(l => /CHECKS|FAIL|^  /.test(l)).join('\n'));
 console.log('wordmarks', JSON.stringify(appearance.wordmarkUse.map(({ name, used, words }) => ({ name, used, words }))), 'opening blank', appearance.blank);
+console.log('keywords', JSON.stringify({ on: fastWordsOn(song.fast_words), stretches: keywords.stretches.map(st => `${st.start.toFixed(2)}-${st.end.toFixed(2)}@${st.peak.toFixed(1)}`), dropped: keywords.dropped.size }));
 console.log('scene to render:', finalScene);
