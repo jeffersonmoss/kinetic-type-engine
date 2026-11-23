@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
 import './interp.js';
 import { pngAlphaBox } from './png_alpha.mjs';
@@ -11,8 +12,10 @@ import { emptyFrames, placeInRoom, enforceMinSize, staticPartials, MUST_SHOW_FLO
 import { checkPropWordOverlap, scanOverlap } from './overlap_gate.mjs';
 import { fullyShown, fitPoseInBox, fitPoseInClearArea, letterHeight, gateFailures } from './shown_gate.mjs';
 import { frameClearOfProps, resolvePropOverlaps } from './keep_clear.mjs';
-import { applyWordRoles } from './word_roles.mjs';
+import { applyWordRoles, checkJerseyFonts } from './word_roles.mjs';
 import { keywordPlan } from './keywords.mjs';
+import { KIT, JERSEY_FONTS, isSongJerseyFont, nonJerseyAccentFont } from './style.mjs';
+import { fontForWord } from './compose_plaques.mjs';
 
 const I = globalThis.KT_INTERP;
 
@@ -690,5 +693,102 @@ describe('brief 20: must_show keeps words a reviewer rejected dropping', () => {
     assert.equal(gateFailures(scene, onsetOf, { until: 90 }).filter(x => x.kind === 'partial').length, 0);
     assert.equal(staticPartials(scene, { until: 90 }).length, 0);
     assert.ok(res.mustShowLog.some(l => l.includes('w02 RIM') && l.includes('hard floor')));
+  });
+});
+
+describe('Brief 21: jersey font only for player names and jersey numbers', () => {
+  const metricsPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../fonts/room-for-one-variety.metrics.json');
+
+  it('KIT.accent is non-jersey (teko) and fontForWord reserves jersey font for player names and jersey numbers only', () => {
+    assert.equal(KIT.accent, 'teko');
+    assert.equal(JERSEY_FONTS.includes(KIT.accent), false);
+    assert.equal(nonJerseyAccentFont(null), 'teko');
+    assert.equal(nonJerseyAccentFont('barlow'), 'teko');
+    assert.equal(nonJerseyAccentFont('teko'), 'barlow');
+    assert.equal(isSongJerseyFont('collegiate', null), true);
+    assert.equal(isSongJerseyFont('barlow', 'barlow'), true);
+    assert.equal(isSongJerseyFont('barlow', null), false);
+
+    // Ordinary word -> slotFont; ad-lib shot / accent / score digit -> non-jersey accent face.
+    assert.equal(fontForWord({ text: 'HIGH' }, 'anton', false, null), 'anton');
+    assert.equal(fontForWord({ text: 'HIGH' }, 'anton', true, null), 'teko');
+    assert.equal(fontForWord({ text: 'HIGH', accent: true }, 'anton', false, null), 'teko');
+    assert.equal(fontForWord({ text: '43', isDigit: true, scoreWord: true }, 'anton', false, null), 'teko');
+    // Player name (even inside an ad-lib shot) and jersey number -> JERSEY_FONTS[0] (collegiate).
+    assert.equal(fontForWord({ text: 'FLAGG!', jerseyWord: true }, 'anton', true, null), 'collegiate');
+    assert.equal(fontForWord({ text: '32', isDigit: true, jerseyWord: true }, 'anton', false, null), 'collegiate');
+    assert.equal(fontForWord({ text: '32', isDigit: true }, 'anton', false, null), 'collegiate');
+    // Custom jersey_font = teko avoids teko for ad-lib shots.
+    assert.equal(fontForWord({ text: 'HIGH' }, 'anton', true, 'teko'), 'barlow');
+  });
+
+  it('applyWordRoles strips jersey font from non-players, renamed non-names, echoes, scores (keeping bulbs), and non-player reveal copies', () => {
+    const mapWords = [
+      { text: 'Cooper', start_s: 1.0, end_s: 1.3, line: 0 },
+      { text: 'number', start_s: 1.5, end_s: 1.7, line: 0 },
+      { text: '32', start_s: 1.8, end_s: 2.1, line: 0 },
+      { text: 'dropped', start_s: 2.5, end_s: 2.8, line: 1 },
+      { text: '43', start_s: 2.9, end_s: 3.2, line: 1 },
+      { text: '(raise', start_s: 3.5, end_s: 3.8, line: 2 },
+      { text: 'high)', start_s: 3.9, end_s: 4.3, line: 2 },
+    ];
+    const scene = {
+      meta: { fps: 30, frames: 300 },
+      words: [
+        { id: 'w1', text: 'COOPER', t: 1.0, on: 30, off: 90, font: 'collegiate', cap: 60, w: 300, h: 80, pad: 5, style: 'cream', colours: {} },
+        { id: 'w2', text: '32', t: 1.8, on: 54, off: 90, font: 'collegiate', cap: 60, w: 120, h: 80, pad: 5, style: 'cream', colours: {} },
+        { id: 'w3', text: '43', t: 2.9, on: 87, off: 120, font: 'collegiate', cap: 60, w: 120, h: 80, pad: 5, style: 'cream', colours: {} },
+        { id: 'w4', text: 'HIGH', t: 3.9, on: 117, off: 150, font: 'collegiate', cap: 60, w: 220, h: 80, pad: 5, style: 'cream', colours: {} },
+        // Renamed by song notes (unmatched in map, player_name: false):
+        { id: 'w5', text: 'FLAG', t: 4.5, on: 135, off: 165, font: 'collegiate', player_name: false, cap: 60, w: 260, h: 80, pad: 5, style: 'cream', colours: {} },
+        // Non-player echo that inherited collegiate from a held player name:
+        { id: 'w1e120', text: 'YEAH', echo: true, on: 120, off: 140, font: 'collegiate', cap: 60, w: 200, h: 80, pad: 5, style: 'white', colours: {} },
+        // Reveal copies: one of player name (stays collegiate), one of non-player HIGH (becomes teko).
+        { id: 'w1_rc', text: 'COOPER', reveal_copy_of: 'w1', on: 200, off: 300, font: 'collegiate', cap: 60, w: 300, h: 80, pad: 5, style: 'cream', colours: {} },
+        { id: 'w4_rc', text: 'HIGH', reveal_copy_of: 'w4', on: 200, off: 300, font: 'collegiate', cap: 60, w: 220, h: 80, pad: 5, style: 'cream', colours: {} },
+      ],
+    };
+    const song = { player_names: ['Cooper'], word_overrides: {} };
+    applyWordRoles(scene, { mapWords, display: x => x, song, names: ['Cooper'], metricsPath });
+
+    const byId = Object.fromEntries(scene.words.map(w => [w.id, w]));
+    assert.equal(byId.w1.font, 'collegiate', 'player name keeps jersey font');
+    assert.equal(byId.w1.player_name, true);
+    assert.equal(byId.w2.font, 'collegiate', 'jersey number keeps jersey font');
+    assert.equal(byId.w2.jersey_number, true);
+    assert.equal(byId.w3.score, true, 'score keeps bulb digits');
+    assert.equal(byId.w3.font, 'teko', 'score font key is non-jersey');
+    assert.equal(byId.w4.font, 'teko', 'ad-lib word HIGH switched to non-jersey accent face teko');
+    assert.equal(byId.w5.font, 'teko', 'renamed non-player FLAG switched to non-jersey accent face teko');
+    assert.equal(byId.w1e120.font, 'teko', 'non-player echo switched to non-jersey accent face teko');
+    assert.equal(byId.w1_rc.font, 'collegiate', 'reveal copy of player name keeps jersey font');
+    assert.equal(byId.w4_rc.font, 'teko', 'reveal copy of non-player word switched to teko');
+    assert.equal(checkJerseyFonts(scene, { song, until: 300 }).pass, true, 'hard check passes after applyWordRoles');
+  });
+
+  it('checkJerseyFonts fails with word and time on any non-player/non-number word or non-player reveal copy in a jersey font (including song.jersey_font)', () => {
+    const scene = {
+      meta: { fps: 30, frames: 300 },
+      words: [
+        { id: 'w1', text: 'COOPER', t: 1.0, on: 30, off: 90, font: 'barlow', player_name: true },
+        { id: 'w2', text: '32', t: 2.0, on: 60, off: 90, font: 'barlow', jersey_number: true },
+        { id: 'w1_rc', text: 'COOPER', reveal_copy_of: 'w1', on: 200, off: 300, font: 'barlow' },
+        { id: 'w3', text: '43', t: 3.0, on: 90, off: 120, font: 'collegiate', score: true },
+        { id: 'w4', text: 'DALLAS', t: 4.0, on: 120, off: 150, font: 'collegiate', wordmark: { image: 'wordmark1' } },
+        // Violations:
+        { id: 'w5', text: 'HIGH', t: 165.66, on: 4970, off: 5000, font: 'collegiate' },
+        { id: 'w6', text: 'LIGHTS', t: 46.80, on: 1404, off: 1440, font: 'barlow' },
+        { id: 'w7', text: 'FLAG', t: 38.43, on: 1153, off: 1190, font: 'collegiate', player_name: false },
+        { id: 'w5_rc', text: 'HIGH', reveal_copy_of: 'w5', on: 250, off: 300, font: 'collegiate' },
+      ],
+    };
+    const song = { player_names: ['Cooper'], jersey_font: 'barlow' };
+    const res = checkJerseyFonts(scene, { song, until: 6000 });
+    assert.equal(res.pass, false);
+    assert.equal(res.violations.length, 4);
+    assert.ok(res.violations.some(v => v.id === 'w5' && v.text === 'HIGH' && v.time_s === 165.66 && v.summary.includes('HIGH') && v.summary.includes('165.66')));
+    assert.ok(res.violations.some(v => v.id === 'w6' && v.text === 'LIGHTS' && v.font === 'barlow' && v.time_s === 46.8));
+    assert.ok(res.violations.some(v => v.id === 'w7' && v.text === 'FLAG' && v.time_s === 38.43));
+    assert.ok(res.violations.some(v => v.id === 'w5_rc' && v.reveal_copy_of === 'w5'));
   });
 });

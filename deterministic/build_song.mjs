@@ -24,7 +24,7 @@ import { assemble, hideWhenGone, buildReveal, checkReveal, endOnWord, checkStill
 import { tightenLone, hideEdgeClutter, hideUnreadable, hideFlythrough, SIDE_FILL, placeInRoom, phraseGaps, repairPhraseGaps, growWordmarks, loneHolds, LONE_HOLD, swellRelease, largestGreyToCream, fillEmptyFrames, swellSmallWords, floorZoomEntrances, pairHoldHides, emptyFrames, enforceMinSize, sizeShortfalls, MUST_SHOW_FLOOR_RATIO, noOutlines, undoSizeForEmpty, hideStaticPartials, staticPartials, STATIC_RATE, STATIC_FRAMES } from './composition.mjs';
 import { JERSEY_BOLD, normalizePalette, checkPalette } from './style.mjs';
 import { keywordPlan, fastWordsOn, wordRanks } from './keywords.mjs';
-import { applyWordRoles, teamColourNames } from './word_roles.mjs';
+import { applyWordRoles, teamColourNames, numeralKind, checkJerseyFonts } from './word_roles.mjs';
 import { severity, worstReadingLoss, SHOWN_GATE } from './build_best.mjs';
 import { repairShown, gateFailures } from './shown_gate.mjs';
 import { entranceCounts } from './entrance_counts.mjs';
@@ -39,6 +39,7 @@ const inp = f => (f == null ? null : path.resolve(inputDir, f));
 const song = JSON.parse(fs.readFileSync(path.join(inputDir, 'song settings.json'), 'utf8'));
 const nameKey = t => String(t).toUpperCase().replace(/[’]/g, "'").replace(/^[^A-Z0-9]+|[^A-Z0-9']+$/g, '').replace(/'S$/, '');
 const PLAYER_NAMES = new Set((song.player_names ?? []).map(nameKey));
+const TEAM_NAMES = new Set(Object.keys(song.team_wordmarks ?? {}).map(nameKey));
 const JERSEY_BOLD_SONG = song.jersey_bold ?? JERSEY_BOLD; // brief 5: outward stroke on jersey fonts, x cap
 // --all-words: build with keyword mode off whatever the song settings say (for comparisons).
 if (args.includes('--all-words')) song.fast_words = { ...(song.fast_words ?? {}), mode: 'all_words' };
@@ -108,9 +109,25 @@ function sectionWords(sec) {
     if (keywords.dropped.has(gi)) continue;
     const w = map.words[gi];
     outLines.find(x => x.id === l.id).words.push(words.length);
-    // Player names (song setting player_names) take the jersey font, like jersey numbers (brief 5, change 2).
-    const accent = PLAYER_NAMES.has(nameKey(w.text));
-    words.push({ t: w.start_s, end: w.end_s, text: display(w.text), line: l.id, id: `w${String(words.length + 1).padStart(2, '0')}`, ...(accent ? { accent: true } : {}) });
+    // Brief 21: jersey font is reserved exclusively for player names and jersey numbers; scores keep bulb digits and
+    // ad-lib / accent words take the non-jersey accent face.
+    const ov = effectiveWordOverrides[String(gi)] ?? {};
+    const dispText = display(w.text);
+    const key = nameKey(w.text);
+    const isPlayer = !TEAM_NAMES.has(key) && (ov.name === true || (ov.name !== false && PLAYER_NAMES.has(key)));
+    let isJerseyNum = false, isScoreNum = false;
+    if (/\d/.test(dispText) && !ov.display) {
+      const k = ov.numeral ?? (ov.score === true ? 'score' : ov.score === false ? 'jersey' : null);
+      const kind = k ?? numeralKind(map.words, gi, { players: song.player_names ?? [] }).kind;
+      if (kind === 'jersey') isJerseyNum = true;
+      else isScoreNum = true;
+    }
+    const jerseyWord = isPlayer || isJerseyNum;
+    words.push({
+      t: w.start_s, end: w.end_s, text: dispText, line: l.id, id: `w${String(words.length + 1).padStart(2, '0')}`,
+      ...(jerseyWord ? { jerseyWord: true } : {}),
+      ...(isScoreNum ? { scoreWord: true } : {}),
+    });
   }
   return { section: sec.n, name: sec.name, start_s: lines[0].start_s, song_end_of_hook: lines.at(-1).end_s, lines: outLines, words };
 }
@@ -159,7 +176,7 @@ const jobs = song.sections.map((sec, k) => {
   const queue = jobs.filter(j => j.build), errors = [];
   const runOne = j => new Promise(resolve => {
     const t0 = Date.now();
-    trackChild(execFile('node', j.argv, { cwd: engine, encoding: 'utf8', maxBuffer: 1 << 26, env: { ...process.env, KTE_JERSEY_BOLD: String(JERSEY_BOLD_SONG) } }, (err, stdout, stderr) => {
+    trackChild(execFile('node', j.argv, { cwd: engine, encoding: 'utf8', maxBuffer: 1 << 26, env: { ...process.env, KTE_JERSEY_BOLD: String(JERSEY_BOLD_SONG), ...(song.jersey_font ? { KTE_JERSEY_FONT: String(song.jersey_font) } : {}) } }, (err, stdout, stderr) => {
       j.seconds = (Date.now() - t0) / 1000; j.out = stdout ?? '';
       if (err) errors.push(`${j.label}: ${err.message}\n${stderr ?? ''}`);
       else console.log(`${j.label}: built in ${j.seconds.toFixed(1)} s`);
@@ -488,6 +505,12 @@ if (!propOverlap.pass) {
   process.exitCode = 1;
   console.error(`PROP COVERS SUNG WORD FAIL: ${propOverlap.violations.length} intervals: ${propOverlap.violations.slice(0, 8).map(v => v.summary).join('; ')}`);
 }
+// Brief 21: hard check — jersey fonts (JERSEY_FONTS plus song.jersey_font) only on player names, jersey numbers, and their reveal copies.
+const jerseyCheck = checkJerseyFonts(finalObj, { song, until: frames });
+if (!jerseyCheck.pass) {
+  process.exitCode = 1;
+  console.error(`JERSEY FONT ON NON-PLAYER WORD FAIL: ${jerseyCheck.violations.length}: ${jerseyCheck.violations.slice(0, 8).map(v => v.summary).join('; ')}`);
+}
 const syncCheck = checkSync(finalObj, sung), holdCheck = checkHolds(finalObj, sung, { until: revealF0 });
 const shownFinal = gateFailures(finalObj, onsetOf, { until: revealF0 });
 const partialFinal = shownFinal.filter(x => x.kind === 'partial'), droppedFinal = shownFinal.filter(x => x.kind === 'unshown');
@@ -537,7 +560,8 @@ md.push('', '## Opening and team wordmarks', '', appearance.intro,
   `Wordmark use: ${['image', 'font', 'neither'].map(k => `${k}: ${appearance.wordmarkUse.filter(x => x.used === k).map(x => x.name).join(', ') || 'none'}`).join('; ')}.`);
 { const L = roles.log, kw = finalObj.words.filter(w => w.keyword && !w.reveal_copy_of), kwDropped = kw.filter(w => w.dropped);
   md.push('', '## Word roles (keywords, names, scores)', '', `Keywords (one classifier for the grey rule, the size pass and keyword mode): ${kw.length} of ${finalObj.words.filter(w => w.map_index != null && !w.reveal_copy_of).length} matched words. Keywords dropped: ${kwDropped.length}${kwDropped.length ? ` (${kwDropped.map(w => `${w.id} ${w.text}, ${w.dropped}`).join('; ')})` : ''}.`,
-    `Grey keywords made cream: ${L.greyKeywords.length}. Grey player names made cream: ${L.greyNames.length}. Font changes: ${L.fontChanges.length}. Scores: ${L.scores.length}. Scene words not matched to the song map: ${L.unmatched.length}.`, '',
+    `Grey keywords made cream: ${L.greyKeywords.length}. Grey player names made cream: ${L.greyNames.length}. Font changes: ${L.fontChanges.length}. Scores: ${L.scores.length}. Jersey font gate (brief 21, player names/jersey numbers/reveal copies only): ${jerseyCheck.violations.length} violations (${jerseyCheck.pass ? 'PASS' : 'FAIL'}). Scene words not matched to the song map: ${L.unmatched.length}.`, '',
+    ...(jerseyCheck.violations.length ? [...jerseyCheck.violations.map(v => `- FAIL: ${v.summary}`), ''] : []),
     ...[...L.greyKeywords, ...L.greyNames, ...L.fontChanges, ...L.scores].map(x => `- ${x}`), '', `Numerals (brief 10 items 40 and 41): ${L.numerals.length}.`, ...L.numerals.map(x => `- ${x}`), '', `Display overrides (brief 10 item 42): ${L.displays.length}.`, ...L.displays.map(x => `- ${x}`), '',
     ...(mustShowReport.length ? [
       `Must-show words (brief 20; readable hard floor ${Math.round(100 * MUST_SHOW_FLOOR_RATIO)}% of hold minimum: ${(100 * (size.settings.minH ?? 0.09) * MUST_SHOW_FLOOR_RATIO).toFixed(1)}% crowded, ${(100 * (size.settings.minH ?? 0.09) * (size.settings.roomFactor ?? 1.5) * MUST_SHOW_FLOOR_RATIO).toFixed(2)}% with room): ${mustShowReport.length} configured, ${mustShowDropped.length} dropped (${mustShowDropped.length ? 'FAIL' : 'PASS'}).`,
@@ -621,7 +645,7 @@ console.log('shown whole', JSON.stringify({ sweepBefore: shownSweep.before, swee
 console.log('entrances', JSON.stringify(counts['Whole song']), 'pop reasons', JSON.stringify(popWhy));
 console.log('reveal check', JSON.stringify(revealCheck), 'still ending', JSON.stringify(stillEnding));
 if (overlapFinal.overlaps.length) console.error(`OVERLAP FAIL: ${overlapFinal.overlaps.length} intervals: ${overlapFinal.overlaps.slice(0, 8).join('; ')}`);
-console.log('roles', JSON.stringify({ greyKeywords: roles.log.greyKeywords.length, greyNames: roles.log.greyNames.length, fontChanges: roles.log.fontChanges.length, scores: roles.log.scores.length, keywordsDropped: finalObj.words.filter(w => w.keyword && w.dropped && !w.reveal_copy_of).length }));
+console.log('roles', JSON.stringify({ greyKeywords: roles.log.greyKeywords.length, greyNames: roles.log.greyNames.length, fontChanges: roles.log.fontChanges.length, scores: roles.log.scores.length, jerseyViolations: jerseyCheck.violations.length, keywordsDropped: finalObj.words.filter(w => w.keyword && w.dropped && !w.reveal_copy_of).length }));
 if (mustShowReport.length) console.log('must-show', JSON.stringify({ total: mustShowReport.length, dropped: mustShowDropped.length, details: mustShowReport.map(m => `${m.id} ${m.text} (map ${m.map_index}): ${m.status}`) }));
 console.log('pulses tamed', pulseLog.length, 'zoom floors', zoomFloor.length, 'hold partners', partnerHides.length, 'fly-through hides', flythrough.log.length, 'visible', flythrough.visible, 'swell releases', swellReleases.length, 'largest grey', greyLargest.length, 'near-empty sideways', nearEmpty.length, 'put back', roomLog.filter(r => r.room).length);
 for (const r of lone1.filter(r => r.drops.length)) console.log(`LONE HOLD after a drop: ${r.w.id} ${r.w.text} ${(r.start / FPS).toFixed(2)}-${((r.end + 1) / FPS).toFixed(2)} s (${r.drops.map(x => `${x.id} ${x.text}`).join(', ')} dropped)`);

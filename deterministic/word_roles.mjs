@@ -14,7 +14,7 @@
 // Song input `word_overrides` { "<song map word index>": { keyword?: bool, name?: bool, score?: bool } } wins.
 import fs from 'node:fs';
 import { wordBox } from './compose_plaques.mjs';
-import { JERSEY_FONTS, TEXT_COLOURS, contrast, teamStyleIds } from './style.mjs';
+import { JERSEY_FONTS, TEXT_COLOURS, contrast, teamStyleIds, isSongJerseyFont, nonJerseyAccentFont } from './style.mjs';
 import { scanOverlap, wordPropOverlapFrames } from './overlap_gate.mjs';
 import * as G from './shown_gate.mjs';
 
@@ -99,17 +99,44 @@ export function applyWordRoles(scene, { mapWords, display, song, names = [], met
   const overrides = song.word_overrides ?? {};
   const flags = keywordFlags(mapWords, { names, keep: song.fast_words?.keep ?? [], overrides });
   const playerKey = new Set((song.player_names ?? []).map(T));
+  const teamKey = new Set(Object.keys(song.team_wordmarks ?? {}).map(T));
   const metrics = metricsPath ? JSON.parse(fs.readFileSync(metricsPath, 'utf8')) : null;
   // Brief 12 item 2: the jersey font is per song (song setting jersey_font, a font key in the kit's metrics, for
   // example "barlow" for the Timberwolves' plain condensed sans); default the kit's jersey font (Graduate).
   const jersey = song.jersey_font ?? JERSEY_FONTS[0];
-  if (song.jersey_font && metricsPath && !JSON.parse(fs.readFileSync(metricsPath, 'utf8')).fonts[song.jersey_font]) throw Error(`song setting jersey_font "${song.jersey_font}" is not a font in ${metricsPath}`);
+  const accentFace = nonJerseyAccentFont(song.jersey_font);
+  if (song.jersey_font && metricsPath && !metrics.fonts[song.jersey_font]) throw Error(`song setting jersey_font "${song.jersey_font}" is not a font in ${metricsPath}`);
   const log = { greyKeywords: [], greyNames: [], fontChanges: [], scores: [], numerals: [], displays: [], mustShow: [], unmatched: [] };
   // Same cap height, so the height stays; the width is the new font's (with the jersey bold width when jersey).
   const reFont = (w, font) => {
     if (!metrics || w.font === font || !metrics.fonts[font]) return false;
     const b = wordBox(w.text, font, w.cap, (w.pad ?? 0) > 0.2 * w.cap ? 'block' : 'word', metrics);
     w.font = font; w.fontPx = b.fontPx; w.w = b.w; return true;
+  };
+  // Brief 21: strip any jersey font (JERSEY_FONTS or song.jersey_font) from a non-player-name, non-jersey-number word,
+  // replacing it with the non-jersey accent face from the kit (fitted to the existing box width if wider). Scores keep
+  // their bulb digits (only their unused font key is updated).
+  const replaceJerseyFont = (w, reason) => {
+    if (!isSongJerseyFont(w.font, song.jersey_font)) return false;
+    const was = w.font;
+    if (w.score) {
+      w.font = accentFace;
+      log.fontChanges.push(`${w.id} ${w.text} at ${(w.t ?? 0).toFixed(2)} s: ${was} (jersey) -> ${accentFace} (${reason})`);
+      return true;
+    }
+    if (metrics?.fonts?.[accentFace]) {
+      const kind = (w.pad ?? 0) > 0.2 * w.cap ? 'block' : 'word';
+      const b = wordBox(w.text, accentFace, w.cap, kind, metrics);
+      const k = w.w && b.w > w.w * 1.02 ? w.w / b.w : 1;
+      w.font = accentFace; w.fontPx = b.fontPx * k;
+      if (k < 1) { w.cap *= k; w.pad = (w.pad ?? 0) * k; w.h *= k; }
+      w.w = b.w * k;
+      log.fontChanges.push(`${w.id} ${w.text} at ${(w.t ?? 0).toFixed(2)} s: ${was} (jersey) -> ${accentFace}${k < 1 ? `, scaled x${k.toFixed(2)} to keep its width` : ''} (${reason})`);
+      return true;
+    }
+    w.font = accentFace;
+    log.fontChanges.push(`${w.id} ${w.text} at ${(w.t ?? 0).toFixed(2)} s: ${was} (jersey) -> ${accentFace} (${reason})`);
+    return true;
   };
   for (const w of scene.words) {
     if (w.t == null) continue;
@@ -150,22 +177,25 @@ export function applyWordRoles(scene, { mapWords, display, song, names = [], met
       // 8 steps to the cap height; the box is made that wide.
       const n = [...String(w.text)].filter(ch => /\d/.test(ch)).length, pad = w.pad ?? 0.08 * w.cap;
       if (n) w.w = (n * 4 + (n - 1) * 2.4 + 1.6) / 8 * w.cap + 2 * pad;
-      w.score = true; log.scores.push(`${w.id} ${w.text} (map word ${i}) at ${w.t.toFixed(2)} s: scoreboard bulb digits`);
+      w.score = true;
+      if (isSongJerseyFont(w.font, song.jersey_font)) replaceJerseyFont(w, 'score keeps bulb digits');
+      log.scores.push(`${w.id} ${w.text} (map word ${i}) at ${w.t.toFixed(2)} s: scoreboard bulb digits`);
     }
     if (numeral?.kind === 'jersey') {
       w.score = false; w.jersey_number = true;
       if (w.font !== jersey && reFont(w, jersey)) log.fontChanges.push(`${w.id} ${w.text} at ${w.t.toFixed(2)} s: -> jersey font ${jersey} (jersey number)`);
       if (isGrey(w)) ungrey(w);
     }
-    const isName = o.name ?? playerKey.has(T(w.text).replace(/'S$/, ''));
+    const baseKey = T(w.text).replace(/'S$/, '');
+    const isName = o.name !== undefined ? o.name : (w.player_name === false || teamKey.has(baseKey) ? false : playerKey.has(baseKey));
     if (isName && !w.wordmark && !w.score) w.player_name = true;
-    if (o.name === false && JERSEY_FONTS.includes(w.font) && metrics) {
+    if (o.name === false && isSongJerseyFont(w.font, song.jersey_font) && metrics) {
       // The layout was made for the jersey box, so the new font must fit that width: the nearest neighbour's font if it
       // fits, else the narrowest that fits, else the narrowest scaled down to the old width.
-      const line = scene.words.filter(x => x !== w && x.t != null && Math.abs(x.t - w.t) < 4 && !JERSEY_FONTS.includes(x.font) && !x.wordmark);
+      const line = scene.words.filter(x => x !== w && x.t != null && Math.abs(x.t - w.t) < 4 && !isSongJerseyFont(x.font, song.jersey_font) && !x.wordmark);
       const near = line.sort((a, b) => Math.abs(a.t - w.t) - Math.abs(b.t - w.t))[0]?.font;
       const kind = (w.pad ?? 0) > 0.2 * w.cap ? 'block' : 'word';
-      const opts = [...new Set([near, 'anton', 'gothic', 'wide'].filter(f => f && metrics.fonts[f]))].map(f => ({ f, b: wordBox(w.text, f, w.cap, kind, metrics) }));
+      const opts = [...new Set([near, accentFace, 'anton', 'gothic', 'wide'].filter(f => f && !isSongJerseyFont(f, song.jersey_font) && metrics.fonts[f]))].map(f => ({ f, b: wordBox(w.text, f, w.cap, kind, metrics) }));
       const fit = opts.find(x => x.b.w <= w.w * 1.02) ?? opts.sort((a, b) => a.b.w - b.b.w)[0];
       if (fit) {
         const was = w.font, k = Math.min(1, w.w / fit.b.w);
@@ -180,15 +210,87 @@ export function applyWordRoles(scene, { mapWords, display, song, names = [], met
     }
     if (w.keyword && isGrey(w)) log.greyKeywords.push(`${w.id} ${w.text} at ${w.t.toFixed(2)} s: ${ungrey(w)} -> cream (keyword: ${w.keyword_why})`);
   }
-  // Reveal copies follow their source word's colour.
+  // Brief 21: jersey fonts (JERSEY_FONTS plus song.jersey_font) are reserved exclusively for player names and jersey
+  // numbers (and their reveal copies). Strip any jersey font left on ordinary words, ad-lib shots from reused sections,
+  // words renamed by song notes (e.g. player_name: false), team/city names, echoes, or scores.
+  for (const w of scene.words) {
+    if (w.reveal_copy_of) continue;
+    if (w.echo && !w.wordmark && !w.score) {
+      const k = T(w.text).replace(/'S$/, '');
+      if (w.player_name !== false && !teamKey.has(k) && playerKey.has(k)) w.player_name = true;
+    }
+    const allowedJersey = !w.wordmark && !w.score && (w.player_name === true || w.jersey_number === true || w.jersey === true);
+    if (!allowedJersey && isSongJerseyFont(w.font, song.jersey_font)) {
+      replaceJerseyFont(w, w.echo ? 'non-player echo' : w.player_name === false ? 'not a player name' : 'jersey font reserved for player names and jersey numbers');
+    }
+  }
+  // Reveal copies follow their source word's colour and font policy.
   const byId = new Map(scene.words.map(x => [x.id, x]));
   for (const w of scene.words) {
-    const src = byId.get(w.reveal_copy_of ?? null);
-    if (src && isGrey(w) && !isGrey(src)) ungrey(w);
-    if (src && (src.player_name || src.jersey_number) && w.font !== src.font && reFont(w, src.font)) log.fontChanges.push(`${w.id} ${w.text} (reveal copy): -> ${src.font}, like its source`);
-    if (src && src.ripple !== undefined && w.ripple === undefined) w.ripple = src.ripple ? structuredClone(src.ripple) : null;
+    if (!w.reveal_copy_of) continue;
+    const src = byId.get(w.reveal_copy_of);
+    if (!src) {
+      if (isSongJerseyFont(w.font, song.jersey_font)) replaceJerseyFont(w, 'reveal copy without player/number source');
+      continue;
+    }
+    if (isGrey(w) && !isGrey(src)) ungrey(w);
+    const srcAllowedJersey = !src.wordmark && !src.score && (src.player_name === true || src.jersey_number === true || src.jersey === true);
+    if (srcAllowedJersey && w.font !== src.font && reFont(w, src.font)) {
+      log.fontChanges.push(`${w.id} ${w.text} (reveal copy): -> ${src.font}, like its source`);
+    } else if (!srcAllowedJersey && isSongJerseyFont(w.font, song.jersey_font)) {
+      const target = src.font && !isSongJerseyFont(src.font, song.jersey_font) && (!metrics || metrics.fonts[src.font]) ? src.font : accentFace;
+      if (!reFont(w, target)) w.font = target;
+      log.fontChanges.push(`${w.id} ${w.text} (reveal copy): -> ${target}, like its non-jersey source`);
+    }
+    if (src.ripple !== undefined && w.ripple === undefined) w.ripple = src.ripple ? structuredClone(src.ripple) : null;
   }
   return { flags, log };
+}
+
+// Brief 21 hard check: a word drawn in a jersey font (JERSEY_FONTS or song.jersey_font) that is not a player name,
+// jersey number, or reveal copy of one fails, naming the word and time. Shared by build_song.mjs and type_rules_check.mjs.
+export function checkJerseyFonts(scene, { song = {}, players = null, until = Infinity } = {}) {
+  const fps = scene.meta?.fps ?? 30;
+  const playerSet = new Set([...(players ?? song.player_names ?? [])].map(x => T(x).replace(/'S$/, '')));
+  const teamSet = new Set(Object.keys(song.team_wordmarks ?? {}).map(x => T(x).replace(/'S$/, '')));
+  const overrides = song.word_overrides ?? {};
+  const byId = new Map((scene.words ?? []).map(x => [x.id, x]));
+  const isAllowedBase = w => {
+    if (!w || w.wordmark || w.score) return false;
+    if (w.player_name === true || w.jersey_number === true || w.jersey === true) return true;
+    if (w.player_name === false && !w.jersey_number) return false;
+    const ov = overrides[String(w.map_index)] ?? {};
+    const key = T(w.text).replace(/'S$/, '');
+    if (ov.score === true || ov.numeral === 'score') return false;
+    if (ov.numeral === 'jersey') return true;
+    if (/^\d+$/.test(key) && w.jersey_number !== false) return true;
+    if (ov.name === true) return true;
+    if (ov.name === false) return false;
+    if (teamSet.has(key)) return false;
+    return playerSet.has(key);
+  };
+  const violations = [];
+  for (const w of scene.words ?? []) {
+    if (w.dropped || w.replaced_by) continue;
+    if (w.off != null && w.on != null && w.off <= w.on) continue;
+    if (w.on != null && w.on >= until) continue;
+    if (w.score || w.wordmark?.image || w.wordmark?.family) continue;
+    if (!isSongJerseyFont(w.font, song.jersey_font)) continue;
+    const ok = w.reveal_copy_of ? isAllowedBase(byId.get(w.reveal_copy_of)) : isAllowedBase(w);
+    if (ok) continue;
+    const frame = w.on ?? 0;
+    const time_s = +(w.t != null ? w.t : frame / fps).toFixed(2);
+    violations.push({
+      id: w.id,
+      text: w.text,
+      font: w.font,
+      frame,
+      time_s,
+      reveal_copy_of: w.reveal_copy_of ?? null,
+      summary: `${w.id} ${w.text} at ${time_s.toFixed(2)} s (frame ${frame}): jersey font "${w.font}" on ${w.reveal_copy_of ? 'non-player reveal copy' : 'non-player/non-number word'}`,
+    });
+  }
+  return { pass: violations.length === 0, violations };
 }
 
 // Team colours for player names and jersey numbers (brief 10 items 46 and 47, Jefferson 23 November 2026). Song setting

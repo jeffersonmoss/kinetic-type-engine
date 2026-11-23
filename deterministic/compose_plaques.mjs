@@ -1,6 +1,6 @@
 // Plaque composition: rulebook section 7.
 import { stream, weightedChoice, cooldownFactor } from './rng.mjs';
-import { KIT, JERSEY_BOLD, isJerseyFont } from './style.mjs';
+import { KIT, JERSEY_FONTS, JERSEY_BOLD, isJerseyFont, nonJerseyAccentFont } from './style.mjs';
 
 export function measure(text, font, cap, metrics) {
   const m = metrics.fonts[font];
@@ -105,9 +105,16 @@ export function clusterBlock(cluster, arrangement, metrics) {
 }
 
 const SLOTS = [['narrow', KIT.narrow], ['standard', KIT.standard], ['wide', KIT.wide]];
+const songJerseyFont = () => process.env.KTE_JERSEY_FONT || null;
 
-function fontForWord(word, slotFont, adlibShot) {
-  if (adlibShot || word.isDigit || word.accent) return KIT.accent;
+// Brief 21: jersey font is reserved exclusively for player names and jersey numbers (`word.jerseyWord`, or non-score
+// digits when built standalone). Ad-lib shots, non-jersey accent words, and score digits use a non-jersey accent face
+// from the kit (`teko`, or the next non-jersey face if `song.jersey_font` equals it).
+export function fontForWord(word, slotFont, adlibShot, jerseyFont = songJerseyFont()) {
+  const accentFace = nonJerseyAccentFont(jerseyFont);
+  if (word.jerseyWord) return JERSEY_FONTS[0];
+  if (adlibShot || word.accent) return accentFace;
+  if (word.isDigit) return word.scoreWord ? accentFace : JERSEY_FONTS[0];
   return slotFont;
 }
 

@@ -3,6 +3,7 @@ import path from 'node:path';
 import './interp.js';
 import { fullyShown } from './shown_gate.mjs';
 import { pngAlphaBox } from './png_alpha.mjs';
+import { isSongJerseyFont, nonJerseyAccentFont } from './style.mjs';
 
 const IMAGE_TYPES = { '.png':'image/png', '.jpg':'image/jpeg', '.jpeg':'image/jpeg', '.webp':'image/webp', '.svg':'image/svg+xml' };
 const SHARP_EASE = { a: 2, b: 4, x0: 0.34 };
@@ -318,8 +319,10 @@ export function songAppearance(scene, song, resolve, firstOnset, { stageCompiled
     // pass judge the lettering.
     const dims = image ? imageSize(resolve(style.image)) : null;
     const share = style.letter_share ?? (dims?.alpha ? dims.alpha.y1 - dims.alpha.y0 : 1);
+    const accentFace = nonJerseyAccentFont(song.jersey_font);
     for (const w of matched) {
       w.wordmark = { family: !image && style.font ? family : null, image, colours: style.colours ?? {}, ...(image ? { letter_share: share } : {}) };
+      if (isSongJerseyFont(w.font, song.jersey_font)) w.font = accentFace;
       // Brief 13: per-wordmark ripple style (e.g. ghost ripple for an image wordmark); a per-word override wins.
       if (style.ripple && w.ripple === undefined) w.ripple = structuredClone(style.ripple);
       if (dims) {

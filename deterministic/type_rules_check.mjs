@@ -11,6 +11,7 @@ import { sizeShortfalls, hasBlock } from './composition.mjs';
 import { wordRanks } from './keywords.mjs';
 import { fullyShown } from './shown_gate.mjs';
 import { TEXT_COLOURS, teamStyleIds, isJerseyFont } from './style.mjs';
+import { checkJerseyFonts } from './word_roles.mjs';
 
 const args = process.argv.slice(2), opt = (k, d) => (args.includes(k) ? args[args.indexOf(k) + 1] : d);
 const [inputDir, scenePath] = args.filter((a, i) => !a.startsWith('--') && !(i > 0 && args[i - 1].startsWith('--')));
@@ -85,17 +86,23 @@ for (const w of scene.words) {
   const t = N(w.text), isNum = /^\d+$/.test(t);
   // Per-word overrides (song settings word_overrides, by song-map index): name false (a pun), score (bulb digits).
   const ov = song.word_overrides?.[String(w.map_index)] ?? {};
-  if (w.score || ov.score || ov.name === false) continue;
+  if (w.score || ov.score || ov.numeral === 'score' || ov.name === false || w.player_name === false) continue;
   if ((players.has(t) || isNum) && !(isJerseyFont(w.font) || w.jersey || (song.jersey_font && w.font === song.jersey_font)))
     fails.push({ rule: 4, f: w.on, to: w.on + 30, word: `${w.id} ${w.text}`, what: `${isNum ? 'number' : 'player name'} in ${w.font}, not the jersey font`, rebuild: 'set it in the bold jersey font (needs the section re-planned: the box width changes)' });
   if (teams.has(t) && !(w.wordmark && (w.wordmark.image || w.wordmark.family)))
     fails.push({ rule: 4, f: w.on, to: w.on + 30, word: `${w.id} ${w.text}`, what: 'team name not drawn as the team wordmark (no wordmark image or font supplied)', rebuild: 'supply the wordmark image in song settings team_wordmarks; a re-join is enough' });
 }
 
+// Rule 5 (brief 21): jersey font (JERSEY_FONTS plus song.jersey_font) is only for player names, jersey numbers, and their reveal copies.
+const jerseyCheck = checkJerseyFonts(scene, { song, players, until: scene.meta.frames });
+for (const v of jerseyCheck.violations) {
+  fails.push({ rule: 5, f: v.frame, to: v.frame + 30, word: `${v.id} ${v.text}`, what: `jersey font "${v.font}" used on ${v.reveal_copy_of ? 'non-player reveal copy' : 'non-player/non-number word'} at ${v.time_s.toFixed(2)} s`, rebuild: 'set it in the non-jersey accent face from the kit (teko)' });
+}
+
 // Report by section.
 fails.sort((a, b) => a.f - b.f);
 const md = [`# Type rules check: ${song.title}`, '', `Scene: \`${scenePath}\``, '', `Settings: minimum ${(100 * (settings.minH ?? 0.09)).toFixed(1)}% crowded, ${(100 * (settings.minH ?? 0.09) * (settings.roomFactor ?? 1.5)).toFixed(1)}% with room. Player names: ${[...players].join(', ') || 'none given'}. Team names: ${[...teams].join(', ') || 'none given'}.`, '',
-  `Failures: ${fails.length} (rule 1: ${fails.filter(x => x.rule === 1).length}, rule 2: ${fails.filter(x => x.rule === 2).length}, rule 3: ${fails.filter(x => x.rule === 3).length}, rule 4: ${fails.filter(x => x.rule === 4).length}).`, ''];
+  `Failures: ${fails.length} (rule 1: ${fails.filter(x => x.rule === 1).length}, rule 2: ${fails.filter(x => x.rule === 2).length}, rule 3: ${fails.filter(x => x.rule === 3).length}, rule 4: ${fails.filter(x => x.rule === 4).length}, rule 5: ${fails.filter(x => x.rule === 5).length}).`, ''];
 let n = 0;
 for (const s of sections) {
   const fs_ = fails.filter(x => sectionOf(x.f) === s.label);
@@ -110,4 +117,4 @@ for (const w of scene.words) if (w.keyword && w.dropped && !w.reveal_copy_of && 
 md.push(`## Reported, not failed (rule 2: dropped by necessity): ${reported.length}`, '', ...reported.map(x => `- ${x}`), '');
 const out = opt('--out');
 if (out) fs.writeFileSync(out, md.join('\n'));
-console.log(JSON.stringify({ total: fails.length, byRule: [1, 2, 3, 4].map(r => fails.filter(x => x.rule === r).length), sections: sections.map(s => [s.label, fails.filter(x => sectionOf(x.f) === s.label).length]).filter(x => x[1]) }));
+console.log(JSON.stringify({ total: fails.length, byRule: [1, 2, 3, 4, 5].map(r => fails.filter(x => x.rule === r).length), sections: sections.map(s => [s.label, fails.filter(x => sectionOf(x.f) === s.label).length]).filter(x => x[1]) }));

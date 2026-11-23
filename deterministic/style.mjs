@@ -1,7 +1,10 @@
 // Palette, measured font checks, and style assignment: rulebook section 12.
 import { stream, weightedChoice, cooldownFactor } from './rng.mjs';
 
-export const KIT = Object.freeze({ narrow: 'gothic', standard: 'anton', wide: 'wide', accent: 'collegiate' });
+// Brief 21: KIT.accent is a non-jersey display face (teko, Teko Bold 700 — the rulebook's own non-collegiate accent
+// slot, width 0.794 x cap between standard anton 0.551 and wide 1.118). Jersey fonts (JERSEY_FONTS plus song setting
+// jersey_font) are reserved exclusively for player names and jersey numbers (and their reveal copies).
+export const KIT = Object.freeze({ narrow: 'gothic', standard: 'anton', wide: 'wide', accent: 'teko' });
 
 export function contrast(a, b) {
   const luminance = hex => {
@@ -23,6 +26,11 @@ export const TEXT_COLOURS = Object.freeze({ cream: '#F3EBDD', white: '#FFFFFF', 
 export const JERSEY_FONTS = Object.freeze(['collegiate']);
 export const JERSEY_BOLD = 0.10;
 export const isJerseyFont = font => JERSEY_FONTS.includes(font);
+export const ACCENT_FALLBACKS = Object.freeze(['teko', 'barlow', 'shoulders', 'bebas', 'anton']);
+export const isSongJerseyFont = (font, songJerseyFont = null) =>
+  isJerseyFont(font) || (!!songJerseyFont && font === songJerseyFont);
+export const nonJerseyAccentFont = (songJerseyFont = null) =>
+  ACCENT_FALLBACKS.find(f => !isSongJerseyFont(f, songJerseyFont)) ?? KIT.standard;
 const rgb = hex => hex.replace('#', '').match(/../g).map(x => parseInt(x, 16));
 const chromatic = hex => { const c = rgb(hex); return (Math.max(...c) - Math.min(...c)) / Math.max(1, Math.max(...c)) > 0.25; };
 export function teamStyleIds(palette) {

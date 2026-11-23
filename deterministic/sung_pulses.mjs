@@ -15,6 +15,7 @@
 // metrics, and a floating echo is ECHO_SCREEN_H of the full frame height.
 import './interp.js';
 import { textWidth, fullyShown, SHOWN_FRAMES } from './shown_gate.mjs';
+import { KIT, isJerseyFont } from './style.mjs';
 
 export const SYNC = Object.freeze({ PLACED_BEFORE_S: 3.0, LATE_FRAMES: 2 }); // shared with whole_song_checks.mjs
 const HIT_LEAD = 1 / 30;      // the swell starts one frame early so its first visible growth lands on the onset
@@ -113,9 +114,10 @@ function addEcho(scene, run, f, words, echoes) {
   const near = [...words.filter(w => drawnAt(w, f) || (w.on > f && w.on < end)), ...echoes.filter(e => e.on < end && e.off > f)];
   const boxes = list => list.map(x => screenBox(I, x, Math.max(f, x.on), pose, vfov, x.echo ? ECHO_GROW : 1)).filter(Boolean);
   let busy = boxes(near);
+  const echoFont = isJerseyFont(A.font) && normText(text) !== normText(A.text) ? KIT.accent : A.font;
   const geometry = (C, h) => {
     const k = h / A.h, fontPx = A.fontPx * k, pad = (A.pad ?? 0.08 * A.cap) * k;
-    return { C, h, cap: A.cap * k, fontPx, pad, w: textWidth(text, A.font, fontPx) + 2 * pad };
+    return { C, h, cap: A.cap * k, fontPx, pad, font: echoFont, w: textWidth(text, echoFont, fontPx) + 2 * pad };
   };
   const fits = g => {
     const probe = { ...A, ...g, motion: [] };
