@@ -32,7 +32,7 @@ export const SHOWN_FRAMES = 6, ONSET_SLACK = 2, PICKUP_CAP = 15, MIN_STILL = 8, 
 // called a speck measured 2.4% to 9.4% letter height at onset + 3 frames; readable words measured 12% to 44%.
 // Sparse frame (item 10): two consecutive small words (under SPARSE_SMALL) more than a third of the frame apart, with
 // no anchor word (at least SPARSE_ANCHOR) whole in frame.
-export const MIN_LETTER = 0.10, SPECK_FLOOR = 0.04, SPECK_GROWTH = 1.5, SIZE_DELAY = 3, SPARSE_SMALL = 0.12, SPARSE_ANCHOR = 0.15, SPARSE_GAP = 2 / 3;
+export const MIN_LETTER = 0.10, SPECK_FLOOR = 0.04, SPECK_GROWTH = 1.5, SIZE_DELAY = 3, SPARSE_SMALL = 0.15, SPARSE_ANCHOR = 0.20, SPARSE_GAP = 2 / 3;
 const add = (a, b) => a.map((x, i) => x + b[i]);
 const sub = (a, b) => a.map((x, i) => x - b[i]);
 const mul = (a, k) => a.map(x => x * k);
@@ -95,6 +95,19 @@ export function letterHeight(w, f, pose, vfov, aspect = 16 / 9) {
   const lo = mid(q[0], q[1]), hi = mid(q[3], q[2]);
   return Math.hypot(hi[0] - lo[0], hi[1] - lo[1]) / 2 * (w.cap / w.h);
 }
+// Readable orientation (engine fix brief 4): the posed word faces the camera, its letters' right axis points within
+// MAX_TILT degrees of screen right, and it is not mirrored. A word upside down, mirrored or seen from behind is not.
+export const MAX_TILT = 100;
+export function readableOrientation(w, f, pose, vfov, { tilt = true } = {}) {
+  const I = globalThis.KT_INTERP, X = I.wordXform(w, f), c = X(w.C);
+  const n = sub(X(add(w.C, w.N)), c);
+  if (dot(n, sub(pose.position, c)) <= 0) return false;
+  const q0 = I.project(c, pose, vfov), qr = I.project(X(add(w.C, mul(w.R, w.w / 4))), pose, vfov), qu = I.project(X(add(w.C, mul(w.U, w.h / 4))), pose, vfov);
+  if (!q0 || !qr || !qu) return true;
+  const rx = qr.x - q0.x, ry = qr.y - q0.y, ux = qu.x - q0.x, uy = qu.y - q0.y;
+  if (rx * uy - ry * ux <= 0) return false; // mirrored
+  return !tilt || Math.abs(Math.atan2(ry, rx)) * 180 / Math.PI <= MAX_TILT;
+}
 const centreOf = (w, f, pose, vfov) => {
   const cs = cornersAt(w, f); if (!cs) return null;
   const q = cs.map(c => globalThis.KT_INTERP.project(c, pose, vfov)); if (q.some(x => !x)) return null;
@@ -154,7 +167,8 @@ export function gateFailures(scene, onsetOf, { until = Infinity } = {}) {
     if (ha == null || hb == null || ha >= SPARSE_SMALL || hb >= SPARSE_SMALL) continue;
     const ca = centreOf(a.w, D, pose, vfov), cb = centreOf(b.w, D, pose, vfov);
     if (Math.hypot(ca[0] - cb[0], ca[1] - cb[1]) <= SPARSE_GAP) continue;
-    const anchor = scene.words.some(x => x !== a.w && x !== b.w && !x.reveal_copy_of && fullyShown(x, D, pose, vfov) && (letterHeight(x, D, pose, vfov) ?? 0) >= SPARSE_ANCHOR);
+    // An anchor is whole, upright and large: a clipped, upside-down, mirrored or back-facing word never anchors a frame.
+    const anchor = scene.words.some(x => x !== a.w && x !== b.w && !x.reveal_copy_of && fullyShown(x, D, pose, vfov) && readableOrientation(x, D, pose, vfov) && (letterHeight(x, D, pose, vfov) ?? 0) >= SPARSE_ANCHOR);
     if (anchor) continue;
     out.push({ id: b.w.id, text: b.w.text, onsetF: b.onsetF, appear: appearanceFrame(b.w), kind: 'sparse',
       why: `${a.w.text} and ${b.w.text} (letters ${(100 * ha).toFixed(1)}% and ${(100 * hb).toFixed(1)}%) sit ${(Math.hypot(ca[0] - cb[0], ca[1] - cb[1]) / 2 * 100).toFixed(0)}% of the frame apart at frame ${D} with no anchor word in view` });

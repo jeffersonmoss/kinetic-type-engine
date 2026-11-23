@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 import './interp.js';
 import { checkSync, checkHolds } from './whole_song_checks.mjs';
 import { assemble, hideWhenGone, buildReveal, checkReveal, endOnWord, checkStillEnding } from './assemble_sections.mjs';
-import { tightenLone, hideEdgeClutter } from './composition.mjs';
+import { tightenLone, hideEdgeClutter, hideUnreadable, fillEmptyFrames } from './composition.mjs';
 import { keywordPlan, fastWordsOn } from './keywords.mjs';
 import { severity, worstReadingLoss, SHOWN_GATE } from './build_best.mjs';
 import { repairShown, gateFailures } from './shown_gate.mjs';
@@ -180,6 +180,12 @@ if (lone.log.length) {
   joint = { ...again, shownLog: [...joint.shownLog, ...again.shownLog], overlapLog: [...joint.overlapLog, ...again.overlapLog] };
 }
 const clutter = hideEdgeClutter(finalObj, onsetOf, { until: revealF0 });
+// Brief 4: text upside down, mirrored or seen from behind is hidden outside its focus window; then no frame between the
+// intro and the end may be empty (outgoing words stay on through the gap where that adds no overlap).
+const unreadable = hideUnreadable(finalObj, onsetOf, { until: revealF0 });
+const introEndF = Math.round(Math.min(...map.words.map(w => w.start_s)) * FPS);
+const fill = fillEmptyFrames(finalObj, { from: introEndF, until: frames, onsetOf });
+if (fill.remaining.length) process.exitCode = 1;
 const stillEnding = checkStillEnding(finalObj, { minHoldFrames: MIN_END_HOLD });
 if (!stillEnding.pass) process.exitCode = 1;
 const overlapRepair = { retired: joint.overlapLog };
@@ -237,7 +243,9 @@ md.push('## Readable size and composition', '',
   `Words sung while still small (letters under 10% of the frame height at onset + 3 frames; reported, not gated): ${smallFinal.length}.`, ...smallFinal.map(x => `- ${x.id} ${x.text} at ${(x.onsetF / FPS).toFixed(2)} s: ${x.why}`), '',
   `Sparse frames (two small consecutive words far apart, no anchor word in view): ${sparseFinal.length}.`, ...sparseFinal.map(x => `- ${x.id} ${x.text} at ${(x.onsetF / FPS).toFixed(2)} s: ${x.why}`), '',
   `Lone focus words brought closer: ${lone.log.length}.`, ...lone.log.map(x => `- ${x}`), '',
-  `Edge clutter hidden (non-focus words under half in frame during a hold): ${clutter.log.length}.`, ...clutter.log.map(x => `- ${x}`), '');
+  `Edge clutter hidden (non-focus words with letters cut by the frame edge during a hold): ${clutter.log.length}.`, ...clutter.log.map(x => `- ${x}`), '',
+  `Unreadable text hidden (upside down, mirrored or from behind, outside its focus window): ${unreadable.log.length}.${unreadable.focused.length ? ` Focus words shown that way (not hidden): ${unreadable.focused.join(', ')}.` : ''}`, ...unreadable.log.map(x => `- ${x}`), '',
+  `Empty frames between the intro and the end: ${fill.remaining.length ? `FAIL, ${fill.remaining.length} runs: ${fill.remaining.map(r => `${r.start}-${r.end} (${(r.start / FPS).toFixed(2)} s)`).join(', ')}` : 'PASS, none'}. Filled: ${fill.log.length}.`, ...fill.log.map(x => `- ${x}`), '');
 md.push('## Flagged for Jefferson', '', ...(flagged.length ? flagged.map((f, i) => `${i + 1}. ${f}`) : ['None.']), '');
 const sp = finalObj.meta.sung_pulses ?? { added: [], skipped: [] };
 const popWhy = {};
@@ -258,7 +266,7 @@ console.log('sync', JSON.stringify({ late: syncCheck.late.length, dropped: syncC
 console.log('shown whole', JSON.stringify({ sweepBefore: shownSweep.before, sweepAfter: shownSweep.after, finalPartial: partialFinal.length, finalDropped: droppedFinal.length }), 'echoes', finalObj.words.filter(w => w.echo).length);
 console.log('entrances', JSON.stringify(counts['Whole song']), 'pop reasons', JSON.stringify(popWhy));
 console.log('reveal check', JSON.stringify(revealCheck), 'still ending', JSON.stringify(stillEnding));
-console.log('size', JSON.stringify({ small: smallFinal.length, sparse: sparseFinal.length, lone: lone.log.length, clutter: clutter.log.length }));
+console.log('size', JSON.stringify({ small: smallFinal.length, sparse: sparseFinal.length, lone: lone.log.length, clutter: clutter.log.length, unreadable: unreadable.log.length, unreadableFocus: unreadable.focused.length, filled: fill.log.length, emptyRuns: fill.remaining.map(r => `${r.start}-${r.end}`) }));
 console.log('reveal', JSON.stringify(reveal), 'revealF0', revealF0, 'hidden', hideLog.filter(l => l.includes('hidden')).length);
 console.log(el.split('\n').filter(l => /CHECKS|FAIL|^  /.test(l)).join('\n'));
 console.log('wordmarks', JSON.stringify(appearance.wordmarkUse.map(({ name, used, words }) => ({ name, used, words }))), 'opening blank', appearance.blank);
