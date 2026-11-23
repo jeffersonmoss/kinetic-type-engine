@@ -121,6 +121,8 @@ export function applyWordRoles(scene, { mapWords, display, song, names = [], met
     // Brief 10 item 42: a display-text override (for example TREY -> TR3Y) changes the letters only; the box, font and
     // size stay exactly as built.
     if (typeof o.display === 'string' && o.display !== w.text) { log.displays.push(`${w.id} ${w.text} (map word ${i}) at ${w.t.toFixed(2)} s: shown as ${o.display} (song input display override)`); w.text = o.display; }
+    // Brief 13: per-word ripple style override from song settings word_overrides (null opts out of a wordmark ripple).
+    if (o.ripple !== undefined) w.ripple = o.ripple ? structuredClone(o.ripple) : null;
     // Brief 10 items 40 and 41: a word drawn as digits goes to bulb digits (score) or the jersey font (jersey number).
     let numeral = null;
     if (/\d/.test(w.text) && !o.display) {
@@ -169,6 +171,7 @@ export function applyWordRoles(scene, { mapWords, display, song, names = [], met
     const src = byId.get(w.reveal_copy_of ?? null);
     if (src && isGrey(w) && !isGrey(src)) ungrey(w);
     if (src && (src.player_name || src.jersey_number) && w.font !== src.font && reFont(w, src.font)) log.fontChanges.push(`${w.id} ${w.text} (reveal copy): -> ${src.font}, like its source`);
+    if (src && src.ripple !== undefined && w.ripple === undefined) w.ripple = src.ripple ? structuredClone(src.ripple) : null;
   }
   return { flags, log };
 }

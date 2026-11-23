@@ -34,7 +34,7 @@ for (const c of s.cams.filter(c => c.fold === 'flip' && !s.meta.joints_version))
   for (const w of s.words.filter(w => w.plaque === pl.id && w.on <= c.f1 + 3)) { log.push(`${w.id} ${w.text}: on ${w.on} -> ${c.f0} (rotates in)`); w.on = c.f0; w.stamp = false; }
 }
 { const byId = new Map(s.words.map(w => [w.id, w]));
-  for (const c of copies) { const o = byId.get(c.reveal_copy_of); if (o) for (const k of ['text', 'style', 'colours', 'stripes', 'jersey']) { if (o[k] === undefined) delete c[k]; else c[k] = structuredClone(o[k]); } }
+  for (const c of copies) { const o = byId.get(c.reveal_copy_of); if (o) for (const k of ['text', 'style', 'colours', 'stripes', 'jersey', 'ripple']) { if (o[k] === undefined) delete c[k]; else c[k] = structuredClone(o[k]); } }
   s.words.push(...copies); }
 if (sungPath) {
   const sungFile = JSON.parse(fs.readFileSync(sungPath, 'utf8'));

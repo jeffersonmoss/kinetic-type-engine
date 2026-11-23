@@ -75,6 +75,8 @@ export function songAppearance(scene, song, resolve, firstOnset) {
     const share = style.letter_share ?? (dims?.alpha ? dims.alpha.y1 - dims.alpha.y0 : 1);
     for (const w of matched) {
       w.wordmark = { family: !image && style.font ? family : null, image, colours: style.colours ?? {}, ...(image ? { letter_share: share } : {}) };
+      // Brief 13: per-wordmark ripple style (e.g. ghost ripple for an image wordmark); a per-word override wins.
+      if (style.ripple && w.ripple === undefined) w.ripple = structuredClone(style.ripple);
       if (dims) {
         const k = Math.min(w.w * 0.94 / dims.width, w.h * 0.9 / dims.height);
         w.cap = dims.height * k * share;
