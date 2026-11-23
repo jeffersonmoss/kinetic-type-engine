@@ -1,3 +1,4 @@
+import { songAppearance } from './song_appearance.mjs';
 import { scanOverlap } from './overlap_gate.mjs';
 // Build a whole song with the deterministic engine (song-agnostic driver, 22 November 2026; generalised from the Room for
 // One prototype's "videos/Room for One - whole song.mjs", W2 commit 4e2d2b0). See KIT.md.
@@ -150,6 +151,8 @@ const finalObj = JSON.parse(fs.readFileSync(finalScene, 'utf8'));
 const overlapRepair = scanOverlap(finalObj, { until: revealF0, repair: true });
 const overlapFinal = scanOverlap(finalObj, { until: revealF0 });
 if (overlapFinal.overlaps.length) process.exitCode = 1;
+const appearance = songAppearance(finalObj, song, inp, Math.min(...map.words.map(w => w.start_s)));
+if (!appearance.pass) process.exitCode = 1;
 fs.writeFileSync(finalScene, JSON.stringify(finalObj, null, 1));
 const syncCheck = checkSync(finalObj, sung), holdCheck = checkHolds(finalObj, sung, { until: revealF0 });
 const shownFinal = gateFailures(finalObj, onsetOf, { until: revealF0 });
@@ -183,6 +186,9 @@ md.push('', '## Seams', '', '| Into | Frame | Join | Frames | Previous last word
 for (const s of seams) md.push(`| ${s.section} | ${s.frame} | ${s.verb} | ${s.frames} | ${s.previousLastWord} | ${s.readingFramesBeforeSeam} |`);
 md.push('', '## Candidate check frequency', '', ...rows.filter(r => r.checkFrequency).map(r =>
   `- ${r.label}: ${Object.entries(r.checkFrequency).sort((a,b) => b[1]-a[1]).map(([name,n]) => `${name} ${n}/${N}`).join(', ')}`));
+md.push('', '## Opening and team wordmarks', '', appearance.intro,
+  `Opening blank: ${appearance.blank} frames (limit ${FPS} frames / 1 s): ${appearance.pass ? 'PASS' : 'FAIL'}.`,
+  ...appearance.wordmarks.map(x => `- ${x}`));
 md.push('', '## Projected overlap', '', `${overlapFinal.overlaps.length} remaining intervals (${overlapFinal.overlaps.length ? 'FAIL' : 'PASS'}).`, '',
   ...overlapRepair.retired.map(x => `- Repair: ${x}`), ...overlapFinal.overlaps.map(x => `- ${x}`));
 md.push('', '## Reveal', '', `Starts at frame ${revealF0} (${(revealF0 / FPS).toFixed(2)} s), pulls back until frame ${reveal.f1} (${(reveal.f1 / FPS).toFixed(2)} s), then holds still for ${((frames - reveal.f1) / FPS).toFixed(2)} s to the end. Compacted layout (assemble_sections.mjs compactLayout): ${reveal.compaction?.chains} chains; gaps between chains in the true layout ${JSON.stringify(reveal.compaction?.gapsBefore)} units; largest gap between consecutive plaques after compaction ${reveal.compaction?.largestGapAfter} units; dropped ${reveal.compaction?.dropped.length ?? 0}. The reveal shows ${reveal.tail} of ${reveal.of} plaques. Reveal check on frame ${revealCheck.frame} (needs 20%; the reveal was laid out for ${(REVEAL_MIN_COVERAGE * 100).toFixed(0)}%): ${(revealCheck.coverage * 100).toFixed(1)}% of the frame covered, ${revealCheck.plaquesInFrame} of ${revealCheck.plaquesShown} shown plaques in frame, ${revealCheck.pass ? 'PASS' : 'FAIL'}.`, '', ...(reveal.compaction?.log ?? []).map(l => `- ${l}`), '');

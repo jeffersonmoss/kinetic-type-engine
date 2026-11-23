@@ -23,6 +23,17 @@ const ST={'heat-flame':{bg:'#D0102E',fill:'flame'},heat:{bg:'#98002E',fill:'#fff
 // Song-agnostic (22 November 2026): palette styles this table lacks come from the scene's palette (build_best writes meta.palette.styles).
 for(const ps of (S.meta.palette?.styles ?? [])) if(!ST[ps.id]){const c=ps.colours ?? {};ST[ps.id]=ps.kind==='outline' ? {stroke:c.stroke ?? c.text} : {...(c.background ? {bg:c.background} : {}), fill:c.text ?? '#F3EBDD', ...(c.border ? {border:c.border} : {})};}
 await Promise.all(Object.entries(FAM).map(([k,f])=>document.fonts.load(`${WEIGHT[k]||400} 100px ${f}`)));
+await Promise.all(Object.entries(S.wordmarkFonts ?? {}).map(async ([family, src]) => {
+  const face = new FontFace(family, `url("${src}")`);
+  document.fonts.add(await face.load());
+}));
+const intro = await Promise.all((S.intro ?? []).map(async item => {
+  if (!item.src) return item;
+  const image = new Image();
+  image.src = item.src;
+  await image.decode();
+  return {...item, image};
+}));
 await document.fonts.ready;
 const V=a=>new THREE.Vector3(...a);
 const dot=(a,b)=>a.reduce((s,x,i)=>s+x*b[i],0);
@@ -34,6 +45,24 @@ function wordTexture(w) {
   const style=ST[w.style] ?? ST.cream, px=220/w.cap;
   const c=document.createElement('canvas');c.width=Math.max(1,Math.ceil(w.w*px));c.height=Math.max(1,Math.ceil(w.h*px));
   const g=c.getContext('2d'), override=w.colours ?? {};
+  if(w.wordmark){
+    const {family, colours: brand}=w.wordmark;
+    const bg=brand.background ?? override.background ?? style.bg;
+    if(bg){g.fillStyle=bg;g.fillRect(0,0,c.width,c.height);}
+    const face=family ?? FAM[w.font] ?? 'Anton', weight=family ? 400 : WEIGHT[w.font] || 400;
+    let size=w.fontPx*px;
+    g.font=`${weight} ${size}px ${face}`;
+    const m=g.measureText(w.text), height=m.actualBoundingBoxAscent+m.actualBoundingBoxDescent;
+    size*=Math.min(1,c.width*.94/Math.max(1,m.width),c.height*.9/Math.max(1,height));
+    g.font=`${weight} ${size}px ${face}`;
+    const fitted=g.measureText(w.text), baseline=(c.height+fitted.actualBoundingBoxAscent-fitted.actualBoundingBoxDescent)/2;
+    g.textAlign='center';g.textBaseline='alphabetic';g.lineJoin='round';
+    if(brand.stroke){g.strokeStyle=brand.stroke;g.lineWidth=c.height*.035;g.strokeText(w.text,c.width/2,baseline);}
+    g.fillStyle=brand.text ?? override.text ?? style.fill ?? '#F3EBDD';
+    g.fillText(w.text,c.width/2,baseline);
+    const texture=new THREE.CanvasTexture(c);texture.colorSpace=THREE.SRGBColorSpace;texture.anisotropy=8;
+    return {texture,block:!!bg,canvas:c};
+  }
   const bg=override.background ?? style.bg;if(bg){g.fillStyle=bg;g.fillRect(0,0,c.width,c.height);}
   g.font=`${WEIGHT[w.font]||400} ${w.fontPx*px}px ${FAM[w.font]||'Anton'}`;g.textAlign='center';g.textBaseline='alphabetic';
   const base=c.height/2+w.cap*px/2,stroke=override.stroke ?? style.stroke;
@@ -238,6 +267,29 @@ function sampleCount(frame){
   const shift=Math.max(Math.hypot(q.x*W/2,q.y*H/2)+300*Math.abs(roll),hasMotion?wordMotionPx(frame):0);
   return Math.max(1,Math.min(12,Math.ceil(shift/10)));
 }
+function drawIntro(frame){
+  const active=intro.filter(item=>item.start<=frame&&frame<item.end);
+  if(!active.length)return;
+  output.save();
+  output.fillStyle='#000';output.fillRect(0,0,W,H);
+  for(const item of active){
+    const elapsed=frame-item.start, progress=elapsed/(item.end-item.start);
+    // The outgoing image stays opaque under the incoming image during the dissolve.
+    output.globalAlpha=item.fadeIn ? Math.min(1,elapsed/item.fadeIn) : 1;
+    const slide=item.exit==='slide' ? Math.max(0,(progress-.88)/.12)**2 : 0;
+    const x=W/2+Math.sin(progress*Math.PI)*W*.025+slide*W;
+    const y=H/2-Math.sin(progress*Math.PI)*H*.02;
+    if(item.image){
+      const scale=Math.min(W*.76/item.image.width,H*.76/item.image.height)*(.93+.07*progress);
+      const w=item.image.width*scale,h=item.image.height*scale;
+      output.drawImage(item.image,x-w/2,y-h/2,w,h);
+    }else{
+      output.fillStyle='#fff';output.font=`700 ${H*(.10+.012*progress)}px sans-serif`;
+      output.textAlign='center';output.textBaseline='middle';output.fillText(item.title,x,y,W*.8);
+    }
+  }
+  output.restore();
+}
 window.renderAt=(seconds)=>{
   const rawFrame=seconds*(S.meta.fps ?? 30);
   const frame=Math.abs(rawFrame-Math.round(rawFrame))<1e-4 ? Math.round(rawFrame) : rawFrame;
@@ -247,7 +299,7 @@ window.renderAt=(seconds)=>{
     const t=frame+(count===1?0:.5*k/(count-1));setPose(t);applyWordPoses(t);renderer.render(scene,camera);
     output.globalAlpha=1/(k+1);output.drawImage(renderer.domElement,0,0);
   }
-  output.globalAlpha=1;drawCaption(frame);return true;
+  output.globalAlpha=1;drawCaption(frame);drawIntro(frame);return true;
 };
 window.frameJPEG=()=>canvas.toDataURL('image/jpeg',.92);
 window.READY=true;renderAt(0);
