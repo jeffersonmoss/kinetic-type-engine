@@ -296,7 +296,20 @@ export function songAppearance(scene, song, resolve, firstOnset, { stageCompiled
       return record;
     });
     scene.intro_motion = { push_per_s: song.intro_push_per_s ?? 0.045, drift: song.intro_drift ?? 0.06 };
-    intro = `${scene.intro.length} song images from frame 0 through frame ${introEnd - 1}, sized and centred on their opaque content (${scene.intro.map(x => x.box ? `${(100 * (x.box.x1 - x.box.x0)).toFixed(0)}% x ${(100 * (x.box.y1 - x.box.y0)).toFixed(0)}% of the image` : 'whole image').join('; ')}), one shared push of ${(100 * scene.intro_motion.push_per_s).toFixed(1)}% per second (${(100 * (Math.exp(Math.log1p(scene.intro_motion.push_per_s) * firstOnset) - 1)).toFixed(0)}% over the ${firstOnset.toFixed(1)} s intro) and a ${(100 * scene.intro_motion.drift).toFixed(0)}% frame-width drift.`;
+    let rotNote = '';
+    if (song.intro_rotation && song.intro_rotation !== false) {
+      const r = song.intro_rotation;
+      const fromDeg = Number(r.from_deg ?? -90), toDeg = Number(r.to_deg ?? 0), easeName = r.ease ?? 'inOutSine';
+      if (!Number.isFinite(fromDeg) || !Number.isFinite(toDeg)) {
+        throw Error(`Invalid intro_rotation degrees in song settings.json: ${JSON.stringify(r)}`);
+      }
+      if (!['inOutSine', 'inOutCubic', 'linear'].includes(easeName)) {
+        throw Error(`Unsupported intro_rotation ease "${easeName}" in song settings.json`);
+      }
+      scene.intro_motion.rotation = { from_deg: fromDeg, to_deg: toDeg, ease: easeName };
+      rotNote = ` Continuous rotation ${fromDeg}° -> ${toDeg}° (${easeName}) from frame 0 through frame ${introEnd - 1}, auto-fitted inside the 720 px short side.`;
+    }
+    intro = `${scene.intro.length} song images from frame 0 through frame ${introEnd - 1}, sized and centred on their opaque content (${scene.intro.map(x => x.box ? `${(100 * (x.box.x1 - x.box.x0)).toFixed(0)}% x ${(100 * (x.box.y1 - x.box.y0)).toFixed(0)}% of the image` : 'whole image').join('; ')}), one shared push of ${(100 * scene.intro_motion.push_per_s).toFixed(1)}% per second (${(100 * (Math.exp(Math.log1p(scene.intro_motion.push_per_s) * firstOnset) - 1)).toFixed(0)}% over the ${firstOnset.toFixed(1)} s intro) and a ${(100 * scene.intro_motion.drift).toFixed(0)}% frame-width drift.${rotNote}`;
   } else if (introEnd > 0) {
     scene.intro = [{ start:0, end:introEnd, fade:0, fadeIn:0, exit:'cut', title:song.title.trim() }];
     intro = `Title fallback from frame 0 through frame ${introEnd - 1}.`;
@@ -305,8 +318,45 @@ export function songAppearance(scene, song, resolve, firstOnset, { stageCompiled
   // official wordmark as a PNG, JPEG, WebP or SVG, ideally on a transparent background) wins over `font`; with
   // neither, the existing lettering is kept with the supplied colours and the report says so plainly.
   const wordmarks = [], fonts = {}, images = {};
+  const overrideImageIndices = new Set(
+    Object.entries(song.word_overrides ?? {})
+      .filter(([, ov]) => ov && typeof ov === 'object' && ov.image)
+      .map(([idx]) => Number(idx)),
+  );
+  const accentFace = nonJerseyAccentFont(song.jersey_font);
+  const applyImageWordmark = (w, imageKey, style, dims, share) => {
+    w.wordmark = {
+      family: null,
+      image: imageKey,
+      colours: style.colours ?? {},
+      letter_share: share,
+      ...(style.target_height != null ? { target_height: style.target_height } : {}),
+      ...(style.centre ? { centre: true } : {}),
+    };
+    if (isSongJerseyFont(w.font, song.jersey_font)) w.font = accentFace;
+    if (style.ripple && w.ripple === undefined) w.ripple = structuredClone(style.ripple);
+    if (dims) {
+      const k = Math.min(w.w * 0.94 / dims.width, w.h * 0.9 / dims.height);
+      w.cap = dims.height * k * share;
+      w.wordmark.pre_cap = w.cap;
+      w.wordmark.size = { w: dims.width, h: dims.height };
+      const bg = style.colours?.background ?? w.colours?.background;
+      const ink = dims.alpha ?? { x0: 0, y0: 0, x1: 1, y1: 1 };
+      const aspect = (dims.width * (ink.x1 - ink.x0)) / (dims.height * (ink.y1 - ink.y0));
+      const margin = bg ? WORDMARK_MARGIN : 0;
+      let inkH = dims.height * k * (ink.y1 - ink.y0);
+      const fit = Math.min(1, w.w / (inkH * (aspect + 2 * margin)), w.h / (inkH * (1 + 2 * margin)));
+      inkH *= fit;
+      w.w = inkH * (aspect + 2 * margin); w.h = inkH * (1 + 2 * margin); w.pad = margin * inkH;
+      w.cap = inkH * (style.letter_share ?? 1);
+      w.wordmark.ink = ink; w.wordmark.margin = margin;
+    }
+  };
   for (const [name, style] of Object.entries(song.team_wordmarks ?? {})) {
-    const matched = scene.words.filter(w => w.text.toUpperCase().replace(/^[^A-Z0-9]+|[^A-Z0-9]+$/g,'') === name.toUpperCase());
+    const matched = scene.words.filter(w =>
+      w.text.toUpperCase().replace(/^[^A-Z0-9]+|[^A-Z0-9]+$/g,'') === name.toUpperCase() &&
+      !(w.map_index != null && overrideImageIndices.has(w.map_index)),
+    );
     const family = `SongWordmark${wordmarks.length + 1}`;
     const image = style.image ? `wordmark${wordmarks.length + 1}` : null;
     if (image) images[image] = asset(style.image, resolve, IMAGE_TYPES);
@@ -319,37 +369,35 @@ export function songAppearance(scene, song, resolve, firstOnset, { stageCompiled
     // pass judge the lettering.
     const dims = image ? imageSize(resolve(style.image)) : null;
     const share = style.letter_share ?? (dims?.alpha ? dims.alpha.y1 - dims.alpha.y0 : 1);
-    const accentFace = nonJerseyAccentFont(song.jersey_font);
     for (const w of matched) {
-      w.wordmark = { family: !image && style.font ? family : null, image, colours: style.colours ?? {}, ...(image ? { letter_share: share } : {}) };
-      if (isSongJerseyFont(w.font, song.jersey_font)) w.font = accentFace;
-      // Brief 13: per-wordmark ripple style (e.g. ghost ripple for an image wordmark); a per-word override wins.
-      if (style.ripple && w.ripple === undefined) w.ripple = structuredClone(style.ripple);
-      if (dims) {
-        const k = Math.min(w.w * 0.94 / dims.width, w.h * 0.9 / dims.height);
-        w.cap = dims.height * k * share;
-        w.wordmark.pre_cap = w.cap; // letter height before any block cut, for the wordmark growth pass (brief 12/14)
-        w.wordmark.size = { w: dims.width, h: dims.height }; // natural dimensions (including SVG viewBox) for viewer.html
-        // Brief 12 item 1.1 & brief 16 item 1: cut every image wordmark's box cleanly to its ink shape (alpha box for a
-        // transparent PNG, else the full image/SVG viewBox) about its centre, never growing here so it adds no overlap.
-        // With a background block (`bg`), add WORDMARK_MARGIN x ink height on all four sides; without one (`!bg`), trim
-        // tightly to the ink (margin 0) so transparent wordmarks have no invisible side wings and size cleanly by ink box.
-        const bg = style.colours?.background ?? w.colours?.background;
-        const ink = dims.alpha ?? { x0: 0, y0: 0, x1: 1, y1: 1 };
-        const aspect = (dims.width * (ink.x1 - ink.x0)) / (dims.height * (ink.y1 - ink.y0));
-        const margin = bg ? WORDMARK_MARGIN : 0;
-        let inkH = dims.height * k * (ink.y1 - ink.y0);
-        const fit = Math.min(1, w.w / (inkH * (aspect + 2 * margin)), w.h / (inkH * (1 + 2 * margin)));
-        inkH *= fit;
-        w.w = inkH * (aspect + 2 * margin); w.h = inkH * (1 + 2 * margin); w.pad = margin * inkH;
-        w.cap = inkH * (style.letter_share ?? 1);
-        w.wordmark.ink = ink; w.wordmark.margin = margin;
+      if (image) {
+        applyImageWordmark(w, image, style, dims, share);
+      } else {
+        w.wordmark = { family: style.font ? family : null, image: null, colours: style.colours ?? {} };
+        if (isSongJerseyFont(w.font, song.jersey_font)) w.font = accentFace;
+        if (style.ripple && w.ripple === undefined) w.ripple = structuredClone(style.ripple);
       }
     }
     const kinds = [...new Set(matched.map(w => (w.echo ? 'sung echo' : w.reveal_copy_of ? 'reveal copy' : 'lyric')))].join(', ');
     const used = image ? `IMAGE ${style.image}` : style.font ? `FONT ${style.font}` : 'NEITHER: no wordmark image or font supplied; existing lettering retained with supplied colours';
     wordmarks.push({ name, used: image ? 'image' : style.font ? 'font' : 'neither', words: matched.length,
       line: `${name} (${matched.length} scene words${kinds ? `: ${kinds}` : ''}): ${used}` });
+  }
+  // Brief 24: per-word image overrides in song.word_overrides.<map index>.image (e.g. a bespoke badge for one shout
+  // without changing the other occurrences of that word).
+  for (const [idxStr, ov] of Object.entries(song.word_overrides ?? {})) {
+    if (!ov || typeof ov !== 'object' || !ov.image) continue;
+    const idx = Number(idxStr);
+    const matched = scene.words.filter(w => w.map_index === idx && !w.reveal_copy_of && !w.echo);
+    const image = `wordimg_${idx}`;
+    images[image] = asset(ov.image, resolve, IMAGE_TYPES);
+    const dims = imageSize(resolve(ov.image));
+    const share = ov.letter_share ?? (dims?.alpha ? dims.alpha.y1 - dims.alpha.y0 : 1);
+    const style = { colours: ov.colours ?? { background: '' }, letter_share: ov.letter_share, ripple: ov.ripple, target_height: ov.target_height, centre: ov.centre };
+    for (const w of matched) applyImageWordmark(w, image, style, dims, share);
+    const ids = matched.map(w => `${w.id} ${w.text}`).join(', ') || 'none';
+    wordmarks.push({ name: `map#${idx}`, used: 'image', words: matched.length,
+      line: `word_overrides[${idx}] (${ids}): IMAGE ${ov.image}` });
   }
   if (Object.keys(fonts).length) scene.wordmarkFonts = fonts;
   if (Object.keys(images).length) scene.wordmarkImages = images;

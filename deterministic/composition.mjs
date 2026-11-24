@@ -2173,9 +2173,12 @@ export function growWordmarks(scene, onsetOf, { until = scene.meta.frames } = {}
     const fr = at(w), now = size(w), ib0 = inkBoxAt(w, fr);
     if (now == null || !ib0 || !(ib0.w > 0)) continue;
     const alone = isAlone(w, fr);
+    const maxSafe = Math.min(WORDMARK_SAFE_X / ib0.w, WORDMARK_SAFE_Y / ib0.h);
     const fullW = WORDMARK_ALONE_WIDTH / ib0.w;
     const fullCap = Math.max(pre.get(w) ?? 0, median) / now;
-    const full = Math.max(fullW, fullCap);
+    const full = w.wordmark.target_height != null
+      ? Math.min(maxSafe, w.wordmark.target_height / ib0.h)
+      : Math.min(maxSafe, Math.max(fullW, fullCap));
     if (full <= 1.01) {
       log.push(`${w.id} ${w.text} at ${(w.t ?? 0).toFixed(2)} s (${alone ? 'alone' : 'with neighbours'}): ink width ${(100 * ib0.w).toFixed(1)}% of frame (already at/above ${(100 * WORDMARK_ALONE_WIDTH).toFixed(0)}% target)`);
       continue;

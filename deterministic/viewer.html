@@ -495,16 +495,52 @@ function sampleCount(frame){
   // shadow (SHOOTING at 101.6 s in rough cut 6); under 4 px of motion is drawn sharp.
   return shift<4 ? 1 : Math.max(2,Math.min(32,Math.ceil(shift/3)));
 }
+function introRotationDeg(rot,frame,endF){
+  if(!rot)return 0;
+  const u=Math.min(1,Math.max(0,frame/Math.max(1,endF-1)));
+  let e=u;
+  if((rot.ease ?? 'inOutSine')==='inOutSine')e=.5*(1-Math.cos(Math.PI*u));
+  else if(rot.ease==='inOutCubic')e=u<.5 ? 4*u*u*u : 1-Math.pow(-2*u+2,3)/2;
+  return rot.from_deg+(rot.to_deg-rot.from_deg)*e;
+}
+function introFitScale(endF,M,fps,base,grow){
+  const rot=M.rotation;
+  if(!rot)return 1;
+  const marginX=W*.04, marginY=H*.04;
+  let fit=1;
+  for(let f=0;f<endF;f++){
+    const u=f/Math.max(1,endF), sizeF=base*grow(f);
+    const rad=introRotationDeg(rot,f,endF)*Math.PI/180, ca=Math.abs(Math.cos(rad)), sa=Math.abs(Math.sin(rad));
+    for(const item of intro){
+      if(!item.image||f<item.start||f>=item.end)continue;
+      const b=item.box ?? {x0:0,y0:0,x1:1,y1:1}, iw=item.image.width, ih=item.image.height;
+      const sc=sizeF/Math.max((b.x1-b.x0)*iw,(b.y1-b.y0)*ih);
+      const ow=(b.x1-b.x0)*iw*sc, oh=(b.y1-b.y0)*ih*sc;
+      const halfX=.5*(ow*ca+oh*sa), halfY=.5*(ow*sa+oh*ca);
+      const x=W/2+(u-.5)*M.drift*W, y=H/2-(u-.5)*M.drift*.5*H;
+      const availX=Math.min(x-marginX,W-marginX-x), availY=Math.min(y-marginY,H-marginY-y);
+      if(halfX>0)fit=Math.min(fit,availX/halfX);
+      if(halfY>0)fit=Math.min(fit,availY/halfY);
+    }
+  }
+  return Math.max(.1,fit);
+}
+let cachedIntroFit=null;
 function drawIntro(frame){
   const active=intro.filter(item=>item.start<=frame&&frame<item.end);
   if(!active.length)return;
   // One motion path for the whole intro (engine fix brief 2, items 4 and 5): a steady exponential push and a linear
   // drift, shared by every image, with each image sized and centred on its opaque content (item.box). Consecutive
   // badges therefore coincide exactly through a dissolve and the motion carries on across it. No easing, no wobble.
+  // Brief 24: optional M.rotation ({from_deg, to_deg, ease}) rotates continuously across all intro frames [0..endF-1]
+  // with a constant fit scale so the rotated opaque box stays strictly inside the 720 px short side at every angle.
   const fps=S.meta.fps ?? 30, M=S.intro_motion ?? {push_per_s:.045,drift:.06};
   const endF=Math.max(...intro.map(item=>item.end)), u=frame/Math.max(1,endF);
   const grow=f=>Math.exp(Math.log1p(M.push_per_s)*f/fps);
-  const base=Math.max(H*.45,H*.82/grow(endF)), size=base*grow(frame);
+  const base=Math.max(H*.45,H*.82/grow(endF));
+  if(cachedIntroFit==null)cachedIntroFit=introFitScale(endF,M,fps,base,grow);
+  const size=base*grow(frame)*cachedIntroFit;
+  const rotRad=M.rotation ? introRotationDeg(M.rotation,frame,endF)*Math.PI/180 : 0;
   output.save();
   output.fillStyle='#000';output.fillRect(0,0,W,H);
   output.globalCompositeOperation='lighter';
@@ -520,10 +556,18 @@ function drawIntro(frame){
       const b=item.box ?? {x0:0,y0:0,x1:1,y1:1}, iw=item.image.width, ih=item.image.height;
       const scale=size/Math.max((b.x1-b.x0)*iw,(b.y1-b.y0)*ih);
       const w=iw*scale,h=ih*scale;
-      output.drawImage(item.image,x-(b.x0+b.x1)/2*w,y-(b.y0+b.y1)/2*h,w,h);
+      output.save();
+      output.translate(x,y);
+      if(rotRad)output.rotate(rotRad);
+      output.drawImage(item.image,-(b.x0+b.x1)/2*w,-(b.y0+b.y1)/2*h,w,h);
+      output.restore();
     }else{
+      output.save();
+      output.translate(x,y);
+      if(rotRad)output.rotate(rotRad);
       output.fillStyle='#fff';output.font=`700 ${size*.14}px sans-serif`;
-      output.textAlign='center';output.textBaseline='middle';output.fillText(item.title,x,y,W*.8);
+      output.textAlign='center';output.textBaseline='middle';output.fillText(item.title,0,0,W*.8);
+      output.restore();
     }
   }
   output.restore();

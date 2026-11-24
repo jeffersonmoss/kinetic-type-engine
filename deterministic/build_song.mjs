@@ -43,6 +43,18 @@ const TEAM_NAMES = new Set(Object.keys(song.team_wordmarks ?? {}).map(nameKey));
 const JERSEY_BOLD_SONG = song.jersey_bold ?? JERSEY_BOLD; // brief 5: outward stroke on jersey fonts, x cap
 // --all-words: build with keyword mode off whatever the song settings say (for comparisons).
 if (args.includes('--all-words')) song.fast_words = { ...(song.fast_words ?? {}), mode: 'all_words' };
+// Brief 24: --intro-rotation <from,to[,ease] | JSON | off> overrides song.intro_rotation for a variant join (e.g. vertical).
+const introRotArg = opt('--intro-rotation', null);
+if (introRotArg != null) {
+  if (/^(off|false|none)$/i.test(introRotArg)) {
+    delete song.intro_rotation;
+  } else if (introRotArg.trim().startsWith('{')) {
+    song.intro_rotation = JSON.parse(introRotArg);
+  } else {
+    const [fromS, toS, easeS] = introRotArg.split(',');
+    song.intro_rotation = { from_deg: Number(fromS), to_deg: Number(toS), ...(easeS ? { ease: easeS } : {}) };
+  }
+}
 const OUT = path.resolve(opt('--out', path.join(inputDir, '../engine output/Whole song')));
 const N = Number(opt('--N', 200));
 const skipBuild = args.includes('--skip-build');
