@@ -466,6 +466,45 @@ export function fillEmptyFrames(scene, { from = 0, until = scene.meta.frames, on
       scene.cams = JSON.parse(camSnap);
       for (const [w, off, op] of wsnap) { w.off = off; const v = JSON.parse(op); if (v) w.opacity = v; else delete w.opacity; }
     }
+    // (5b) early-landing camera move (brief 23): a non-cut move landed inside [run.start, run.end] before the hold's
+    //      first incoming word appeared at run.end + 1, leaving a dead hold on an empty plaque. Delay the move so it
+    //      lands closer to (or right on) the incoming word while outgoing words stay on screen through the delay.
+    if (K5 && K5.verb !== 'cut' && K5.f1 >= run.start && K5.f1 <= run.end && K5.f1 > K5.f0) {
+      const nextCam = scene.cams[ki + 1];
+      const limitF1 = Math.min(until - 1, nextCam ? nextCam.f0 - 1 : until - 1);
+      const maxShift = Math.min(run.end + 1 - K5.f1, limitF1 - K5.f1);
+      if (maxShift >= 1) {
+        const camSnap = JSON.stringify(scene.cams), f = K5.f0 - 1;
+        const p = I.poseAt(scene.cams, f);
+        const vis = scene.words.filter(w => !w.reveal_copy_of && drawn(w, f) && inFrameShare(w, f, p, vfov) >= FILLED_SHARE && G.readableOrientation(w, f, p, vfov));
+        const wsnap = vis.map(w => [w, w.off, JSON.stringify(w.opacity ?? null)]);
+        const spLo = Math.max(0, K5.f0 - 4), spHi = Math.min(until, run.end + 12);
+        const spBefore = staticPartials(scene, { from: spLo, until: spHi }).length;
+        const origF0 = K5.f0, origF1 = K5.f1;
+        let applied = false;
+        for (let s = maxShift; s >= 1; s--) {
+          scene.cams = JSON.parse(camSnap);
+          for (const [w, off, op] of wsnap) { w.off = off; const v = JSON.parse(op); if (v) w.opacity = v; else delete w.opacity; }
+          const km = scene.cams[ki];
+          km.f0 = origF0 + s; km.f1 = origF1 + s;
+          for (const w of vis) {
+            const o = opacityAt(w, f), after = opacityAt(w, km.f0 + 1);
+            if (w.off != null && w.off <= km.f0 + 1) w.off = km.f0 + 1;
+            w.opacity = [...(w.opacity ?? []).filter(([k]) => k < origF0 || k > km.f0 + 1), [origF0, o], [km.f0 + 1, w.off === km.f0 + 1 ? o : after]].sort((x, y) => x[0] - y[0]);
+          }
+          const spAfter = staticPartials(scene, { from: spLo, until: spHi }).length;
+          if (vis.length && spAfter <= spBefore && accept()) {
+            log.push(`frames ${run.start}-${run.end}: camera ${km.verb} delayed ${origF0}-${origF1} -> ${km.f0}-${km.f1} (+${s}f to land on incoming word); ${vis.map(w => w.text).join(' ')} stay on`);
+            basePartial = partials();
+            applied = true;
+            break;
+          }
+        }
+        if (applied) continue;
+        scene.cams = JSON.parse(camSnap);
+        for (const [w, off, op] of wsnap) { w.off = off; const v = JSON.parse(op); if (v) w.opacity = v; else delete w.opacity; }
+      }
+    }
   }
   if (log.length === before) break;
   }
