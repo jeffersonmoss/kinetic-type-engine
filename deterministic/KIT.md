@@ -78,7 +78,7 @@ node "/Users/jeffersonmoss/Experiments/Kinetic Type Engine/deterministic/capture
 ```
 
 22. It runs headless Chrome with a throwaway profile in the system temp folder (prefix `path-first-capture-`, removed on exit, stale ones removed at start) and muxes the song from the scene's `meta.audio` (or `--audio <file>`). Subagents and Codex sandboxes must never run it: Chrome aborts there. The provenance file ends with the exact command for its scene.
-23. Options: `--blur on|off` (motion blur), `--swell` (the old swell variant of chant echoes instead of the ripple). A clip: pass start and end seconds.
+23. Options: `--blur on|off` (motion blur), `--swell` (the old swell variant of chant echoes instead of the ripple), `--jobs N` (brief 22, 23 November 2026: parallel worker count, default `6` matching `build_song.mjs`; `--jobs 1` keeps the serial single-Chrome path), `--timeout sec` (optional overall timeout). With `--jobs > 1`, `capture.mjs` splits the frame range into `N` contiguous slices (`viewer.html` `renderAt(t)` is stateless per frame, so zero lead-in frames are needed), renders each slice in its own Chrome process group with its own free debug port, throwaway profile and temp folder using identical `libx264` settings (`crf 18`, `preset medium`, `yuv420p`), joins them with `ffmpeg` concat (`-c:v copy`) and muxes audio once, killing all Chrome/`ffmpeg` children and removing all temp dirs on completion, error, timeout or Ctrl-C. A clip: pass start and end seconds.
 
 ## 4. Checks and the provenance report
 
