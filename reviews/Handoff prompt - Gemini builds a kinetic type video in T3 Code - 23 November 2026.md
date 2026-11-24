@@ -19,8 +19,13 @@ You are building a kinetic-typography lyric music video for one of my Suno songs
 
 ## 3. The process
 
-10. Workspace: `~/Experiments/<Song title> Music Video/`, a git repo (never /tmp). Copy the mp3 into `audio/`.
-11. Word timings. If a Suno lyric alignment JSON comes with the song, save it as `analysis/Suno lyric alignment.json`. If not, and you have no Suno access, make one: transcribe with whisper-cli on Thing 2 (large-v3-turbo model) against the lyrics, then write it in exactly the format of `~/Experiments/Big Toothy Grins Music Video/analysis/Suno lyric alignment.json`. Spot-check one late verse line by ear (Whisper on a 5 to 6 s window) so the map does not drift.
+10. Workspace: `~/Experiments/<Song title> Music Video/`, a git repo (never /tmp).
+11. Song and word timings, through the Suno MCP:
+    11.1. Find the clip with `library-search` (titles may start with "!"); note its clip id and duration.
+    11.2. Download the mp3 with `audio-download` into `audio/` (one credit; this request is my go-ahead). If I name a new title, rename the file on disk.
+    11.3. Fetch `audio-lyrics-alignment` for that same clip id and save the result as `analysis/Suno lyric alignment.json` (same format as `~/Experiments/Big Toothy Grins Music Video/analysis/Suno lyric alignment.json`).
+    11.4. Check the mp3's duration matches the clip's duration to within 0.05 s, so the alignment belongs to the take you downloaded (a mismatched take once drifted 12 s behind the singing). Spot-check one late verse line by ear with whisper-cli (large-v3-turbo, a 5 to 6 s window).
+    11.5. Only if the Suno MCP is unavailable in this thread, tell me before falling back to Whisper timings.
 12. Write `song.json` (format in the docstring of `~/.claude/skills/kinetic-type-video/scripts/build_song_map.py`), then run that script with a Python that has librosa (`~/Experiments/Buy This IPO Music Video/.venv/bin/python`) to make `analysis/Song map.json`.
 13. `node "$HOME/Experiments/Kinetic Type Engine/deterministic/new_song_input.mjs" "<workspace>"`, then edit `engine input/` by hand as KIT.md section 3.1 says: real section cuts at phrase boundaries, the palette (team colours where the song has a team), timing corrections, sung repeats, player names, team wordmarks.
 14. Build from `~/Experiments/Kinetic Type Engine/deterministic/`: `node build_song.mjs "<workspace>/engine input" --out "<workspace>/engine output/Rough cut 1 - <date with month as a word>"`. One build at a time per machine (the build lock queues it). Exit 0 is required; if a gate fails, fix the input or the engine and rebuild. Also run the Type rules check with `--out` into the run folder.
