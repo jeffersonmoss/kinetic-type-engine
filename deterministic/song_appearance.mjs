@@ -394,7 +394,28 @@ export function songAppearance(scene, song, resolve, firstOnset, { stageCompiled
     const dims = imageSize(resolve(ov.image));
     const share = ov.letter_share ?? (dims?.alpha ? dims.alpha.y1 - dims.alpha.y0 : 1);
     const style = { colours: ov.colours ?? { background: '' }, letter_share: ov.letter_share, ripple: ov.ripple, target_height: ov.target_height, centre: ov.centre };
-    for (const w of matched) applyImageWordmark(w, image, style, dims, share);
+    // Brief 25: image_steps [{ at_s, image }] swap the drawn image at those song times (a word mark revealed one
+    // syllable at a time). Every step image must share the base image's canvas; the box and ink come from the LAST
+    // step (the whole mark), so the parts sit at one scale and in their final places from the first frame.
+    const steps = Array.isArray(ov.image_steps) ? ov.image_steps.filter(st => st && st.image && Number.isFinite(st.at_s)) : [];
+    let sizeDims = dims, sizeShare = share;
+    if (steps.length) {
+      const lastFile = steps[steps.length - 1].image, lastDims = imageSize(resolve(lastFile));
+      if (lastDims && dims && (lastDims.width !== dims.width || lastDims.height !== dims.height))
+        throw Error(`word_overrides[${idx}].image_steps: ${lastFile} is ${lastDims.width}x${lastDims.height}, base ${ov.image} is ${dims.width}x${dims.height}; step images must share one canvas`);
+      if (lastDims) { sizeDims = { ...lastDims }; sizeShare = ov.letter_share ?? (lastDims.alpha ? lastDims.alpha.y1 - lastDims.alpha.y0 : 1); }
+    }
+    for (const w of matched) {
+      applyImageWordmark(w, image, style, sizeDims, sizeShare);
+      if (steps.length) {
+        const fps = scene.meta.fps ?? 30;
+        w.wordmark.steps = steps.map((st, k) => {
+          const key = `wordimg_${idx}_step${k + 1}`;
+          images[key] = asset(st.image, resolve, IMAGE_TYPES);
+          return { f: Math.round(st.at_s * fps), image: key };
+        });
+      }
+    }
     const ids = matched.map(w => `${w.id} ${w.text}`).join(', ') || 'none';
     wordmarks.push({ name: `map#${idx}`, used: 'image', words: matched.length,
       line: `word_overrides[${idx}] (${ids}): IMAGE ${ov.image}` });

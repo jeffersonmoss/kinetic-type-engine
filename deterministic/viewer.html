@@ -317,7 +317,9 @@ for(const w of [...S.words.filter(x=>!x.replaced_by),...(S.elements??[])]){
     ripple.updateMatrix();ripple.userData.rest=ripple.matrix.clone();ripple.matrixAutoUpdate=false;
     ripple.userData.fadePow=rip?.fade_power ?? (isGhost ? 2.5 : 1.5);
   }
-  wordMeshes.push({data:w,front,back,ripple,restFront,clipPlanes,scaleNow:1,rippleScale:1});
+  // Brief 25: a word mark revealed in steps swaps its texture at each step frame; the box never changes.
+  const stepTex=(w.wordmark?.steps??[]).map(st=>({f:st.f,texture:wordTexture({...w,wordmark:{...w.wordmark,image:st.image}}).texture}));
+  wordMeshes.push({data:w,front,back,ripple,restFront,clipPlanes,scaleNow:1,rippleScale:1,stepTex,baseTex:material.map});
 }
 const revealStart=S.cams.find(k=>k.kind==='reveal')?.f0 ?? Infinity;
 function visible(v,f){return (f>=v.on && (v.off==null || f<v.off)) || (v.reveal_on!=null && f>=v.reveal_on);}
@@ -448,6 +450,7 @@ function affineOf(w,t){
 function applyWordPoses(t){
   for(const wm of wordMeshes){
     const {data:w,front,ripple,restFront,clipPlanes}=wm;
+    if(wm.stepTex.length){let tex=wm.baseTex;for(const st of wm.stepTex)if(t>=st.f)tex=st.texture;if(front.material.map!==tex){front.material.map=tex;front.material.needsUpdate=true;}}
     const M=(w.motion&&w.motion.length)?affineOf(w,t):new THREE.Matrix4();
     front.matrix.copy(M).multiply(restFront).multiply(new THREE.Matrix4().makeScale(wm.scaleNow,wm.scaleNow,1));
     front.matrixWorldNeedsUpdate=true;
