@@ -76,6 +76,13 @@ await acquireBuildLock(song.title ?? path.basename(path.dirname(inputDir)));
 
 // ---- Song map with the timing corrections applied, and the section words (from the prototype's section words.mjs) ----
 const rawMap = JSON.parse(fs.readFileSync(mapPath, 'utf8'));
+// Brief 26 (Jefferson, 27 November 2026): "When two elements are parts of a single word, they need to be shown in line as
+// a single word." A contraction split by the aligner ("They" + "'re") must be merged in the map (build_song_map.py does it).
+{
+  const SUFFIX = /^(?:['\u2019](?:re|s|ll|ve|d|m|t)|n['\u2019]t)[.,!?;:]*$/i;
+  const split = rawMap.words.map((w, i) => (i && SUFFIX.test(w.text) && w.line === rawMap.words[i - 1].line) ? `${i} ${rawMap.words[i - 1].text}+${w.text}` : null).filter(Boolean);
+  if (split.length) throw Error(`song map has contractions split into two words (merge each into one word; build_song_map.py does this): ${split.join(', ')}`);
+}
 const CORR = song.timing_corrections ? JSON.parse(fs.readFileSync(inp(song.timing_corrections), 'utf8')) : { words: [], lines: [] };
 function correctedMap(m, corr) {
   const out = structuredClone(m);
